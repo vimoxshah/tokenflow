@@ -272,7 +272,7 @@ test('a full re-ingest refuses to drop records it cannot rebuild', async () => {
     fs.rmSync(file);
     await assert.rejects(
       () => m.ingest.refresh({ registry: [patched], providers: ['testsrc'], full: true }),
-      (err) => err.code === 'FULL_REFRESH_UNSAFE' && /2 stored record/.test(err.message),
+      (/** @type {any} */ err) => err.code === 'FULL_REFRESH_UNSAFE' && /2 stored record/.test(err.message),
     );
     assert.equal(m.bundle.buildBundle().health.records, 2, 'the data survived the refused reset');
 
@@ -313,6 +313,15 @@ test('a full export round-trips through restore, re-priced with the current tabl
 
     const after = m.bundle.buildBundle();
     assert.equal(after.health.records, 2);
+
+    // computeTotal returns {total, partial}. Assigning the whole object stored
+    // total_tokens as an object on every restored record, which re-exported as
+    // "[object Object]". The cube measures above cannot catch that, because
+    // total_tokens is per-record and is not one of them.
+    for (const row of m.bundle.queryRecords({ limit: 100 }).rows) {
+      const tt = row.total_tokens ?? row.tt;
+      assert.equal(typeof tt, 'number', `restored total_tokens must be a number, got ${JSON.stringify(tt)}`);
+    }
     const sum = (b, name) => b.cube.rows.reduce((a, row) => a + row[b.cube.dims.length + b.cube.measures.indexOf(name)], 0);
     for (const measure of ['in', 'out', 'cr', 'cw', 'req', 'cost']) {
       assert.equal(sum(after, measure), sum(before, measure), `${measure} survived the round trip`);

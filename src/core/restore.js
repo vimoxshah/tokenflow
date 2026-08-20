@@ -125,6 +125,7 @@ function cellToField(name, raw) {
  * @param {object} [opt]
  * @param {boolean} [opt.reprice=true] recompute estimated costs with the current table
  * @param {(e:object)=>void} [opt.onProgress]
+ * @param {object} [opt.config] pre-loaded config; defaults to loadConfig()
  */
 export function restoreFromCsv(file, opt = {}) {
   if (!fs.existsSync(file)) throw new Error(`no such file: ${file}`);
@@ -163,6 +164,8 @@ export function restoreFromCsv(file, opt = {}) {
       const missing = required.filter((c) => !(c in o));
       if (missing.length) throw new Error(`not a full tokenflow export — missing column(s): ${missing.join(', ')}`);
     }
+    /** Built column-by-column from the CSV, so its shape is dynamic. */
+    /** @type {Record<string, any>} */
     const rec = {};
     for (const [name] of RECORD_COLUMNS) rec[name] = cellToField(name, o[name]);
     if (!rec.timestamp) { dropped.noTimestamp++; return; }
@@ -176,8 +179,11 @@ export function restoreFromCsv(file, opt = {}) {
     rec.total_is_partial = !!rec.total_is_partial;
     rec.metadata = { restored_from: file.replace(/^.*\//, '') };
 
-    const total = computeTotal(rec);
-    if (total !== null) rec.total_tokens = total;
+    // computeTotal returns {total, partial} — destructure it. Assigning the
+    // whole object here stored total_tokens as an object on every restored
+    // record, which re-exported as "[object Object]".
+    const t = computeTotal(rec);
+    if (t.total !== null) rec.total_tokens = t.total;
 
     if (rec.cost_basis === 'measured') {
       measuredKept++;
