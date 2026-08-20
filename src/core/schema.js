@@ -140,6 +140,8 @@ const STR = (v) => (v === undefined || v === null || v === '' ? null : String(v)
  * @property {string|null} machine
  * @property {number|null} duration_ms
  * @property {Object}  metadata
+ * @property {string}  [_fileId]          internal: which source file this came from
+ * @property {number}  [_gen]             internal: that file's generation, for supersede
  */
 
 /**
@@ -286,7 +288,7 @@ function tzOffsetMinutes(d, tz) {
  * Two independent 32-bit FNV-1a passes; ~1e-10 collision risk at 10^6 keys.
  */
 export function hashId(...parts) {
-  const s = parts.join(' ');
+  const s = parts.join('\x00');
   let h1 = 0x811c9dc5;
   let h2 = 0x01000193;
   for (let i = 0; i < s.length; i++) {
