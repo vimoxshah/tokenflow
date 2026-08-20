@@ -113,7 +113,7 @@ npm start            # = tokenflow up
 ```
 
 On macOS you can double-click **`Refresh & Open Dashboard.command`** in the project folder
-instead. Either way it refreshes, rebuilds the offline `tokenflow-dashboard.html` beside it, and
+instead (it is a bash script, so on Windows stay with `npm start`). Either way it refreshes, rebuilds the offline `tokenflow-dashboard.html` beside it, and
 opens the live dashboard. That is the thing to use when you come back after a few days.
 
 The offline file, opened on its own, states how old its data is and looks for a live dashboard on

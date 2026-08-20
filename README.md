@@ -26,6 +26,15 @@ failure — `tokenflow providers` tells you what it looked for and where.
 
 There is no `npm install` step, because there is nothing to install. Node 22.5+ and nothing else.
 
+**Platform.** macOS, Linux and Windows. Every push runs the test suite plus an end-to-end pass
+— ingest, `status`, `validate`, CSV export, HTML export — on all three, against Node 22 and 24.
+Log discovery is `os.homedir()`-relative (`~/.claude`, `~/.codex`, `~/.cline`, `~/.cursor`), so it
+resolves the same way on each, and every source path is overridable in config.
+
+Two conveniences are bash-only: the `./tokenflow` wrapper and `Refresh & Open Dashboard.command`.
+Anywhere without bash — Windows `cmd`/PowerShell included — use the `npm run` scripts or
+`node bin/tokenflow.js <command>` directly. Same behaviour.
+
 Just want to look around first?
 
 ```bash
@@ -274,8 +283,8 @@ timestamp. The refresh itself runs same-origin on the live page with its own tok
 page in your browser can trigger anything.
 
 Want it current without ever thinking about it? Schedule `tokenflow up --no-serve` — on macOS with
-a `launchd` agent, on Linux with a systemd timer or cron. The file on disk is then always fresh
-when you open it.
+a `launchd` agent, on Linux with a systemd timer or cron, on Windows with Task Scheduler. The file
+on disk is then always fresh when you open it.
 
 ## 11. Themes
 

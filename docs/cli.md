@@ -63,6 +63,13 @@ Linux (systemd user timer) or plain cron works the same way:
 0 9 * * * cd /path/to/tokenflow && node bin/tokenflow.js up --no-serve >/dev/null 2>&1
 ```
 
+Windows, with Task Scheduler:
+
+```bat
+schtasks /create /tn "Tokenflow daily" /sc daily /st 09:00 ^
+  /tr "cmd /c cd /d C:\path\to\tokenflow && node bin\tokenflow.js up --no-serve"
+```
+
 ### `refresh`
 Ingests new usage. Incremental by default: unchanged files are skipped without being read.
 
