@@ -1,0 +1,844 @@
+#!/usr/bin/env node
+/**
+ * tokenflow — the CLI.
+ *
+ * Every command is safe to run repeatedly and never writes outside
+ * $TOKENFLOW_HOME (default ~/.tokenflow). Nothing here makes a network
+ * request.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { loadProviders, listProviders, getProvider } from '../src/core/registry.js';
+import { loadConfig, saveConfig, paths, ensureDirs, DEFAULT_CONFIG, merge } from '../src/core/config.js';
+import { refresh } from '../src/core/ingest.js';
+import { buildBundle, queryRecords } from '../src/core/bundle.js';
+import { Store, readJson, writeJson } from '../src/core/store.js';
+import { computeView } from '../src/analytics/index.js';
+import { compact, int, usd, pct, signedPct, longDate, shortDate, relativeTime, humanDuration } from '../src/core/units.js';
+import { streamRecordsCsv, exportFilename } from '../src/export/csv.js';
+import { buildSnapshot } from '../src/export/html-snapshot.js';
+import { startServer } from '../src/server/server.js';
+import { validateUsage } from '../src/core/validate.js';
+import { MAPPABLE_FIELDS, parseDelimited } from '../src/providers/generic/index.js';
+import { stringifyYaml, parseYaml } from '../src/core/yaml.js';
+import { PRICING_TABLE_VERSION, PRICING_SOURCES, TIER_MULTIPLIERS, buildPriceBook } from '../src/core/pricing.js';
+
+const C = process.stdout.isTTY && !process.env.NO_COLOR
+  ? { r: '\x1b[0m', b: '\x1b[1m', dim: '\x1b[2m', g: '\x1b[32m', y: '\x1b[33m', red: '\x1b[31m', c: '\x1b[36m', mag: '\x1b[35m' }
+  : { r: '', b: '', dim: '', g: '', y: '', red: '', c: '', mag: '' };
+
+const argv = process.argv.slice(2);
+const cmd = (argv[0] || '').replace(/^-+/, '') || 'status';
+const flags = parseFlags(argv.slice(1));
+
+main().catch((err) => {
+  console.error(`${C.red}✗ ${err.message}${C.r}`);
+  if (err.hint) console.error(`  ${C.dim}${err.hint}${C.r}`);
+  if (flags.debug) console.error(err.stack);
+  process.exit(1);
+});
+
+async function main() {
+  if (['help', 'h', '?'].includes(cmd) || flags.help) return help();
+  if (cmd === 'version' || flags.version) {
+    const pkg = readJson(path.join(root(), 'package.json'), {});
+    return console.log(pkg.version || '0.0.0');
+  }
+  await loadProviders();
+  switch (cmd) {
+    case 'setup': return cmdSetup();
+    case 'providers': return cmdProviders();
+    case 'provider': return cmdProvider();
+    case 'refresh': return cmdRefresh();
+    case 'status': return cmdStatus();
+    case 'dashboard': case 'serve': case 'ui': return cmdDashboard();
+    case 'up': case 'open': return cmdUp();
+    case 'export': return cmdExport();
+    case 'pricing': return cmdPricing();
+    case 'import': return cmdImport();
+    case 'restore': return cmdRestore();
+    case 'config': return cmdConfig();
+    case 'demo': return cmdDemo();
+    case 'validate': return cmdValidate();
+    case 'doctor': return cmdDoctor();
+    case 'compact': return cmdCompact();
+    case 'reset': return cmdReset();
+    default:
+      console.error(`${C.red}Unknown command "${cmd}".${C.r}\n`);
+      return help(1);
+  }
+}
+
+// ==================================================================== setup ==
+
+async function cmdSetup() {
+  const p = ensureDirs();
+  const cfg = loadConfig();
+  const ctx = { config: cfg, home: os.homedir() };
+  console.log(`\n${C.b}Tokenflow — setup${C.r}`);
+  console.log(`${C.dim}config home: ${p.root}${C.r}\n`);
+
+  const detected = [];
+  for (const pr of listProviders()) {
+    let det;
+    try { det = await pr.detect(ctx); } catch (e) { det = { available: false, detail: e.message }; }
+    const mark = det.available ? `${C.g}✓${C.r}` : `${C.dim}○${C.r}`;
+    console.log(`  ${mark} ${pad(pr.name, 42)} ${C.dim}${det.detail || ''}${C.r}`);
+    if (det.available && pr.id !== 'mock') detected.push(pr.id);
+  }
+
+  if (!detected.length) {
+    console.log(`\n${C.y}No usage sources found on this machine.${C.r}`);
+    console.log('  Options:');
+    console.log('    · tokenflow demo                 explore with synthetic data');
+    console.log('    · tokenflow import <file>        import a CSV/JSON/JSONL/SQLite export');
+    console.log('    · docs/providers.md             what each adapter looks for\n');
+  }
+
+  cfg.providers = detected;
+  cfg.timezone = cfg.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  cfg.identity = { user: cfg.identity?.user || os.userInfo().username, machine: cfg.identity?.machine || os.hostname(), team: cfg.identity?.team || null };
+  for (const id of detected) if (!cfg.sources[id]) cfg.sources[id] = { type: 'auto' };
+  const file = saveConfig(cfg);
+
+  console.log(`\n${C.g}✓${C.r} wrote ${file}`);
+  console.log(`  enabled providers: ${detected.length ? detected.join(', ') : '(none)'}`);
+  console.log(`  timezone: ${cfg.timezone}\n`);
+  console.log(`Next:  ${C.c}tokenflow refresh${C.r}   then   ${C.c}tokenflow dashboard${C.r}\n`);
+}
+
+// ================================================================ providers ==
+
+async function cmdProviders() {
+  const cfg = loadConfig();
+  const ctx = { config: cfg, home: os.homedir() };
+  const rows = [];
+  for (const pr of listProviders()) {
+    let det;
+    try { det = await pr.detect(ctx); } catch (e) { det = { available: false, detail: e.message }; }
+    const enabled = !cfg.providers.length || cfg.providers.includes(pr.id);
+    rows.push({ id: pr.id, name: pr.name, ...pr.getMetadata(), ...det, enabled });
+  }
+  if (flags.json) return console.log(JSON.stringify(rows, null, 2));
+  console.log('');
+  for (const r of rows) {
+    const status = !r.available ? `${C.dim}Not detected${C.r}` : r.enabled ? `${C.g}Connected${C.r}` : `${C.y}Detected (disabled)${C.r}`;
+    const mark = r.available ? (r.enabled ? `${C.g}✓${C.r}` : `${C.y}!${C.r}`) : `${C.dim}○${C.r}`;
+    console.log(`  ${mark} ${pad(r.name, 40)} ${pad(stripAnsi(status), 22)} ${C.dim}${r.detail || ''}${C.r}`.replace(stripAnsi(status), status));
+    if (r.measurement !== 'primary') console.log(`      ${C.dim}measurement: ${r.measurement} — ${r.measurement === 'overlay' ? 'excluded from token totals by default' : 'no token counts; activity only'}${C.r}`);
+  }
+  console.log(`\n  ${C.dim}enable/disable:  tokenflow provider add <id> | tokenflow provider remove <id>${C.r}\n`);
+}
+
+async function cmdProvider() {
+  const action = argv[1];
+  const id = argv[2];
+  const cfg = loadConfig();
+  if (!['add', 'remove', 'rm', 'list'].includes(action)) {
+    throw new Error('usage: tokenflow provider <add|remove|list> [id]');
+  }
+  if (action === 'list') return cmdProviders();
+  if (!id) throw new Error(`usage: tokenflow provider ${action} <id>`);
+  if (action === 'add') {
+    if (!getProvider(id)) {
+      throw Object.assign(new Error(`no provider "${id}"`), { hint: `available: ${listProviders().map((p) => p.id).join(', ')}` });
+    }
+    if (!cfg.providers.includes(id)) cfg.providers.push(id);
+    if (!cfg.sources[id]) cfg.sources[id] = { type: 'auto' };
+  } else {
+    cfg.providers = cfg.providers.filter((x) => x !== id);
+  }
+  saveConfig(cfg);
+  console.log(`${C.g}✓${C.r} providers: ${cfg.providers.join(', ') || '(none)'}`);
+}
+
+// ================================================================== refresh ==
+
+async function cmdRefresh() {
+  const t0 = Date.now();
+  const providers = flags.provider ? String(flags.provider).split(',') : null;
+  const budget = flags.budget ? Number(flags.budget) * 1000 : undefined;
+  let lastLine = '';
+  const report = await refresh({
+    registry: listProviders(),
+    providers,
+    full: !!flags.full,
+    force: !!flags.force,
+    strict: !!flags.strict,
+    deadlineMs: budget,
+    onProgress: (ev) => {
+      if (flags.quiet || flags.json) return;
+      if (ev.type === 'progress') {
+        lastLine = `  ${C.dim}${ev.provider}: ${int(ev.files)} files · ${int(ev.records)} records${C.r}`;
+        rewrite(lastLine);
+      } else if (ev.type === 'log') {
+        rewrite(`  ${C.dim}${ev.message}${C.r}`);
+      }
+    },
+  });
+  if (lastLine) rewrite('');
+  if (flags.json) return console.log(JSON.stringify(report, null, 2));
+
+  console.log('');
+  for (const p of report.providers) {
+    const mark = p.status === 'ok' ? `${C.g}✓${C.r}` : p.status === 'not-detected' ? `${C.dim}○${C.r}` : p.status === 'partial' ? `${C.y}◐${C.r}` : `${C.red}✗${C.r}`;
+    const detail = p.status === 'not-detected'
+      ? `${C.dim}${p.detail || 'not detected'}${C.r}`
+      : `${int(p.records)} new records · ${int(p.processed ?? 0)} files read, ${int(p.skipped)} unchanged`
+        + (p.files ? ` of ${int(p.files)} found` : '') + ` · ${bytes(p.bytes)}`;
+    console.log(`  ${mark} ${pad(p.id, 12)} ${detail}`);
+    for (const n of p.notes.slice(0, 3)) console.log(`      ${C.y}${n}${C.r}`);
+    if (p.notes.length > 3) console.log(`      ${C.dim}…${p.notes.length - 3} more notes${C.r}`);
+  }
+  console.log(`\n  ${C.b}${int(report.newRecords)}${C.r} new records · ${bytes(report.bytesRead)} read · ${int(report.filesSkipped)} files skipped as unchanged · ${humanDuration(Date.now() - t0)}`);
+  if (report.malformed) console.log(`  ${C.y}${int(report.malformed)} malformed lines skipped${C.r}`);
+  if (report.invalid.length) {
+    console.log(`  ${C.red}${report.invalid.length} records failed validation:${C.r}`);
+    for (const v of report.invalid.slice(0, 5)) console.log(`      ${v.source} ${v.id}: ${v.errors[0]}`);
+  }
+  if (report.rebuilt) {
+    console.log(`  ${C.dim}rebuilt aggregates from ${int(report.rebuilt.records)} stored records; dropped ${int(report.rebuilt.dropped || 0)} superseded${C.r}`);
+  }
+  if (!report.done) console.log(`  ${C.y}◐ time budget reached — run 'tokenflow refresh' again to continue${C.r}`);
+  console.log('');
+}
+
+// =================================================================== status ==
+
+async function cmdStatus() {
+  const b = buildBundle();
+  if (flags.json) return console.log(JSON.stringify({ meta: b.meta, health: b.health }, null, 2));
+  const h = b.health;
+  if (!h.records) {
+    console.log(`\n  ${C.y}No usage data yet.${C.r}`);
+    console.log(`  Run ${C.c}tokenflow setup${C.r} then ${C.c}tokenflow refresh${C.r}, or ${C.c}tokenflow demo${C.r} to try it with synthetic data.\n`);
+    return;
+  }
+  const v = computeView(b, {});
+  console.log(`\n  ${C.b}Tokenflow${C.r}${b.meta.demo ? `  ${C.red}[CONTAINS DEMO DATA]${C.r}` : ''}\n`);
+  const row = (k, val) => console.log(`  ${pad(k, 16)} ${val}`);
+  row('Records:', int(h.records));
+  row('Providers:', `${h.providers}  ${C.dim}${v.dimensions.providers.slice(0, 4).map((p) => p.key).join(', ')}${C.r}`);
+  row('Models:', `${h.models}  ${C.dim}${v.dimensions.models.slice(0, 3).map((m) => m.key).join(', ')}${C.r}`);
+  row('Date Range:', `${longDate(h.coverage.from)} → ${longDate(h.coverage.to)}`);
+  row('Total tokens:', `${compact(v.totals.total)}  ${C.dim}(${int(v.totals.total)})${C.r}`);
+  row('  input', `${compact(v.totals.in)}  ${pct(v.composition.shares.input)}`);
+  row('  output', `${compact(v.totals.out)}  ${pct(v.composition.shares.output)}`);
+  row('  cache', `${compact(v.totals.cr + v.totals.cw)}  ${pct(v.composition.shares.cache)}`);
+  row('Sessions:', int(h.sessions));
+  row('Active days:', `${v.averages.activeDays} of ${v.daily.length}`);
+  row('Avg / day:', compact(v.averages.perActiveDay));
+  row('Peak day:', v.peaks.peakDay ? `${compact(v.peaks.peakDay.total)}  ${longDate(v.peaks.peakDay.date)}` : '—');
+  row('Est. cost:', v.cost.estimated === null
+    ? `${C.dim}not available (no configured pricing)${C.r}`
+    : `${usd(v.cost.estimated)} ${C.dim}est. · covers ${pct(v.cost.coverage)} of requests${C.r}`);
+  if (v.cost.measured !== null) {
+    row('Measured cost:', `${usd(v.cost.measured)} ${C.dim}reported by the source/gateway itself${C.r}`);
+  }
+  row('Last Refresh:', relativeTime(h.lastRefresh));
+  const gradeColor = h.grade === 'Excellent' ? C.g : h.grade === 'Good' ? C.c : C.y;
+  row('Data Health:', `${gradeColor}${h.grade}${C.r} ${C.dim}· ${pct(h.missingTokenFieldRate)} of token fields unreported by source${C.r}`);
+  console.log('');
+  if (v.insights.length) {
+    console.log(`  ${C.b}Insights${C.r}`);
+    for (const i of v.insights.slice(0, 6)) console.log(`   ${i.icon} ${wrap(i.text, 92, 6)}`);
+    console.log('');
+  }
+  if (v.cost.unpriced.length) {
+    console.log(`  ${C.dim}${v.cost.unpriced.length} model(s) have no configured price. Run 'tokenflow pricing' to add rates.${C.r}\n`);
+  }
+}
+
+// ================================================================ dashboard ==
+
+async function cmdDashboard() {
+  const port = Number(flags.port) || 7799;
+  const host = flags.host || '127.0.0.1';
+  const b = buildBundle();
+  const s = await startServer({ port, host, token: flags.token === false ? false : undefined });
+  console.log(`\n  ${C.b}Tokenflow${C.r}`);
+  console.log(`  ${C.c}${s.url}${C.r}`);
+  console.log(`  ${C.dim}${int(b.health.records)} records · ${b.health.coverage.from ? `${shortDate(b.health.coverage.from)} → ${shortDate(b.health.coverage.to)}` : 'no data'} · loopback only, nothing leaves this machine${C.r}`);
+  if (!b.health.records) console.log(`  ${C.y}No data yet — click ↻ Refresh in the dashboard, or run 'tokenflow refresh'.${C.r}`);
+  console.log(`  ${C.dim}Ctrl+C to stop${C.r}\n`);
+  if (flags.open !== false && flags['no-open'] !== true) tryOpen(s.url);
+  await new Promise(() => {});
+}
+
+/**
+ * The "I just want to look at it" command: bring the data up to date, refresh
+ * the offline snapshot beside it, then serve and open the live dashboard.
+ *
+ * Refresh is time-budgeted and resumable, so this loops until the engine
+ * reports done instead of assuming one pass is enough — a first run over a
+ * multi-gigabyte log directory legitimately takes several passes.
+ */
+async function cmdUp() {
+  const budget = Number(flags.budget) || 60;
+  const maxPasses = Number(flags.passes) || 20;
+  let pass = 0;
+  let total = 0;
+  if (flags.refresh !== false && flags['no-refresh'] !== true) {
+    for (;;) {
+      pass++;
+      const report = await refresh({
+        registry: listProviders(),
+        deadlineMs: budget * 1000,
+        onProgress: (ev) => {
+          if (ev.type === 'progress') rewrite(`  ${C.dim}pass ${pass}: ${int(ev.files)} files · ${int(ev.records)} records${C.r}`);
+        },
+      });
+      total += report.newRecords;
+      rewrite('');
+      const unreachable = report.providers.filter((x) => x.status === 'error' || x.status === 'detect-error');
+      for (const u of unreachable) console.log(`  ${C.y}! ${u.id}: ${u.notes[0] || 'failed'}${C.r}`);
+      if (report.done) break;
+      if (pass >= maxPasses) {
+        console.log(`  ${C.y}◐ stopped after ${pass} passes — run 'tokenflow refresh' again to finish the backlog${C.r}`);
+        break;
+      }
+    }
+    console.log(`  ${C.g}✓${C.r} data current ${C.dim}(${int(total)} new record(s) in ${pass} pass(es))${C.r}`);
+  }
+
+  // Keep the offline copy next to the live one: whoever opens the .html file
+  // later gets the same numbers, and its freshness bar has something recent
+  // to report.
+  if (flags.snapshot !== false && flags['no-snapshot'] !== true) {
+    const file = path.join(process.cwd(), typeof flags.snapshot === 'string' ? flags.snapshot : 'tokenflow-dashboard.html');
+    try {
+      const { html, stats } = buildSnapshot({ maxRecords: Number(flags.maxRecords) || 20000 });
+      fs.writeFileSync(file, html);
+      console.log(`  ${C.g}✓${C.r} offline snapshot refreshed ${C.dim}${file} · ${bytes(stats.bytes)}${C.r}`);
+    } catch (err) {
+      console.log(`  ${C.y}! snapshot skipped: ${err.message}${C.r}`);
+    }
+  }
+
+  if (flags.serve === false || flags['no-serve'] === true) {
+    console.log(`  ${C.dim}not serving (--no-serve). Open the offline file, or run 'tokenflow dashboard'.${C.r}\n`);
+    return undefined;
+  }
+  return cmdDashboard();
+}
+
+function tryOpen(url) {
+  const cmds = process.platform === 'darwin' ? ['open'] : process.platform === 'win32' ? ['cmd', '/c', 'start', ''] : ['xdg-open'];
+  import('node:child_process').then(({ spawn }) => {
+    try {
+      spawn(cmds[0], [...cmds.slice(1), url], { stdio: 'ignore', detached: true }).unref();
+    } catch { /* headless: the URL is printed above */ }
+  });
+}
+
+// =================================================================== export ==
+
+async function cmdExport() {
+  const outDir = flags.out ? String(flags.out) : process.cwd();
+  if (flags.html !== undefined) {
+    const file = typeof flags.html === 'string' ? flags.html : path.join(outDir, exportFilename('tokenflow', new Date(), 'html'));
+    const { html, stats } = buildSnapshot({ maxRecords: Number(flags.maxRecords) || 20000 });
+    fs.writeFileSync(file, html);
+    console.log(`${C.g}✓${C.r} ${file}  ${C.dim}${bytes(stats.bytes)} · ${int(stats.cubeRows)} cube rows · ${int(stats.records)} records${stats.recordsTruncated ? ' (capped)' : ''} · fully offline${C.r}`);
+    return;
+  }
+  const file = typeof flags.csv === 'string' ? flags.csv : path.join(outDir, exportFilename());
+  const filter = flags.all ? {} : {
+    from: flags.from || null, to: flags.to || null,
+    provider: flags.provider, model: flags.model, client: flags.client,
+    interface: flags.interface, project: flags.project,
+  };
+  const fd = fs.openSync(file, 'w');
+  let n = 0;
+  try {
+    n = streamRecordsCsv((chunk) => fs.writeSync(fd, chunk), filter);
+  } finally {
+    fs.closeSync(fd);
+  }
+  console.log(`${C.g}✓${C.r} ${file}  ${C.dim}${int(n)} records${flags.all ? ' (all data)' : ' (current filter)'}${C.r}`);
+}
+
+// ================================================================== pricing ==
+
+async function cmdPricing() {
+  const p = paths();
+  const cur = readJson(p.pricing, { models: {} });
+  if (flags.set) {
+    // --set "claude-opus-5=15,75,1.5,18.75"  (input,output,cacheRead,cacheWrite)
+    for (const spec of [].concat(flags.set)) {
+      const [model, csv] = String(spec).split('=');
+      if (!model || !csv) throw new Error('usage: --set "<model>=<input>,<output>[,<cacheRead>[,<cacheWrite>]]"');
+      const [i, o, cr, cw] = csv.split(',').map((x) => (x === '' ? null : Number(x)));
+      cur.models = cur.models || {};
+      cur.models[model] = { in: i, out: o, ...(cr !== undefined && cr !== null ? { cacheRead: cr } : {}), ...(cw !== undefined && cw !== null ? { cacheWrite: cw } : {}) };
+      console.log(`${C.g}✓${C.r} ${model}: $${i}/1M in, $${o}/1M out${cr ? `, $${cr} cache read` : ''}${cw ? `, $${cw} cache write` : ''}`);
+    }
+    cur.updatedAt = new Date().toISOString();
+    writeJson(p.pricing, cur);
+    console.log(`${C.dim}saved to ${p.pricing} — run 'tokenflow refresh --full' to re-cost history${C.r}`);
+    return;
+  }
+  if (flags.unset) {
+    delete (cur.models || {})[String(flags.unset)];
+    writeJson(p.pricing, cur);
+    return console.log(`${C.g}✓${C.r} removed ${flags.unset}`);
+  }
+  if (flags.sources) {
+    console.log(`\n  ${C.b}Where the built-in rates come from${C.r}  ${C.dim}table ${PRICING_TABLE_VERSION}${C.r}\n`);
+    for (const [key, src] of Object.entries(PRICING_SOURCES)) {
+      const tag = src.confidence === 'official' ? `${C.g}official${C.r}`
+        : src.confidence === 'third-party' ? `${C.y}third-party${C.r}` : `${C.c}official (historical)${C.r}`;
+      console.log(`  ${pad(key, 20)} ${tag}  ${C.dim}fetched ${src.fetched}${C.r}`);
+      console.log(`  ${' '.repeat(20)} ${C.dim}${src.url}${C.r}`);
+      if (src.note) console.log(`  ${' '.repeat(20)} ${C.y}${wrap(src.note, 76, 22)}${C.r}`);
+    }
+    console.log(`\n  ${C.b}Service-tier multipliers${C.r}  ${C.dim}applied per request from metadata.service_tier${C.r}`);
+    for (const [prov, tiers] of Object.entries(TIER_MULTIPLIERS)) {
+      const shown = Object.entries(tiers).filter(([, v]) => v !== 1).map(([k, v]) => `${k}=${v}x`);
+      console.log(`  ${pad(prov, 20)} ${shown.length ? shown.join('  ') : C.dim + 'all tiers 1x' + C.r}`);
+    }
+    console.log(`\n  ${C.y}Not applied:${C.r} long-context premium tiers (Anthropic >200K, OpenAI long-context).`);
+    console.log(`  ${C.dim}They need a per-request prompt size plus a per-model threshold and premium, which`);
+    console.log(`  are not uniformly published. A long-context-heavy workload is therefore UNDER-estimated.${C.r}\n`);
+    return;
+  }
+
+  const b = buildBundle();
+  const v = computeView(b, {});
+  const book = buildPriceBook(readJson(p.pricing, {}));
+  console.log(`\n  ${C.b}Pricing${C.r}  ${C.dim}built-in table ${PRICING_TABLE_VERSION} · overrides in ${p.pricing}${C.r}\n`);
+  console.log(`  ${pad('MODEL', 30)} ${pad('TOKENS', 9)} ${pad('EST. COST', 12)} ${pad('$/1M', 9)} SOURCE`);
+  for (const m of v.dimensions.models) {
+    const entry = book.lookup(m.key, m.provider || undefined) || book.lookup(m.key, 'unknown');
+    const ok = m.cost !== null;
+    const per1m = ok && m.total ? usd(m.cost / (m.total / 1e6)) : '—';
+    const src = entry ? (entry.origin === 'user' ? `${C.c}your override${C.r}` : `${C.dim}${entry.src}${C.r}`) : `${C.y}unpriced${C.r}`;
+    console.log(`  ${pad(m.key, 30)} ${pad(compact(m.total), 9)} ${pad(ok ? usd(m.cost) : '—', 12)} ${pad(per1m, 9)} ${src}`);
+  }
+  console.log(`\n  ${C.dim}provenance:  tokenflow pricing --sources${C.r}`);
+  console.log(`  ${C.dim}add a rate:  tokenflow pricing --set "<model>=<input$/1M>,<output$/1M>[,<cacheRead>[,<cacheWrite>]]"${C.r}`);
+  console.log(`  ${C.dim}or use the Pricing dialog in the dashboard.${C.r}\n`);
+}
+
+// =================================================================== import ==
+
+async function cmdImport() {
+  const file = argv[1];
+  if (!file) {
+    console.log(`\n  ${C.b}Generic import${C.r}`);
+    console.log('  usage: tokenflow import <file> [--name <mapping>] [--format csv|tsv|json|jsonl|sqlite] [--table t]');
+    console.log('                            [--field <schemaField>=<sourceColumn>]... [--default <field>=<value>]...');
+    console.log('                            [--timestamp-format iso|epoch_ms|epoch_s] [--dry-run]\n');
+    console.log(`  mappable fields: ${C.dim}${MAPPABLE_FIELDS.join(', ')}${C.r}`);
+    console.log(`  ${C.dim}A mapping is saved to ${paths().mappings}/<name>.json and reused on every later refresh.${C.r}\n`);
+    return;
+  }
+  const abs = path.resolve(file.startsWith('~') ? path.join(os.homedir(), file.slice(1)) : file);
+  if (!fs.existsSync(abs)) throw new Error(`no such file: ${abs}`);
+  const name = String(flags.name || path.basename(abs).replace(/\.[^.]+$/, '')).replace(/[^\w.-]/g, '_');
+  const fields = {};
+  for (const f of [].concat(flags.field || [])) {
+    const [k, v] = String(f).split('=');
+    if (!MAPPABLE_FIELDS.includes(k)) throw new Error(`"${k}" is not a mappable field. Options: ${MAPPABLE_FIELDS.join(', ')}`);
+    fields[k] = v;
+  }
+  const defaults = {};
+  for (const d of [].concat(flags.default || [])) {
+    const [k, v] = String(d).split('=');
+    defaults[k] = v;
+  }
+
+  // Suggest a mapping from the header row when the user gave none.
+  if (!Object.keys(fields).length) {
+    const cols = sniffColumns(abs, flags.format);
+    console.log(`\n  ${C.b}Columns found${C.r}: ${cols.join(', ') || '(none)'}\n`);
+    const guess = guessMapping(cols);
+    for (const [k, v] of Object.entries(guess)) console.log(`  ${C.dim}--field ${k}=${v}${C.r}`);
+    if (!Object.keys(guess).length) {
+      throw Object.assign(new Error('could not infer a mapping'), { hint: 'pass --field <schemaField>=<column> for at least timestamp and the token fields' });
+    }
+    Object.assign(fields, guess);
+    console.log(`\n  ${C.y}Using the inferred mapping above.${C.r} Re-run with explicit --field flags to change it.\n`);
+  }
+  if (!fields.timestamp) throw new Error('a timestamp field is required (--field timestamp=<column>)');
+
+  const mapping = {
+    name,
+    format: flags.format || undefined,
+    files: [abs],
+    table: flags.table || undefined,
+    query: flags.query || undefined,
+    timestampFormat: flags['timestamp-format'] || undefined,
+    fields,
+    defaults,
+  };
+
+  const gen = getProvider('generic');
+  const sample = sniffRows(abs, flags.format, 5).map((r) => gen.normalize(r, mapping));
+  console.log(`  ${C.b}Preview${C.r} (${sample.length} rows)`);
+  for (const s of sample) {
+    if (!s) { console.log(`   ${C.red}row skipped: unparseable timestamp${C.r}`); continue; }
+    console.log(`   ${s.timestamp}  ${pad(String(s.model), 24)} in=${fmtNull(s.input_tokens)} out=${fmtNull(s.output_tokens)} cacheR=${fmtNull(s.cache_read_tokens)}`);
+  }
+  console.log(`  ${C.dim}"n/a" means the mapping leaves that field unset — it is stored as not-available, never as 0.${C.r}`);
+  if (flags['dry-run']) return console.log(`\n  ${C.y}dry run — nothing saved${C.r}\n`);
+
+  ensureDirs();
+  const dest = path.join(paths().mappings, `${name}.json`);
+  writeJson(dest, mapping);
+  const cfg = loadConfig();
+  if (!cfg.providers.includes('generic')) { cfg.providers.push('generic'); saveConfig(cfg); }
+  console.log(`\n${C.g}✓${C.r} saved mapping ${dest}`);
+  console.log(`  running refresh for the generic provider…\n`);
+  argv[0] = 'refresh';
+  flags.provider = 'generic';
+  await cmdRefresh();
+}
+
+function fmtNull(v) {
+  return v === null || v === undefined ? `${C.dim}n/a${C.r}` : String(v);
+}
+
+function sniffColumns(file, fmt) {
+  const rows = sniffRows(file, fmt, 1);
+  return rows.length ? Object.keys(rows[0]) : [];
+}
+
+function sniffRows(file, fmt, n) {
+  const ext = (fmt || path.extname(file).slice(1)).toLowerCase();
+  if (ext === 'jsonl' || ext === 'ndjson') {
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(0, n);
+    return lines.map((l) => { try { return JSON.parse(l); } catch { return {}; } });
+  }
+  if (ext === 'json') {
+    const d = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const arr = Array.isArray(d) ? d : (d.records || d.data || d.usage || []);
+    return arr.slice(0, n);
+  }
+  if (ext === 'db' || ext === 'sqlite' || ext === 'sqlite3') {
+    return [];
+  }
+  const head = fs.readFileSync(file, 'utf8').split('\n').slice(0, n + 1).join('\n');
+  return parseDelimited(head, ext === 'tsv' ? '\t' : ',').slice(0, n);
+}
+
+function guessMapping(cols) {
+  const pick = (...pats) => cols.find((c) => pats.some((p) => new RegExp(p, 'i').test(c)));
+  const out = {};
+  const put = (k, v) => { if (v) out[k] = v; };
+  put('timestamp', pick('^(timestamp|ts|created_?at|date_?time|time)$', 'timestamp', 'created'));
+  put('model', pick('^model', 'model'));
+  put('provider', pick('^provider$', 'vendor'));
+  put('input_tokens', pick('^(input|prompt)_?tokens$', 'prompt_tokens', 'input_tokens'));
+  put('output_tokens', pick('^(output|completion|generated)_?tokens$', 'completion_tokens'));
+  put('cache_read_tokens', pick('cache_?read', 'cached_?(input_?)?tokens', 'cache_?hit'));
+  put('cache_write_tokens', pick('cache_?(write|creation)'));
+  put('reasoning_tokens', pick('reasoning', 'thinking'));
+  put('estimated_cost', pick('^cost', 'cost_usd', 'total_cost', 'amount'));
+  put('session_id', pick('session', 'conversation_?id', 'generation_?id', '^id$'));
+  put('project', pick('^project', 'repo'));
+  put('client', pick('^client$', '^app$', 'application'));
+  return out;
+}
+
+// =================================================================== config ==
+
+async function cmdConfig() {
+  const action = argv[1] || 'show';
+  const p = paths();
+  if (action === 'path') return console.log(p.root);
+  if (action === 'show') {
+    return console.log(stringifyYaml(loadConfig()));
+  }
+  if (action === 'export') {
+    const dest = argv[2] || path.join(process.cwd(), `tokenflow-config-${new Date().toISOString().slice(0, 10)}.json`);
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      config: loadConfig(),
+      pricing: readJson(p.pricing, {}),
+      mappings: Object.fromEntries((safeReaddir(p.mappings)).map((f) => [f, readJson(path.join(p.mappings, f), null)])),
+    };
+    writeJson(dest, payload);
+    return console.log(`${C.g}✓${C.r} ${dest}  ${C.dim}(config + pricing + import mappings; no usage data)${C.r}`);
+  }
+  if (action === 'import') {
+    const src = argv[2];
+    if (!src) throw new Error('usage: tokenflow config import <file>');
+    const d = readJson(path.resolve(src), null);
+    if (!d || !d.config) throw new Error('not a config export');
+    ensureDirs();
+    saveConfig(merge(DEFAULT_CONFIG, d.config));
+    if (d.pricing) writeJson(p.pricing, d.pricing);
+    for (const [name, m] of Object.entries(d.mappings || {})) if (m) writeJson(path.join(p.mappings, name), m);
+    return console.log(`${C.g}✓${C.r} imported config, pricing and ${Object.keys(d.mappings || {}).length} mapping(s) into ${p.root}`);
+  }
+  throw new Error('usage: tokenflow config <show|path|export|import>');
+}
+
+function safeReaddir(d) {
+  try { return fs.readdirSync(d).filter((f) => f.endsWith('.json')); } catch { return []; }
+}
+
+// ===================================================================== demo ==
+
+async function cmdDemo() {
+  process.env.TOKENFLOW_DEMO = '1';
+  const cfg = loadConfig();
+  cfg.providers = ['mock'];
+  cfg.sources.mock = { days: Number(flags.days) || 160, seed: Number(flags.seed) || 20260814 };
+  saveConfig(cfg);
+  console.log(`\n  ${C.red}Generating SYNTHETIC DEMO DATA${C.r} ${C.dim}(clearly labelled everywhere in the UI)${C.r}\n`);
+  argv[0] = 'refresh';
+  flags.full = true;
+  flags.provider = 'mock';
+  await cmdRefresh();
+  // `--no-serve` / `--no-dashboard` keep this non-interactive, which is what CI
+  // and scripted setups need.
+  if (flags.dashboard !== false && flags['no-dashboard'] !== true && flags.serve !== false && flags['no-serve'] !== true) {
+    flags.port = flags.port || 7799;
+    await cmdDashboard();
+  } else {
+    console.log(`  Next: ${C.c}tokenflow dashboard${C.r}\n`);
+  }
+}
+
+// ================================================================= validate ==
+
+async function cmdValidate() {
+  const store = new Store();
+  let n = 0;
+  let bad = 0;
+  const errors = new Map();
+  const { decodeRecord } = await import('../src/core/store.js');
+  store.scanRecords((o) => {
+    n++;
+    const r = decodeRecord(o);
+    const v = validateUsage(r);
+    if (!v.ok) {
+      bad++;
+      for (const e of v.errors) errors.set(e, (errors.get(e) || 0) + 1);
+    }
+  });
+  console.log(`\n  checked ${int(n)} records · ${bad ? `${C.red}${int(bad)} invalid${C.r}` : `${C.g}all valid${C.r}`}`);
+  for (const [e, c] of [...errors].sort((a, b) => b[1] - a[1]).slice(0, 12)) console.log(`   ${C.y}${int(c)}×${C.r} ${e}`);
+  console.log('');
+  if (bad) process.exitCode = 1;
+}
+
+// =================================================================== doctor ==
+
+async function cmdDoctor() {
+  const p = paths();
+  const cfg = loadConfig();
+  console.log(`\n  ${C.b}Environment${C.r}`);
+  console.log(`   node          ${process.version} ${major() >= 22 ? `${C.g}ok${C.r}` : `${C.red}needs >= 22.5${C.r}`}`);
+  let sqliteOk = false;
+  try { const { sqliteAvailable } = await import('../src/core/sqlite.js'); sqliteOk = sqliteAvailable(); } catch { /* unavailable */ }
+  console.log(`   node:sqlite   ${sqliteOk ? `${C.g}available${C.r}` : `${C.y}unavailable — SQLite sources will be skipped${C.r}`}`);
+  console.log(`   platform      ${process.platform}/${process.arch}`);
+  console.log(`   timezone      ${cfg.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+  console.log(`\n  ${C.b}Paths${C.r}`);
+  for (const [k, v] of Object.entries(p)) {
+    const exists = fs.existsSync(v);
+    console.log(`   ${pad(k, 12)} ${exists ? `${C.g}✓${C.r}` : `${C.dim}·${C.r}`} ${v}`);
+  }
+  const store = new Store();
+  const shards = store.listShards();
+  let raw = 0;
+  for (const s of shards) { try { raw += fs.statSync(path.join(p.records, s)).size; } catch { /* gone */ } }
+  console.log(`\n  ${C.b}Store${C.r}`);
+  console.log(`   shards        ${shards.length} (${bytes(raw)} of request-level records)`);
+  console.log(`   cube          ${int(store.cube().rows.length)} rows`);
+  console.log(`   sessions      ${int(Object.keys(store.sessions().rows).length)}`);
+  console.log(`   stale gens    ${(store.state.stale || []).length}${(store.state.stale || []).length ? `  ${C.y}run 'tokenflow compact'${C.r}` : ''}`);
+  console.log(`\n  ${C.b}Providers${C.r}`);
+  await cmdProviders();
+  console.log(`  ${C.dim}Troubleshooting guide: docs/troubleshooting.md${C.r}\n`);
+}
+
+function major() {
+  return Number(process.version.slice(1).split('.')[0]) + Number(process.version.slice(1).split('.')[1]) / 100;
+}
+
+// ================================================================== compact ==
+
+async function cmdCompact() {
+  const { compactShards } = await import('../src/core/store.js');
+  const { rebuildAggregates } = await import('../src/core/ingest.js');
+  const store = new Store();
+  const stale = store.staleSet().size;
+  if (!stale && !flags.recount) {
+    console.log(`  ${C.g}nothing to compact${C.r} — no superseded records.`);
+    console.log(`  ${C.dim}pass --recount to rebuild the aggregates and re-derive the record counts anyway.${C.r}`);
+    return;
+  }
+  if (stale) {
+    const res = compactShards(store);
+    console.log(`  ${C.g}✓${C.r} compacted ${res.shards} shard(s): kept ${int(res.kept)}, dropped ${int(res.dropped)}.`);
+  }
+  const before = store.state.counters?.records || 0;
+  const rb = rebuildAggregates(store);
+  // Counts are derived from the records that actually survived, so a store that
+  // has been restored, re-ingested or compacted stops reporting a lifetime
+  // total in place of its real size.
+  store.state.counters.records = rb.records;
+  for (const id of Object.keys(store.state.sources)) store.state.sources[id].records = rb.bySource[id] || 0;
+  store.saveCube();
+  store.saveSessions();
+  store.saveActivity();
+  store.saveState();
+  console.log(`  ${C.g}✓${C.r} rebuilt aggregates from ${int(rb.records)} records.`);
+  if (before !== rb.records) console.log(`  ${C.g}✓${C.r} re-derived record counts ${C.dim}(state said ${int(before)}, the store holds ${int(rb.records)})${C.r}`);
+  for (const [id, n] of Object.entries(rb.bySource).sort((a, b) => b[1] - a[1])) console.log(`      ${id.padEnd(12)} ${int(n).padStart(9)}`);
+}
+
+async function cmdRestore() {
+  const file = argv[1] && !argv[1].startsWith('-') ? argv[1] : (typeof flags.file === 'string' ? flags.file : null);
+  if (!file) {
+    throw Object.assign(new Error('usage: tokenflow restore <full-export.csv>'), {
+      hint: 'Rebuilds the store from a `tokenflow export --csv --all` file and re-prices every estimate with the current table.',
+    });
+  }
+  const store = new Store();
+  const held = store.state.counters?.records || 0;
+  if (held > 0 && !flags.yes) {
+    throw Object.assign(new Error(`this replaces the ${int(held)} record(s) already in the store`), {
+      hint: 'A restore is a whole-dataset operation, not an increment. Re-run with --yes to confirm.',
+    });
+  }
+  const { restoreFromCsv } = await import('../src/core/restore.js');
+  console.log(`\n  restoring from ${C.b}${file}${C.r}${flags['no-reprice'] ? '' : ' · re-pricing estimates with the current table'}`);
+  const r = restoreFromCsv(path.resolve(file), {
+    reprice: !flags['no-reprice'],
+    onProgress: (e) => {
+      if (e.type === 'progress') process.stdout.write(`\r  ${C.dim}${int(e.records)} records…${C.r}`);
+    },
+  });
+  process.stdout.write('\r\x1b[K');
+  console.log(`  ${C.g}✓${C.r} ${int(r.records)} records restored ${C.dim}in ${(r.durationMs / 1000).toFixed(1)}s${C.r}`);
+  for (const [id, n] of Object.entries(r.bySource).sort((a, b) => b[1] - a[1])) {
+    console.log(`      ${id.padEnd(12)} ${int(n).padStart(9)}`);
+  }
+  console.log(`  ${C.dim}re-priced ${int(r.repriced)} · measured costs kept ${int(r.measuredKept)} · no price found ${int(r.unpriced)} · table ${r.pricingVersion}${C.r}`);
+  if (r.malformed || r.dropped.noTimestamp || r.dropped.noDate) {
+    console.log(`  ${C.y}!${C.r} skipped ${int(r.malformed)} malformed row(s), ${int(r.dropped.noTimestamp + r.dropped.noDate)} row(s) without a usable timestamp`);
+  }
+  console.log(`  ${C.dim}Per-record metadata (working directory, audit trail) is not part of a CSV export and is not restored.${C.r}`);
+  console.log(`  ${C.dim}Restored records are provisional: a refresh that reaches a source's real logs supersedes them automatically.${C.r}\n`);
+}
+
+async function cmdReset() {
+  if (!flags.yes) {
+    throw Object.assign(new Error('this deletes all ingested data'), { hint: `re-run with --yes to confirm. Config and pricing are kept. Data home: ${paths().root}` });
+  }
+  const p = paths();
+  fs.rmSync(p.data, { recursive: true, force: true });
+  ensureDirs();
+  console.log(`${C.g}✓${C.r} cleared ${p.data} (config and pricing kept)`);
+}
+
+// ===================================================================== help ==
+
+function help(code = 0) {
+  console.log(`
+  ${C.b}tokenflow${C.r} — local-first AI token usage & activity analytics
+
+  ${C.b}Getting started${C.r}
+    tokenflow setup                 detect local AI tools and write config
+    tokenflow up                    refresh + rebuild the offline file + open it
+    tokenflow refresh               ingest new usage (incremental, resumable)
+    tokenflow dashboard             open the local dashboard (no refresh)
+    tokenflow demo                  explore with clearly-labelled synthetic data
+                                   (--no-serve to generate the data and exit)
+
+  ${C.b}Everyday${C.r}
+    tokenflow status                totals, coverage, data health, insights
+    tokenflow providers             what is detected / connected
+    tokenflow provider add <id>     enable an adapter
+    tokenflow refresh --full        re-ingest everything from scratch
+                                   (refuses if a source's logs are unreachable;
+                                    --force discards those records anyway)
+    tokenflow refresh --budget 30   stop cleanly after 30s and resume next run
+    tokenflow export --csv          current view as CSV
+    tokenflow export --csv --all    every normalized record
+    tokenflow export --html         one self-contained offline dashboard file
+
+  ${C.b}Configure${C.r}
+    tokenflow pricing               show which models have a price, and from where
+    tokenflow pricing --sources     provenance of every built-in rate + tier multipliers
+    tokenflow pricing --set "m=3,15,0.3,3.75"
+    tokenflow import <file>         CSV / JSON / JSONL / SQLite with field mapping
+    tokenflow restore <file.csv>    rebuild the store from a full export, re-priced
+    tokenflow config show|path|export|import
+
+  ${C.b}Maintain${C.r}
+    tokenflow doctor                environment, paths, store, adapters
+    tokenflow validate              re-validate every stored record
+    tokenflow compact               drop superseded records after a rewrite
+    tokenflow reset --yes           delete ingested data (keeps config)
+
+  ${C.b}Flags${C.r}  --json  --quiet  --provider <id>  --from/--to <date>  --port <n>  --no-open  --debug
+
+  ${C.dim}Everything runs locally. No usage data, prompt or file content ever leaves this machine.
+  Data home: ${paths().root}${C.r}
+`);
+  process.exitCode = code;
+}
+
+// ===================================================================== util ==
+
+function parseFlags(args) {
+  const out = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('--')) continue;
+    if (a.startsWith('--no-')) { out[a.slice(5)] = false; continue; }
+    const eq = a.indexOf('=');
+    let key;
+    let val;
+    if (eq > -1) { key = a.slice(2, eq); val = a.slice(eq + 1); } else {
+      key = a.slice(2);
+      const next = args[i + 1];
+      if (next && !next.startsWith('--')) { val = next; i++; } else val = true;
+    }
+    if (out[key] === undefined) out[key] = val;
+    else out[key] = [].concat(out[key], val);
+  }
+  return out;
+}
+
+function pad(s, n) {
+  const t = String(s ?? '');
+  return t.length >= n ? t : t + ' '.repeat(n - t.length);
+}
+function stripAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;]*m/g, '');
+}
+function bytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+function rewrite(line) {
+  if (!process.stdout.isTTY) { if (line) console.log(stripAnsi(line)); return; }
+  process.stdout.write('\r\x1b[2K' + line);
+}
+function wrap(text, width, indent) {
+  const words = String(text).split(' ');
+  const pre = ' '.repeat(indent);
+  let line = '';
+  const lines = [];
+  for (const w of words) {
+    if ((line + ' ' + w).trim().length > width) { lines.push(line.trim()); line = w; } else line += ' ' + w;
+  }
+  if (line.trim()) lines.push(line.trim());
+  return lines.join('\n' + pre);
+}
+function root() {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+}

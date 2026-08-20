@@ -1,0 +1,26 @@
+{
+  "name": "openrouter-export",
+  "format": "csv",
+  "files": ["~/Downloads/openrouter-activity-*.csv"],
+  "timestampFormat": "iso",
+  "measurement": "primary",
+  "idField": "generation_id",
+  "defaults": {
+    "client": "openrouter",
+    "application": "OpenRouter",
+    "interface": "API"
+  },
+  "fields": {
+    "timestamp": "created_at",
+    "model": "model",
+    "input_tokens": "tokens_prompt",
+    "output_tokens": "tokens_completion",
+    "cache_read_tokens": "cached_tokens",
+    "estimated_cost": "cost_usd",
+    "session_id": "generation_id",
+    "project": "app_name"
+  },
+  "metadata": {
+    "note": "Saved to $TOKENFLOW_HOME/mappings/openrouter-export.json and reused on every refresh. Unmapped token fields (cache_write, reasoning) stay null, not 0. `estimated_cost` from the source is recorded as cost_basis:measured, so it is never overwritten by a price-table estimate. If this export's input column INCLUDED cached tokens, a mapping could not fix that — an adapter would be needed to subtract."
+  }
+}

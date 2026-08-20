@@ -1,0 +1,9 @@
+#!/bin/bash
+# Convenience wrapper for a self-contained checkout: keeps Tokenflow's data
+# inside the project folder instead of ~/.tokenflow, so the whole thing —
+# code, config and ingested data — moves as one directory.
+#
+# Delete this file if you would rather use the default home.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+export TOKENFLOW_HOME="${TOKENFLOW_HOME:-$DIR/.tokenflow}"
+exec node "$DIR/bin/tokenflow.js" "$@"

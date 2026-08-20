@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Tokenflow</title>
+<link rel="stylesheet" href="/src/ui/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%233987e5'/><path d='M7 22V13M13 22V8M19 22V16M25 22V11' stroke='white' stroke-width='2.6' stroke-linecap='round'/></svg>">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <h1><span class="dot" id="health-dot" title="Data health"></span> Tokenflow</h1>
+      <span class="sub" id="coverage">loading…</span>
+    </div>
+    <div class="spacer"></div>
+    <div id="header-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="banners"></div>
+  <div id="filters" class="filters"></div>
+  <div id="crumbs" class="crumbs"></div>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <main id="view" style="padding-top:14px"></main>
+  <footer class="muted" style="padding:32px 0 0;font-size:11.5px;line-height:1.7" id="footer"></footer>
+</div>
+
+<dialog id="modal">
+  <div class="d-head"><h2 id="modal-title">…</h2><div class="spacer" style="flex:1"></div>
+    <button class="btn ghost sm" id="modal-close">Close</button></div>
+  <div class="d-body" id="modal-body"></div>
+  <div class="d-foot" id="modal-foot"></div>
+</dialog>
+
+<noscript><div class="banner">This dashboard needs JavaScript. All computation is local — nothing is sent anywhere.</div></noscript>
+<script type="module" src="/src/ui/app.js"></script>
+</body>
+</html>

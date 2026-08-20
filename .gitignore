@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------- toolchain --
+node_modules/
+*.log
+npm-debug.log*
+/dist/
+/coverage/
+*.tgz
+
+# ------------------------------------------------------------------- editors --
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*~
+
+# ------------------------------------------------- YOUR data (never commit) --
+# Tokenflow's own data home, when it is kept inside the project folder.
+# It contains your ingested usage: session ids, project paths, repo names.
+.tokenflow/
+.ai-usage/
+tokenflow-home/
+
+# Generated dashboards and exports. They are derived from your usage, and a
+# full export is effectively your whole dataset in one file.
+tokenflow-dashboard.html
+tokenflow-dashboard-snapshot*.html
+ai-usage-dashboard.html
+*.snapshot.html
+tokenflow-usage-*.csv
+tokenflow-daily.csv
+tokenflow-providers.csv
+tokenflow-models.csv
+tokenflow-config-*.json
+ai-token-usage-*.csv
+
+# Personal scratch: install tarballs, staging, notes, anything you park here.
+_install/
+_to_delete/
+_local/
+scratch/
+notes/
+PUBLISH.md
+TODO.local.md
+*.local.md
+*.local.json
+*.local.yaml
+
+# Secrets — this project needs none, so anything matching is an accident.
+.env
+.env.*
+*.pem
+*.key
+*_token
+*.credentials.json

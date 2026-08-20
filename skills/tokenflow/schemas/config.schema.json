@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenflow/schemas/config.schema.json",
+  "title": "tokenflow config.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "timezone": { "type": ["string", "null"], "description": "IANA zone used to resolve date/hour/dow at ingest. null = this machine's zone." },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Stamped onto records so a future team deployment can aggregate across machines.",
+      "properties": {
+        "user": { "type": ["string", "null"] },
+        "machine": { "type": ["string", "null"] },
+        "team": { "type": ["string", "null"] }
+      }
+    },
+    "providers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Enabled adapter ids. Empty means 'all detected'."
+    },
+    "sources": {
+      "type": "object",
+      "description": "Per-adapter options. Unknown keys are passed to the adapter untouched.",
+      "additionalProperties": true,
+      "properties": {
+        "anthropic": {
+          "type": "object",
+          "properties": { "paths": { "type": "array", "items": { "type": "string" }, "description": "Claude Code homes. Overrides auto-discovery." } }
+        },
+        "openai": {
+          "type": "object",
+          "properties": { "paths": { "type": "array", "items": { "type": "string" }, "description": "Codex homes." } }
+        },
+        "cline": { "type": "object", "properties": { "path": { "type": "string" } } },
+        "cursor": { "type": "object", "properties": { "db": { "type": "string" } } },
+        "headroom": { "type": "object", "properties": { "path": { "type": "string" } } },
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repos": { "type": "array", "items": { "type": "string" } },
+            "scanRoots": { "type": "array", "items": { "type": "string" }, "description": "Searched for .git, depth 3." },
+            "autoFromUsage": { "type": "boolean", "default": true, "description": "Also use working directories seen in ingested usage records." },
+            "author": { "type": "string" },
+            "since": { "type": "string" }
+          }
+        },
+        "generic": {
+          "type": "object",
+          "properties": { "imports": { "type": "array", "items": { "type": "object" }, "description": "Inline mappings; see mappings/*.json." } }
+        },
+        "mock": {
+          "type": "object",
+          "properties": { "days": { "type": "integer" }, "seed": { "type": "integer" } }
+        }
+      }
+    },
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keepRaw": { "type": "boolean", "default": true, "description": "Keep request-level shards. false still builds the cube; only the Data Explorer and full CSV export need them." },
+        "rawRetentionDays": { "type": ["integer", "null"], "default": null }
+      }
+    },
+    "analytics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "includeOverlaySources": { "type": "boolean", "default": false, "description": "Include gateway/proxy records in token totals. Off by default: it double counts." },
+        "minSessionGapMinutes": { "type": "integer", "default": 30, "description": "Used only for sources with no session id." }
+      }
+    },
+    "modelMappings": {
+      "type": "array",
+      "description": "User rules, PREPENDED to the built-in model->vendor ruleset.",
+      "items": {
+        "type": "object",
+        "required": ["match", "provider"],
+        "properties": {
+          "match": { "type": "string", "description": "Case-insensitive regex against the raw model string." },
+          "provider": { "type": "string" },
+          "label": { "type": "string" },
+          "family": { "type": "string" }
+        }
+      }
+    },
+    "interfaceOverrides": {
+      "type": "object",
+      "description": "client id -> interface. Use when you know a client's surface and the source doesn't say.",
+      "additionalProperties": { "type": "string", "enum": ["CLI", "IDE", "Desktop App", "Web", "API", "SDK", "Extension", "Unknown"] }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "theme": { "type": "string", "enum": ["dark", "light"], "default": "dark" },
+        "defaultRange": { "type": "string", "enum": ["all", "7d", "30d", "90d", "mtd", "lastmonth", "today", "yesterday"], "default": "all" },
+        "defaultFrom": { "type": ["string", "null"], "description": "Floor for the DEFAULT VIEW only (YYYY-MM-DD). Does not filter the store or --all exports." }
+      }
+    }
+  }
+}

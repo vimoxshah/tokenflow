@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.5 is the floor (node:sqlite, built-in test runner); 24 is current.
+        node: ['22.x', '24.x']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # There are no dependencies, so there is nothing to install and nothing
+      # to cache. That is the point of the zero-dependency constraint.
+      - run: node --version
+      - run: npm run lint
+      - run: npm test
+      - name: end-to-end on synthetic data
+        run: |
+          node bin/tokenflow.js demo --no-open --no-serve
+          node bin/tokenflow.js status
+          node bin/tokenflow.js validate
+          node scripts/validate-install.js
+          node bin/tokenflow.js export --csv --all --out "$RUNNER_TEMP"
+          node bin/tokenflow.js export --html "$RUNNER_TEMP/dash.html"
+        shell: bash
+        env:
+          TOKENFLOW_HOME: ${{ runner.temp }}/tokenflow-home
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      # typescript is the one dev-only tool we fetch on demand rather than
+      # committing to package.json, so `npm install` stays a no-op for users.
+      - run: npx --yes typescript@5 tsc --noEmit -p jsconfig.json

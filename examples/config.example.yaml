@@ -1,0 +1,92 @@
+# tokenflow — a fully worked configuration
+# Lives at ~/.tokenflow/config.yaml (or $TOKENFLOW_HOME/config.yaml).
+# config.json is also accepted if you prefer JSON.
+
+version: 1
+
+# Dates and hours are resolved in this zone AT INGEST and then stored, so "my
+# peak hour" means your local peak hour. null = this machine's zone.
+timezone: Asia/Kolkata
+
+# Stamped onto every record. Present so a future team deployment can aggregate
+# across machines without a schema change; unused in single-user mode.
+identity:
+  user: vshah
+  machine: my-laptop
+  team: null
+
+# Enabled adapters. An empty list means "everything detected".
+providers:
+  - anthropic
+  - openai
+  - cline
+  - cursor
+  - headroom
+  - git
+
+sources:
+  # Several Claude Code homes is normal — one per account. Listing them here
+  # skips auto-discovery entirely.
+  anthropic:
+    paths:
+      - "~/.claude"
+      - "~/.claude-work"
+
+  # $CODEX_HOME is respected; this overrides it.
+  openai:
+    paths:
+      - "~/.codex"
+
+  # Reports sessions but NO token counts, so every token field is null and the
+  # records are measurement:activity.
+  cline:
+    path: "~/.cline/data/sessions"
+
+  # SQLite; needs Node >= 22.5. Read from a temp snapshot so a live editor is
+  # never disturbed.
+  cursor:
+    db: "~/.cursor/ai-tracking/ai-code-tracking.db"
+
+  # A local gateway. measurement:overlay — excluded from token totals by
+  # default (it would double count the client adapter) but it carries the only
+  # MEASURED cost available anywhere.
+  headroom:
+    path: "~/.headroom"
+
+  # The independent work signal for the Productivity correlations.
+  git:
+    scanRoots:
+      - "~/code"
+      - "~/work"
+    autoFromUsage: true          # also use cwds seen in ingested usage records
+    author: "you@example.com"    # optional: only your own commits
+    since: "2026-01-01"          # optional
+
+store:
+  keepRaw: true                  # false still builds the cube; only the Data
+  rawRetentionDays: null         # Explorer and full CSV export need the shards
+
+analytics:
+  includeOverlaySources: false   # leave false; see the headroom note above
+  minSessionGapMinutes: 30       # only used for sources with no session id
+
+# Prepended to the built-in model -> vendor ruleset, so an internal alias maps
+# to the right vendor instead of falling through to "unknown".
+modelMappings:
+  - match: "^acme-llm-"
+    provider: acme
+    label: "Acme AI"
+  - match: "^internal-glm"
+    provider: zai
+    label: "Z.ai / GLM"
+
+# Interface is never inferred from the model. If you know a client's surface and
+# the source doesn't record one, say so here.
+interfaceOverrides:
+  my-batch-runner: "API"
+  team-slackbot: "Web"
+
+ui:
+  theme: dark
+  defaultRange: all
+  defaultFrom: "2026-03-14"      # floor for the DEFAULT VIEW only

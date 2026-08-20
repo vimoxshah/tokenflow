@@ -1,0 +1,41 @@
+name: Bug report
+description: Something is wrong with ingestion, a number, or the dashboard
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please do not paste raw session logs, prompts, or source code.** They contain your
+        work. `tokenflow doctor` output and the shape of the problem are enough.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `tokenflow doctor`
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version (`node --version`)
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [macOS, Linux, Windows, other]
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Which source/adapter is involved
+      placeholder: anthropic, openai, cursor, generic import, …

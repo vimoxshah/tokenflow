@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenflow/schemas/normalized-record.json",
+  "title": "NormalizedUsageRecord",
+  "description": "The unified record every provider adapter emits. MISSING-VALUE CONTRACT: a token field is number|null. null means 'this source does not report it'; 0 means 'it reported zero'. Analytics never coerce null to 0.",
+  "type": "object",
+  "required": ["id", "timestamp", "date", "hour", "dow", "provider", "model", "interface", "measurement", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "description": "Stable dedup key: hash(source, session, request||timestamp, model, seq)." },
+    "timestamp": { "type": "string", "format": "date-time", "description": "ISO-8601, UTC." },
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Resolved in the capture timezone at ingest, then stored." },
+    "hour": { "type": "integer", "minimum": 0, "maximum": 23, "description": "Capture-timezone hour." },
+    "dow": { "type": "integer", "minimum": 0, "maximum": 6, "description": "0=Mon .. 6=Sun, capture timezone." },
+    "tz_offset": { "type": ["integer", "null"], "description": "Capture timezone offset in minutes." },
+
+    "provider": { "type": "string", "description": "Canonical vendor slug derived from the model name. 'unknown' when it cannot be determined — never a guess." },
+    "provider_label": { "type": "string" },
+    "gateway": { "type": ["string", "null"], "description": "Routing layer (proxy/router) that served the request. NOT the vendor." },
+    "model": { "type": "string", "description": "Raw model identifier from the source, preserved verbatim." },
+    "model_family": { "type": "string", "description": "Human tier, e.g. 'Claude Opus 5', 'GPT 5.6 (sol)'." },
+
+    "client": { "type": "string", "description": "Tool that made the call: claude-code | codex | cline | cursor | ..." },
+    "application": { "type": "string" },
+    "interface": {
+      "type": "string",
+      "enum": ["CLI", "IDE", "Desktop App", "Web", "API", "SDK", "Extension", "Unknown"],
+      "description": "Derived ONLY from an explicit surface field. Never inferred from the model or provider. 'Unknown' when there was no signal."
+    },
+
+    "input_tokens": { "type": ["number", "null"], "minimum": 0, "description": "FRESH prompt tokens, EXCLUDING cache read and cache write. Adapters for OpenAI-convention sources must subtract cached_input_tokens." },
+    "cache_read_tokens": { "type": ["number", "null"], "minimum": 0, "description": "Prompt tokens served from a prompt cache." },
+    "cache_write_tokens": { "type": ["number", "null"], "minimum": 0, "description": "Prompt tokens written into a prompt cache." },
+    "output_tokens": { "type": ["number", "null"], "minimum": 0, "description": "Generated tokens." },
+    "cache_refresh_tokens": { "type": ["number", "null"], "minimum": 0, "description": "SUBSET of cache_write_tokens (long-TTL / refreshed writes). Never added into a total again." },
+    "reasoning_tokens": { "type": ["number", "null"], "minimum": 0, "description": "SUBSET of output_tokens (thinking / reasoning). Never added into a total again." },
+    "total_tokens": { "type": ["number", "null"], "minimum": 0, "description": "DERIVED: input + cache_read + cache_write + output. Never trusted from the source." },
+    "total_is_partial": { "type": "boolean", "description": "True when at least one billable field was not available." },
+
+    "session_id": { "type": ["string", "null"] },
+    "conversation_id": { "type": ["string", "null"] },
+    "request_id": { "type": ["string", "null"] },
+
+    "project": { "type": ["string", "null"], "description": "Usually the basename of the working directory." },
+    "repository": { "type": ["string", "null"] },
+    "git_branch": { "type": ["string", "null"] },
+    "category": { "type": ["string", "null"], "description": "main | subagent | commit | ai-edit:* | ..." },
+
+    "estimated_cost": { "type": ["number", "null"], "description": "null when the model has no configured price. NEVER 0 as a stand-in for unknown." },
+    "cost_basis": { "type": ["string", "null"], "enum": ["measured", "estimated", null], "description": "'measured' = the source actually billed it; 'estimated' = computed from the price table." },
+
+    "source": { "type": "string", "description": "Adapter id." },
+    "measurement": {
+      "type": "string",
+      "enum": ["primary", "overlay", "activity"],
+      "description": "primary = authoritative per-request usage, counted in totals. overlay = a gateway's view of traffic already counted elsewhere, excluded from totals by default. activity = no token accounting at all."
+    },
+    "user": { "type": ["string", "null"] },
+    "machine": { "type": ["string", "null"] },
+    "duration_ms": { "type": ["number", "null"] },
+    "metadata": { "type": "object", "description": "Source-specific. Never interpreted by analytics. Put audit trails here (event counts, reconstruction segments, cwd, versions)." }
+  }
+}

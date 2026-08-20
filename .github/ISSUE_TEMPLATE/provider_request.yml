@@ -1,0 +1,36 @@
+name: New provider / source
+description: Ask for support for an AI tool that writes usage locally
+labels: [provider]
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Which tool
+      placeholder: e.g. Aider, Zed, JetBrains AI, some gateway
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where does it store usage locally
+      placeholder: e.g. ~/.tool/sessions/*.jsonl, a SQLite db, a log file
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: One redacted sample record
+      description: Keys and shapes matter; values do not. Strip anything sensitive.
+      render: json
+  - type: checkboxes
+    id: fields
+    attributes:
+      label: Which token fields does it report
+      options:
+        - label: input
+        - label: output
+        - label: cache read
+        - label: cache write
+        - label: reasoning
+        - label: cost
+        - label: none — activity only

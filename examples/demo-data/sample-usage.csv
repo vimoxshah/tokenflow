@@ -1,0 +1,11 @@
+created_at,model,client,surface,prompt_tokens,completion_tokens,cached_tokens,cost_usd,generation_id,project
+2026-08-05T09:12:00Z,claude-3-5-sonnet-20241022,my-runner,api,12400,860,9800,0.0412,gen-0001,billing-service
+2026-08-05T09:31:00Z,claude-3-5-sonnet-20241022,my-runner,api,13100,1240,11200,0.0455,gen-0002,billing-service
+2026-08-05T11:02:00Z,gpt-4o,vscode-ext,vscode,4200,510,0,0.0156,gen-0003,web-app
+2026-08-05T14:45:00Z,deepseek-chat,cli-tool,cli,8800,1900,6400,0.0045,gen-0004,data-pipeline
+2026-08-06T10:05:00Z,gpt-4o,vscode-ext,vscode,5100,720,1200,0.0184,gen-0005,web-app
+2026-08-06T10:40:00Z,glm-4.6,cli-tool,cli,9600,1400,,0.0031,gen-0006,"infra, terraform"
+2026-08-06T16:20:00Z,claude-3-5-sonnet-20241022,my-runner,api,21000,2100,18400,0.0620,gen-0007,billing-service
+2026-08-07T09:00:00Z,deepseek-chat,cli-tool,cli,3300,410,2100,0.0014,gen-0008,data-pipeline
+2026-08-07T13:15:00Z,glm-4.6,cli-tool,cli,15200,2600,,0.0058,gen-0009,web-app
+2026-08-07T20:55:00Z,claude-3-5-sonnet-20241022,my-runner,api,30500,3400,27000,0.0951,gen-0010,billing-service

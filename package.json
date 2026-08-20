@@ -1,0 +1,73 @@
+{
+  "name": "tokenflow",
+  "version": "1.0.0",
+  "description": "Local-first, provider-agnostic analytics for the AI tokens you actually spend. Zero dependencies, nothing leaves your machine.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "tokenflow": "bin/tokenflow.js"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./sdk": "./src/sdk.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "skills",
+    "examples",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "Refresh & Open Dashboard.command"
+  ],
+  "scripts": {
+    "setup": "node bin/tokenflow.js setup",
+    "dashboard": "node bin/tokenflow.js dashboard",
+    "refresh": "node bin/tokenflow.js refresh",
+    "status": "node bin/tokenflow.js status",
+    "demo": "node bin/tokenflow.js demo",
+    "test": "node --test \"test/**/*.test.js\"",
+    "typecheck": "tsc --noEmit -p jsconfig.json",
+    "lint": "node scripts/lint.js",
+    "validate": "node scripts/validate-install.js",
+    "start": "node bin/tokenflow.js up",
+    "up": "node bin/tokenflow.js up"
+  },
+  "keywords": [
+    "ai",
+    "tokens",
+    "usage",
+    "analytics",
+    "dashboard",
+    "claude",
+    "claude-code",
+    "openai",
+    "codex",
+    "cursor",
+    "cline",
+    "deepseek",
+    "observability",
+    "local-first",
+    "cost",
+    "llm"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vimoxshah/tokenflow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vimoxshah/tokenflow/issues"
+  },
+  "homepage": "https://github.com/vimoxshah/tokenflow#readme",
+  "author": "Vimox Shah"
+}

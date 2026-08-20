@@ -1,0 +1,3 @@
+created_at,model,prompt_tokens,completion_tokens,cached_tokens,cost_usd,generation_id
+2026-08-05T12:00:00Z,deepseek-chat,1200,340,800,0.0031,gen-1
+2026-08-05T12:05:00Z,"gemini-2.0-flash",900,120,,0.0002,gen-2
