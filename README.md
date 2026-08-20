@@ -336,11 +336,12 @@ source it cannot currently read, because it could not rebuild them; `--force` ov
 ## 13. Contributing
 
 ```bash
-npm test          # 101 tests: normalization, adapters, analytics, store, formatting
-npm run lint      # this project's own invariants (incl. "no || 0 on a token field")
-npm run typecheck # tsc --noEmit over the JSDoc types
-npm run validate   # self-check: runtime, adapters, store↔cube agreement
-npm run demo      # deterministic sample data for development
+npm test              # 102 tests: normalization, adapters, analytics, store, formatting
+npm run lint          # this project's own invariants (incl. "no || 0 on a token field")
+npm run typecheck:deps # once per clone: fetches typescript + @types/node, saves nothing
+npm run typecheck     # tsc --noEmit over the JSDoc types — must report zero errors
+npm run validate      # self-check: runtime, adapters, store↔cube agreement
+npm run demo          # deterministic sample data for development
 ```
 
 Read **[CONTRIBUTING.md](CONTRIBUTING.md)** first — it states the five invariants that keep this
