@@ -1,0 +1,11 @@
+# Normalize to LF everywhere, including Windows checkouts.
+#
+# .editorconfig already declares `end_of_line = lf` for every file, and
+# scripts/lint.js enforces it (a CRLF file is a lint failure). Without this,
+# git's core.autocrlf on Windows rewrites every text file to CRLF on checkout
+# and the linter fails all 48 of them. There are no .bat/.cmd/.ps1 files that
+# would need CRLF.
+* text=auto eol=lf
+
+# Binary assets: never touch these.
+*.png binary
