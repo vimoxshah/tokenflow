@@ -91,8 +91,8 @@ export function resolveRange(id, coverage, today) {
 }
 
 /**
- * @param {{cube:object, sessions:any[], activity:object, meta:object, pricing?:object}} bundle
- * @param {Partial<typeof EMPTY_FILTERS> & {granularity?:string, compare?:{a:object,b:object}, drillDate?:string}} [filters]
+ * @param {{cube:object, sessions:any[], activity:object, meta?:object, pricing?:object}} bundle
+ * @param {Partial<typeof EMPTY_FILTERS> & {granularity?:'day'|'week'|'month', compare?:{a:object,b:object}, drillDate?:string}} [filters]
  */
 export function computeView(bundle, filters = {}) {
   const ix = indexCube(bundle.cube);
@@ -146,7 +146,9 @@ export function computeView(bundle, filters = {}) {
   const unpriced = unpricedModels(rows, ix, (m, p) => book.lookup(m, p));
   // Attach the rate provenance to each model row so the Cost page can show
   // where every number came from rather than asserting it.
-  for (const m of models) {
+  // Rows are decorated in place with rate provenance the dimension helper
+  // does not know about.
+  for (const m of /** @type {Record<string, any>[]} */ (models)) {
     const entry = book.lookup(m.key, m.provider) || book.lookup(m.key, 'unknown');
     m.priceSource = entry ? (entry.origin === 'user' ? 'your override' : entry.src) : null;
     m.rates = entry ? { in: entry.in, out: entry.out, cacheRead: entry.cacheRead, cacheWrite: entry.cacheWrite, cacheRefresh: entry.cacheRefresh } : null;

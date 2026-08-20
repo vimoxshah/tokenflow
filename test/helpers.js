@@ -27,7 +27,7 @@ export function ctx(overrides = {}) {
 
 /**
  * Drive an adapter's ingestFile over one fixture file.
- * @returns {{records: object[], result: object, state: object}}
+ * @returns {{records: object[], result: object, state: object, promise: any}}
  */
 export function ingestFixture(provider, file, { start = 0, state = {}, c = ctx(), key = null } = {}) {
   const abs = path.isAbsolute(file) ? file : path.join(FIXTURES, file);
@@ -122,5 +122,5 @@ export function sessionsFrom(records) {
     if (r.timestamp < s.start) s.start = r.timestamp;
     if (r.timestamp > s.end) s.end = r.timestamp;
   }
-  return [...by.values()].map((s) => ({ ...s, total: s.in + s.out + s.cr + s.cw, durationMs: new Date(s.end) - new Date(s.start) }));
+  return [...by.values()].map((s) => ({ ...s, total: s.in + s.out + s.cr + s.cw, durationMs: new Date(s.end).getTime() - new Date(s.start).getTime() }));
 }

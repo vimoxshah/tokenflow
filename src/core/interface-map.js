@@ -10,6 +10,7 @@
 import { INTERFACE } from './schema.js';
 
 /** Ordered signal table. First match wins; the value is checked lowercased. */
+/** @type {[RegExp, string][]} */
 const SIGNALS = [
   // --- explicit IDE / editor hosts -------------------------------------
   [/^(vscode|vs-code|visual-?studio(-code)?|code-insiders)$/, INTERFACE.IDE],

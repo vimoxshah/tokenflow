@@ -30,7 +30,8 @@ test('total sums only the four mutually exclusive billable buckets', () => {
 });
 
 test('breakdown fields are documented as subsets, never billable', () => {
-  for (const f of BREAKDOWN_TOKEN_FIELDS) assert.ok(!BILLABLE_TOKEN_FIELDS.includes(f), `${f} must not be billable`);
+  const billable = /** @type {readonly string[]} */ (BILLABLE_TOKEN_FIELDS);
+  for (const f of BREAKDOWN_TOKEN_FIELDS) assert.ok(!billable.includes(f), `${f} must not be billable`);
 });
 
 test('a partially reported record still gets a total, flagged partial', () => {

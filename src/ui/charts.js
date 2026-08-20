@@ -156,15 +156,21 @@ export function niceTicks(min, max, count = 5) {
  * Multi-series time chart.
  * @param {object} o
  * @param {{key:string}[]} o.data one object per bucket
- * @param {{key:string,label:string,color:string}[]} o.keys series definitions
+ * @param {{key:string,label:string,color:string,hidden?:boolean}[]} o.keys series definitions
  * @param {'line'|'stacked'} [o.mode]
  * @param {{values:(number|null)[],label:string,color:string}[]} [o.overlays] moving averages
  * @param {(v:number)=>string} o.fmtY
- * @param {(k:string)=>string} o.fmtX
+ * @param {(k:string, i?:number)=>string} o.fmtX bucket key -> tick label; the index is passed too
+ * @param {(k:string)=>string} [o.fmtXLong] longer label for the tooltip head
+ * @param {string} [o.tipNote] footnote under the tooltip rows
  * @param {number[]} [o.peaks] indices to mark
  * @param {(i:number, ev:Event)=>void} [o.onClick]
  * @param {(a:number,b:number)=>void} [o.onBrush]
  * @param {number} [o.height]
+ * @param {number} [o.width]
+ * @param {string} [o.ariaLabel] accessible name for the <svg>
+ * @param {boolean} [o.fillArea] shade the area under the line
+ * @param {boolean} [o.endLabel] label the final value at the line's end
  */
 export function timeSeries(o) {
   const H = o.height || 300;

@@ -379,7 +379,7 @@ export class Store {
       return {
         ...rest,
         total: s.in + s.out + s.cr + s.cw,
-        durationMs: new Date(s.end) - new Date(s.start),
+        durationMs: new Date(s.end).getTime() - new Date(s.start).getTime(),
       };
     });
   }

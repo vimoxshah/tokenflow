@@ -53,6 +53,9 @@ jobs:
           node-version: '22.x'
       # typescript is the one dev-only tool we fetch on demand rather than
       # committing to package.json, so `npm install` stays a no-op for users.
-      # `npx <pkg> <cmd>` reads arg 1 as the binary, and typescript ships
-      # `tsc`/`tsserver` but no `typescript` bin — so name the package.
-      - run: npx --yes --package typescript@5 -- tsc --noEmit -p jsconfig.json
+      # typescript and @types/node are dev-only, fetched on demand rather than
+      # committed to package.json, so `npm install` stays a no-op for users and
+      # the zero-dependency promise holds. --no-save/--no-package-lock keep the
+      # tree clean. jsconfig sets `types: ["node"]`, which needs @types/node.
+      - run: npm i --no-save --no-package-lock typescript@5 @types/node@22
+      - run: ./node_modules/.bin/tsc --noEmit -p jsconfig.json

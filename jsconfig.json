@@ -11,8 +11,8 @@
     "noImplicitAny": false,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "types": []
+    "types": ["node"]
   },
-  "include": ["src/**/*.js", "bin/**/*.js", "test/**/*.js"],
+  "include": ["src/**/*.js", "bin/**/*.js", "test/**/*.js", "types/**/*.d.ts"],
   "exclude": ["node_modules"]
 }

@@ -29,7 +29,9 @@ import { readJson, writeJson, truncateFile } from './store.js';
  * @param {boolean}  [opt.full] ignore incremental state and re-ingest everything
  * @param {boolean}  [opt.strict] run full record validation (slower)
  * @param {(e:object)=>void} [opt.onProgress]
- * @param {object[]} opt.registry provider objects
+ * @param {object[]} [opt.registry] provider objects
+ * @param {object} [opt.config] pre-loaded config; defaults to loadConfig()
+ * @param {boolean} [opt.force] allow a full re-ingest even when a source is unreachable
  */
 export async function refresh(opt = {}) {
   const t0 = Date.now();
@@ -90,12 +92,12 @@ export async function refresh(opt = {}) {
     if (atRisk.length) {
       const held = atRisk.reduce((a, id) => a + (store.state.sources[id]?.records || 0) + (restoredBy[id] || 0), 0);
       const why = atRisk.map((id) => `${id}: ${detected.get(id)?.detail || 'not detected'}`);
-      const err = new Error(
+      const err = /** @type {Error & {code?:string, sources?:string[]}} */ (new Error(
         `refusing a full re-ingest: ${held.toLocaleString()} stored record(s) come from source(s) that are not reachable right now, `
         + `so they could not be rebuilt after being dropped.\n  ${why.join('\n  ')}\n`
         + '  Fix the source path(s) and retry, run an incremental `refresh` instead, '
         + 'or pass --force to discard those records anyway.',
-      );
+      ));
       err.code = 'FULL_REFRESH_UNSAFE';
       err.sources = atRisk;
       throw err;

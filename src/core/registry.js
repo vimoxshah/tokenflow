@@ -24,7 +24,7 @@ const registry = new Map();
 
 /**
  * Wrap a provider definition with defaults + validation.
- * @template T
+ * @template {{id:string, name:string, ingestFile?:Function}} T
  * @param {T} def
  * @returns {T}
  */

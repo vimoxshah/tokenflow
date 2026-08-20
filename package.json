@@ -36,6 +36,7 @@
     "demo": "node bin/tokenflow.js demo",
     "test": "node --test \"test/**/*.test.js\"",
     "typecheck": "tsc --noEmit -p jsconfig.json",
+    "typecheck:deps": "npm i --no-save --no-package-lock typescript@5 @types/node@22",
     "lint": "node scripts/lint.js",
     "validate": "node scripts/validate-install.js",
     "start": "node bin/tokenflow.js up",

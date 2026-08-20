@@ -21,7 +21,9 @@ const S = {
   bundle: null,
   view: null,
   tab: 'overview',
+  /** @type {'day'|'week'|'month'} */
   granularity: 'day',
+  /** @type {'line'|'stacked'} */
   seriesMode: 'stacked',
   rangeId: 'all',
   filters: { ...EMPTY_FILTERS },
@@ -109,6 +111,10 @@ async function boot() {
   }
 }
 
+/**
+ * @param {string} id
+ * @param {{silent?:boolean}} [o]
+ */
 function applyRange(id, { silent } = {}) {
   S.rangeId = id;
   if (id !== 'custom') {
@@ -293,7 +299,7 @@ function renderBanners() {
 function freshnessBar() {
   const snapAt = typeof window !== 'undefined' ? window.__TOKENFLOW_SNAPSHOT_AT__ : null;
   const dataAt = S.bundle.meta?.builtAt || snapAt;
-  const ageDays = dataAt ? Math.floor((Date.now() - new Date(dataAt)) / 86400000) : null;
+  const ageDays = dataAt ? Math.floor((Date.now() - new Date(dataAt).getTime()) / 86400000) : null;
   const stale = ageDays !== null && ageDays >= 2;
 
   const bar = el('div', { class: 'freshness' + (stale ? ' warn' : '') });
@@ -611,12 +617,12 @@ function viewOverview() {
   root.appendChild(kpiRow());
 
   const gran = el('div', { class: 'chips' });
-  for (const g of ['day', 'week', 'month']) {
+  for (const g of /** @type {('day'|'week'|'month')[]} */ (['day', 'week', 'month'])) {
     const c = el('button', { class: 'chip', text: g[0].toUpperCase() + g.slice(1) + 'ly', 'aria-pressed': String(S.granularity === g) });
     c.addEventListener('click', () => { S.granularity = g; recompute(); render(); });
     gran.appendChild(c);
   }
-  for (const m of [['stacked', 'Stacked'], ['line', 'Lines']]) {
+  for (const m of /** @type {[('stacked'|'line'), string][]} */ ([['stacked', 'Stacked'], ['line', 'Lines']])) {
     const c = el('button', { class: 'chip', text: m[1], 'aria-pressed': String(S.seriesMode === m[0]) });
     c.addEventListener('click', () => { S.seriesMode = m[0]; render(); });
     gran.appendChild(c);
@@ -1816,7 +1822,7 @@ function viewHealth() {
 async function doRefresh() {
   if (S.refreshing) return;
   S.refreshing = true;
-  const b = document.getElementById('refresh-btn');
+  const b = /** @type {HTMLButtonElement|null} */ (document.getElementById('refresh-btn'));
   if (b) { b.disabled = true; b.textContent = '↻ Refreshing…'; }
   document.getElementById('view').classList.add('refreshing');
   renderHeaderMeta();
@@ -2007,7 +2013,7 @@ function pricingModal() {
 // ==================================================================== modal ==
 
 function openModal(title, body, foot) {
-  const d = document.getElementById('modal');
+  const d = /** @type {HTMLDialogElement} */ (document.getElementById('modal'));
   document.getElementById('modal-title').textContent = title;
   const b = document.getElementById('modal-body');
   b.textContent = '';
@@ -2020,7 +2026,7 @@ function openModal(title, body, foot) {
   d.showModal();
 }
 function closeModal() {
-  document.getElementById('modal').close();
+  /** @type {HTMLDialogElement} */ (document.getElementById('modal')).close();
 }
 
 // ===================================================================== util ==

@@ -160,9 +160,12 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
 
   await new Promise((resolve, reject) => {
     server.on('error', reject);
-    server.listen(port, host, resolve);
+    server.listen(port, host, () => resolve(undefined));
   });
-  const addr = `http://${host}:${server.address().port}`;
+  // address() is `string` for a pipe/socket and AddressInfo for TCP.
+  const bound = server.address();
+  const boundPort = typeof bound === 'object' && bound !== null ? bound.port : port;
+  const addr = `http://${host}:${boundPort}`;
   return { server, url: addr, token: authToken, close: () => new Promise((r) => server.close(r)) };
 }
 

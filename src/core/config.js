@@ -100,7 +100,7 @@ export function loadConfig() {
       cfg = merge(cfg, JSON.parse(fs.readFileSync(p.configJson, 'utf8')));
     }
   } catch (err) {
-    const e = new Error(`Could not read config at ${p.configYaml}: ${err.message}`);
+    const e = /** @type {Error & {hint?:string}} */ (new Error(`Could not read config at ${p.configYaml}: ${err.message}`));
     e.hint = 'Fix the syntax, or delete the file and re-run `tokenflow setup`.';
     throw e;
   }

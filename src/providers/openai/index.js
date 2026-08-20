@@ -138,6 +138,7 @@ export class TurnUsage {
   /** @returns {Record<string, number|null>} */
   finish() {
     this.closeRun();
+    /** @type {Record<string, number|null>} */
     const out = {};
     for (const f of USAGE_FIELDS) out[f] = this.seen[f] ? this.acc[f] : null;
     return out;

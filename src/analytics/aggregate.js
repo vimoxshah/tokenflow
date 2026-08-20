@@ -193,7 +193,7 @@ export function addDays(iso, n) {
 }
 
 export function daysBetween(a, b) {
-  return Math.round((parseISODate(b) - parseISODate(a)) / 86400000);
+  return Math.round((parseISODate(b).getTime() - parseISODate(a).getTime()) / 86400000);
 }
 
 /** Inclusive list of every calendar date in a range — including empty ones. */
@@ -217,7 +217,7 @@ export function weekKey(iso) {
   const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
   const fday = (firstThursday.getUTCDay() + 6) % 7;
   firstThursday.setUTCDate(firstThursday.getUTCDate() - fday + 3);
-  const week = 1 + Math.round((d - firstThursday) / (7 * 86400000));
+  const week = 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000));
   return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 

@@ -25,7 +25,9 @@ import { enrich } from './core/ingest.js';
  * Normalize a partial record without running a full ingest — handy in adapter
  * unit tests and in `--dry-run` importers.
  * @param {object} partial
- * @param {{provider:{id:string,name:string,measurement?:string}, tz?:string|null, priceBook?:object, rules?:object[], config?:object}} opt
+ * @param {{provider:{id:string,name:string,measurement?:string}, tz?:string|null, priceBook?:object,
+ *   rules?:object[], config?:object, user?:string|null, machine?:string|null,
+ *   seq?:number, fileRef?:object|null}} opt
  */
 export function normalizeUsage(partial, opt) {
   return enrich(partial, {

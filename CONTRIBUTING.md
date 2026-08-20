@@ -38,6 +38,18 @@ npm test && npm run lint
 There is no build step and no `npm install` (there is nothing to install). The browser imports
 the same ES modules the CLI runs.
 
+Type-checking is the one exception. `jsconfig.json` runs `checkJs`, which needs `typescript` and
+`@types/node` — both dev-only, so they are fetched on demand instead of being committed to
+`package.json`:
+
+```bash
+npm run typecheck:deps       # once per clone: installs into node_modules, saves nothing
+npm run typecheck            # must report zero errors
+```
+
+CI does the same two steps. A fresh clone has no `node_modules`, so `npm run typecheck` on its own
+will fail until you have run `typecheck:deps`.
+
 ## Writing an adapter
 
 An adapter is ~80 lines and lives in `src/providers/<id>/index.js`. It parses; the engine does

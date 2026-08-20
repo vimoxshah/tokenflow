@@ -93,7 +93,7 @@ export default createProvider({
       repository: git.repo || project,
       git_branch: git.branch || null,
       category: d.status || null,
-      duration_ms: d.started_at && d.ended_at ? new Date(d.ended_at) - new Date(d.started_at) : null,
+      duration_ms: d.started_at && d.ended_at ? new Date(d.ended_at).getTime() - new Date(d.started_at).getTime() : null,
       measurement: MEASUREMENT.ACTIVITY,
       metadata: {
         cwd: d.workspace_root || d.cwd || null,
