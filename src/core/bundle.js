@@ -8,6 +8,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import url from 'node:url';
 import { Store, readJson } from './store.js';
 import { paths, loadConfig } from './config.js';
 import { summarizeQuality } from './validate.js';
@@ -177,5 +178,5 @@ function localToday(tz) {
 
 export function rootDir() {
   // src/core -> project root
-  return path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+  return path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', '..');
 }

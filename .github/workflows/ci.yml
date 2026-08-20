@@ -40,6 +40,9 @@ jobs:
         shell: bash
         env:
           TOKENFLOW_HOME: ${{ runner.temp }}/tokenflow-home
+          # the e2e run is seeded by `tokenflow demo`, so the
+          # "at least one real source" check has nothing real to find.
+          TOKENFLOW_DEMO: '1'
 
   typecheck:
     runs-on: ubuntu-latest
@@ -50,4 +53,6 @@ jobs:
           node-version: '22.x'
       # typescript is the one dev-only tool we fetch on demand rather than
       # committing to package.json, so `npm install` stays a no-op for users.
-      - run: npx --yes typescript@5 tsc --noEmit -p jsconfig.json
+      # `npx <pkg> <cmd>` reads arg 1 as the binary, and typescript ships
+      # `tsc`/`tsserver` but no `typescript` bin — so name the package.
+      - run: npx --yes --package typescript@5 -- tsc --noEmit -p jsconfig.json

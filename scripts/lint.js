@@ -9,9 +9,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import url from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..');
 const problems = [];
 const warnings = [];
 
@@ -34,7 +35,7 @@ const files = [
 
 const TOKEN_FIELDS = /(input_tokens|output_tokens|cache_read_tokens|cache_write_tokens|cache_refresh_tokens|reasoning_tokens)/;
 
-const SELF = path.relative(ROOT, new URL(import.meta.url).pathname);
+const SELF = path.relative(ROOT, url.fileURLToPath(import.meta.url));
 
 for (const f of files) {
   const rel = path.relative(ROOT, f);
