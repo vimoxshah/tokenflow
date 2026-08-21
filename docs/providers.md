@@ -130,6 +130,84 @@ so a live editor is never disturbed and a hot transaction never yields a stale p
 
 ---
 
+## `opencode` — OpenCode
+
+| | |
+|---|---|
+| Reads | `$XDG_DATA_HOME/opencode/opencode.db` (`~/.local/share/opencode/opencode.db`), via `node:sqlite` |
+| Measurement | `primary` |
+| Reports | per-request tokens: fresh input, cache read, cache write, output, reasoning; model, provider/gateway, session, project, agent mode, duration |
+| Cannot know | git branch (not stored per message); a surface field — interface stays `Unknown` |
+
+One record per assistant message. Token semantics were verified against a live corpus: `input`
+is **exclusive** of cache reads (on long sessions `cache.read` exceeds `input`, which is
+impossible under OpenAI's inclusive convention), and the five reported fields are disjoint
+addends of the source's own total.
+
+Two things the adapter handles that would otherwise corrupt the numbers:
+
+- **Rows are updated in place.** An assistant row is inserted when the request starts and its
+  totals are revised as the response finalises — on a real corpus every token-bearing row had
+  `time_updated != time_created`. A naive cursor would freeze the first partial snapshot. The
+  adapter re-reads a recent window ordered by `time_updated` and emits only the *delta* for a
+  message whose totals grew — the same tails mechanism the Anthropic adapter uses for streamed
+  snapshots.
+- **Reasoning is sometimes additive.** Most providers report reasoning as a subset of output,
+  but some report it on top. Where `reasoning > output` the only reading that satisfies the
+  schema's subset invariant without losing tokens is `output += reasoning`.
+
+A non-vendor `providerID` (e.g. `opencode`'s own gateway) is recorded as `gateway`; vendor
+slugs route direct. Zero-token assistant rows are aborted requests, not free API calls, and are
+skipped.
+
+```yaml
+sources:
+  opencode:
+    db: "~/.local/share/opencode/opencode.db"   # override auto-discovery
+```
+
+---
+
+## `hermes` — Hermes agent
+
+| | |
+|---|---|
+| Reads | `~/.hermes/state.db` (`$HERMES_HOME` honoured), via `node:sqlite` |
+| Measurement | `primary` |
+| Reports | per-session-per-model tokens: input, cache read, cache write, output, reasoning; billing provider (as gateway), measured cost when recorded, session source (cli/cron/whatsapp/telegram), cwd, git branch/repo, task, call count, duration |
+| Cannot know | per-request granularity — usage is aggregated per session × model; within-group timing |
+
+Hermes records its own LLM traffic in `session_model_usage` (one row per session × model ×
+billing provider × task) joined to `sessions`. There is no per-request log — `messages.token_count`
+is unpopulated — so the finest honest granularity is one record per group, timestamped at the
+group's first API call.
+
+Token semantics: `input_tokens` is already **exclusive** of cache reads (verified: cache reads
+exceed input many-fold on real sessions). The columns are `NOT NULL DEFAULT 0`, so an
+unreported split and a true zero are indistinguishable in this source; zeros are passed through
+as zeros rather than invented into nulls.
+
+Three things worth knowing:
+
+- **Rows grow.** A session's usage rows are upserted as it makes more calls. Like the opencode
+  adapter, this one re-reads a recent window ordered by `last_seen` and emits only deltas; the
+  base record sits at `first_seen`, a delta at the `last_seen` that revealed it.
+- **Gateway vs vendor.** `billing_provider` ("nous", "openrouter", "openai-codex") is routing,
+  so it becomes `gateway` — unless it IS the vendor ("anthropic" billing for a claude model is
+  a direct call). Unmapped models stay provider `unknown` with their gateway preserved;
+  `"default"` is treated as the placeholder it is.
+- **Measured cost wins.** When hermes recorded `actual_cost_usd > 0` that is passed through as
+  a measured cost and the price-table estimate stands down. Its `estimated_cost_usd` is ignored:
+  two competing estimates would make the Cost page unauditable.
+
+```yaml
+sources:
+  hermes:
+    db: "~/.hermes/state.db"   # override auto-discovery
+```
+
+---
+
 ## `headroom` — local LLM gateway (overlay)
 
 | | |

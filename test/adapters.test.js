@@ -1,15 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import anthropic from '../src/providers/anthropic/index.js';
 import openai, { TurnUsage } from '../src/providers/openai/index.js';
 import cline from '../src/providers/cline/index.js';
 import headroom from '../src/providers/headroom/index.js';
 import generic, { mapRow, parseDelimited, normalizeTs } from '../src/providers/generic/index.js';
 import mock from '../src/providers/mock/index.js';
+import opencode from '../src/providers/opencode/index.js';
+import hermes from '../src/providers/hermes/index.js';
 import { ingestFixtureAsync, fetchAll, ctx, FIXTURES } from './helpers.js';
 import { validateUsage } from '../src/core/validate.js';
 import { MEASUREMENT } from '../src/core/schema.js';
+import { sqliteAvailable } from '../src/core/sqlite.js';
+
+// Built lazily so a Node without node:sqlite skips these tests instead of
+// failing on the import.
+const haveSqlite = sqliteAvailable();
+const { DatabaseSync } = haveSqlite ? await import('node:sqlite') : {};
 
 // ============================================================== Anthropic ===
 
@@ -292,4 +302,298 @@ test('mock: demo data is deterministic and labelled', async () => {
 test('mock: detection is opt-in only', async () => {
   const off = await mock.detect(ctx({ config: { providers: [] } }));
   assert.equal(off.available, false, 'demo data must never appear by accident');
+});
+
+// ============================================================== OpenCode ====
+
+/** Build a minimal opencode.db in a temp dir; returns { path, close, db }. */
+function buildOpencodeDb(dir) {
+  const file = path.join(dir, 'opencode.db');
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT);
+    CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, agent TEXT, version TEXT);
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+  `);
+  return { file, db };
+}
+
+function opencodeMsg(db, { id, session = 'ses_1', created, updated = created, tokens, modelID = 'claude-sonnet-4', providerID = 'opencode', mode = 'build', finish = 'stop' }) {
+  db.prepare('INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)').run(
+    id, session, created, updated,
+    JSON.stringify({
+      role: 'assistant', modelID, providerID, mode, finish,
+      tokens: { ...tokens, total: (tokens.input || 0) + (tokens.output || 0) + (tokens.reasoning || 0) + (tokens.cache?.read || 0) + (tokens.cache?.write || 0) },
+      time: { created, completed: created + 4000 },
+    }),
+  );
+}
+
+function opencodeCtx(dir) {
+  return ctx({ config: { sources: { opencode: { db: path.join(dir, 'opencode.db') } }, interfaceOverrides: {} } });
+}
+
+test('opencode: one record per assistant message with exclusive input and gateway routing', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-opencode-'));
+  try {
+    const { db } = buildOpencodeDb(dir);
+    db.prepare('INSERT INTO project (id, worktree) VALUES (?,?)').run('prj_1', '/code/billing-service');
+    db.prepare('INSERT INTO session (id, project_id, parent_id, directory, agent, version) VALUES (?,?,?,?,?,?)')
+      .run('ses_1', 'prj_1', null, '/code/billing-service', 'build', '1.0.0');
+    db.prepare('INSERT INTO session (id, project_id, parent_id, directory, agent, version) VALUES (?,?,?,?,?,?)')
+      .run('ses_2', 'prj_1', 'ses_1', '/code/billing-service', 'explore', '1.0.0');
+    opencodeMsg(db, { id: 'msg_1', created: 1787000000000, tokens: { input: 9000, output: 300, reasoning: 100, cache: { read: 50000, write: 1200 } } });
+    opencodeMsg(db, { id: 'msg_2', session: 'ses_2', created: 1787000060000, tokens: { input: 500, output: 40, reasoning: 0, cache: { read: 8000, write: 0 } }, providerID: 'anthropic' });
+    db.close();
+
+    const { records } = await fetchAll(opencode, opencodeCtx(dir));
+    assert.equal(records.length, 2);
+    const r1 = records.find((r) => r.request_id === 'msg_1');
+    // input is exclusive of cache reads — nothing to subtract
+    assert.equal(r1.input_tokens, 9000);
+    assert.equal(r1.cache_read_tokens, 50000);
+    assert.equal(r1.cache_write_tokens, 1200);
+    assert.equal(r1.output_tokens, 300);
+    assert.equal(r1.reasoning_tokens, 100, 'reasoning within output stays a plain subset');
+    assert.equal(r1.provider, 'anthropic', 'vendor comes from the model string');
+    assert.equal(r1.gateway, 'opencode', 'a non-vendor providerID is a gateway');
+    assert.equal(r1.project, 'billing-service');
+    assert.equal(r1.client, 'opencode');
+    assert.equal(r1.interface, 'Unknown', 'no surface field exists, so no interface is invented');
+    assert.equal(r1.measurement, MEASUREMENT.PRIMARY);
+    const r2 = records.find((r) => r.request_id === 'msg_2');
+    assert.equal(r2.gateway, null, 'providerID anthropic IS the vendor');
+    assert.equal(r2.category, 'subagent', 'a child session is a subagent');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('opencode: zero-token rows are skipped, additive reasoning is folded into output', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-opencode-'));
+  try {
+    const { db } = buildOpencodeDb(dir);
+    db.prepare('INSERT INTO session (id, project_id, parent_id, directory, agent, version) VALUES (?,?,?,?,?,?)')
+      .run('ses_1', null, null, '/code/x', 'build', '1.0.0');
+    opencodeMsg(db, { id: 'msg_aborted', created: 1787000000000, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } });
+    opencodeMsg(db, { id: 'msg_add', created: 1787000060000, tokens: { input: 200, output: 30, reasoning: 80, cache: { read: 0, write: 0 } } });
+    db.close();
+
+    const { records } = await fetchAll(opencode, opencodeCtx(dir));
+    assert.equal(records.length, 1, 'the aborted zero-token row is not a request');
+    const r = records[0];
+    assert.equal(r.output_tokens, 110, 'reasoning reported additively folds into output');
+    assert.equal(r.reasoning_tokens, 80);
+    assert.ok(validateUsage(r).ok, 'the folded record satisfies the subset invariant');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('opencode: an in-place update emits only the delta, and an unchanged re-read emits nothing', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-opencode-'));
+  try {
+    const { db } = buildOpencodeDb(dir);
+    db.prepare('INSERT INTO session (id, project_id, parent_id, directory, agent, version) VALUES (?,?,?,?,?,?)')
+      .run('ses_1', null, null, '/code/x', 'build', '1.0.0');
+    opencodeMsg(db, { id: 'msg_1', created: 1787000000000, updated: 1787000010000, tokens: { input: 1000, output: 50, reasoning: 0, cache: { read: 2000, write: 0 } } });
+    db.close();
+
+    const state = {};
+    const first = await fetchAll(opencode, opencodeCtx(dir), state);
+    assert.equal(first.records.length, 1);
+
+    // The row is revised in place, as opencode does while a response finalises.
+    const db2 = new DatabaseSync(path.join(dir, 'opencode.db'));
+    opencodeMsgUpdate(db2, 'msg_1', 1787000090000, { input: 1000, output: 220, reasoning: 0, cache: { read: 3500, write: 0 } });
+    db2.close();
+
+    const second = await fetchAll(opencode, opencodeCtx(dir), state);
+    assert.equal(second.records.length, 1, 'only the delta is emitted');
+    const d = second.records[0];
+    assert.equal(d.input_tokens, 0);
+    assert.equal(d.output_tokens, 170);
+    assert.equal(d.cache_read_tokens, 1500);
+    assert.ok(d.metadata.continuation_of, 'the delta names what it continues');
+
+    const third = await fetchAll(opencode, opencodeCtx(dir), state);
+    assert.equal(third.records.length, 0, 'an unchanged re-read must produce no duplicates');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function opencodeMsgUpdate(db, id, updated, tokens) {
+  db.prepare('UPDATE message SET time_updated = ?, data = ? WHERE id = ?').run(
+    updated,
+    JSON.stringify({
+      role: 'assistant', modelID: 'claude-sonnet-4', providerID: 'opencode', mode: 'build', finish: 'stop',
+      tokens: { ...tokens, total: (tokens.input || 0) + (tokens.output || 0) + (tokens.reasoning || 0) + (tokens.cache?.read || 0) + (tokens.cache?.write || 0) },
+      time: { created: 1787000000000, completed: updated },
+    }),
+    id,
+  );
+}
+
+// =============================================================== Hermes =====
+
+/** Build a minimal hermes state.db in a temp dir. */
+function buildHermesDb(dir) {
+  const file = path.join(dir, 'state.db');
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, source TEXT, cwd TEXT, git_branch TEXT, git_repo_root TEXT,
+      parent_session_id TEXT, started_at REAL, ended_at REAL, title TEXT
+    );
+    CREATE TABLE session_model_usage (
+      session_id TEXT NOT NULL, model TEXT NOT NULL, billing_provider TEXT NOT NULL DEFAULT '',
+      billing_base_url TEXT NOT NULL DEFAULT '', billing_mode TEXT NOT NULL DEFAULT '',
+      task TEXT NOT NULL DEFAULT '', api_call_count INTEGER NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_cost_usd REAL NOT NULL DEFAULT 0, actual_cost_usd REAL NOT NULL DEFAULT 0,
+      cost_status TEXT, first_seen REAL, last_seen REAL,
+      PRIMARY KEY (session_id, model, billing_provider, billing_base_url, billing_mode, task)
+    );
+  `);
+  return { file, db };
+}
+
+function hermesUsage(db, { session, model, provider = '', task = '', calls = 3, i = 0, o = 0, cr = 0, cw = 0, rs = 0, actual = 0, first, last, source = 'cli', cwd = null, branch = null, root = null, parent = null, started = null, ended = null }) {
+  db.prepare('INSERT OR REPLACE INTO sessions (id, source, cwd, git_branch, git_repo_root, parent_session_id, started_at, ended_at, title) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(session, source, cwd, branch, root, parent, started ?? first, ended ?? last, `session ${session}`);
+  db.prepare(`INSERT OR REPLACE INTO session_model_usage
+    (session_id, model, billing_provider, task, api_call_count, input_tokens, output_tokens,
+     cache_read_tokens, cache_write_tokens, reasoning_tokens, actual_cost_usd, cost_status, first_seen, last_seen)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(session, model, provider, task, calls, i, o, cr, cw, rs, actual, actual > 0 ? 'measured' : null, first, last);
+}
+
+function hermesCtx(dir) {
+  return ctx({ config: { sources: { hermes: { db: path.join(dir, 'state.db') } }, interfaceOverrides: {} } });
+}
+
+test('hermes: per-session-per-model records with exclusive input, gateway routing and measured cost', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-hermes-'));
+  try {
+    const { db } = buildHermesDb(dir);
+    hermesUsage(db, {
+      session: 's1', model: 'gpt-5.5', provider: 'openai-codex', task: 'review',
+      i: 36000, o: 2600, cr: 288000, rs: 340, actual: 0.42,
+      first: 1787000000, last: 1787003600, source: 'cli', cwd: '/work/billing-service', branch: 'main', root: '/work/billing-service',
+      started: 1786999900, ended: 1787003700,
+    });
+    db.close();
+
+    const { records } = await fetchAll(hermes, hermesCtx(dir));
+    assert.equal(records.length, 1);
+    const r = records[0];
+    assert.equal(r.provider, 'openai', 'vendor from the model string');
+    assert.equal(r.gateway, 'openai-codex', 'billing_provider is the routing layer');
+    assert.equal(r.input_tokens, 36000, 'input is already exclusive of cache reads');
+    assert.equal(r.cache_read_tokens, 288000);
+    assert.equal(r.output_tokens, 2600);
+    assert.equal(r.reasoning_tokens, 340);
+    assert.equal(r.estimated_cost, 0.42);
+    assert.equal(r.cost_basis, 'measured', "hermes' actual cost is a measurement, not an estimate");
+    assert.equal(r.interface, 'CLI', 'from sessions.source = cli');
+    assert.equal(r.git_branch, 'main');
+    assert.equal(r.project, 'billing-service');
+    assert.equal(r.category, 'review');
+    assert.equal(r.session_id, 's1');
+    assert.ok(validateUsage(r).ok);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hermes: unmapped models stay unknown but keep their gateway; "default" is not a model', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-hermes-'));
+  try {
+    const { db } = buildHermesDb(dir);
+    hermesUsage(db, { session: 's1', model: 'anonymous-stealth-preview', provider: 'nous', i: 500, o: 100, first: 1787000000, last: 1787000100, source: 'cron' });
+    hermesUsage(db, { session: 's2', model: 'default', provider: 'nous', i: 10, o: 5, first: 1787000200, last: 1787000300, source: 'telegram' });
+    db.close();
+
+    const { records } = await fetchAll(hermes, hermesCtx(dir));
+    assert.equal(records.length, 2);
+    const unmapped = records.find((r) => r.session_id === 's1');
+    assert.equal(unmapped.provider, 'unknown', 'never bucketed into a plausible-looking vendor');
+    assert.equal(unmapped.gateway, 'nous');
+    assert.equal(unmapped.interface, 'Unknown', 'cron has no CLI surface signal');
+    const def = records.find((r) => r.session_id === 's2');
+    assert.equal(def.model, 'unknown', '"default" is a placeholder, not a model name');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hermes: a grown usage row emits only the delta, and an unchanged re-read emits nothing', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-hermes-'));
+  try {
+    const { db } = buildHermesDb(dir);
+    hermesUsage(db, { session: 's1', model: 'gpt-5.5', provider: 'openrouter', i: 1000, o: 200, cr: 5000, actual: 0.10, first: 1787000000, last: 1787000100, source: 'cli' });
+    db.close();
+
+    const state = {};
+    const first = await fetchAll(hermes, hermesCtx(dir), state);
+    assert.equal(first.records.length, 1);
+
+    // The session makes more calls: same row, bigger totals, later last_seen.
+    const db2 = new DatabaseSync(path.join(dir, 'state.db'));
+    hermesUsage(db2, { session: 's1', model: 'gpt-5.5', provider: 'openrouter', i: 1800, o: 650, cr: 9000, actual: 0.25, first: 1787000000, last: 1787000900, source: 'cli' });
+    db2.close();
+
+    const second = await fetchAll(hermes, hermesCtx(dir), state);
+    assert.equal(second.records.length, 1, 'only the delta is emitted');
+    const d = second.records[0];
+    assert.equal(d.input_tokens, 800);
+    assert.equal(d.output_tokens, 450);
+    assert.equal(d.cache_read_tokens, 4000);
+    assert.equal(d.estimated_cost, 0.15, 'measured cost is delta-ed too');
+    assert.equal(d.cost_basis, 'measured');
+
+    const third = await fetchAll(hermes, hermesCtx(dir), state);
+    assert.equal(third.records.length, 0, 'an unchanged re-read must produce no duplicates');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hermes: a vendor billing_provider is a direct call, not a gateway', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-hermes-'));
+  try {
+    const { db } = buildHermesDb(dir);
+    hermesUsage(db, { session: 's1', model: 'claude-sonnet-4', provider: 'anthropic', i: 900, o: 100, first: 1787000000, last: 1787000100, source: 'cli' });
+    db.close();
+
+    const { records } = await fetchAll(hermes, hermesCtx(dir));
+    const r = records[0];
+    assert.equal(r.provider, 'anthropic');
+    assert.equal(r.gateway, null, 'billing via the vendor itself is direct, not a gateway');
+    assert.equal(r.metadata.billing_provider, 'anthropic', 'the raw value is preserved in metadata');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hermes: every emitted record validates across a mixed corpus', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-hermes-'));
+  try {
+    const { db } = buildHermesDb(dir);
+    hermesUsage(db, { session: 's1', model: 'tencent/hy3:free', provider: 'nous', i: 2000, o: 300, cr: 28000, rs: 140, first: 1787000000, last: 1787000500, source: 'whatsapp' });
+    hermesUsage(db, { session: 's2', model: 'claude-sonnet-4', provider: 'openrouter', i: 900, o: 400, cw: 1200, rs: 400, first: 1787001000, last: 1787001600, source: 'cli', parent: 's1' });
+    db.close();
+
+    const { records } = await fetchAll(hermes, hermesCtx(dir));
+    assert.equal(records.length, 2);
+    for (const r of records) assert.ok(validateUsage(r).ok, `invalid: ${r.id}: ${validateUsage(r).errors.join('; ')}`);
+    const sub = records.find((r) => r.session_id === 's2');
+    assert.equal(sub.category, 'subagent', 'a child session is a subagent');
+    assert.equal(sub.reasoning_tokens, 400, 'reasoning equal to output stays a subset');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

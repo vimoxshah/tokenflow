@@ -25,6 +25,7 @@ tokenflow-home/
 # full export is effectively your whole dataset in one file.
 tokenflow-dashboard.html
 tokenflow-dashboard-snapshot*.html
+tokenflow-2???-??-??.html
 ai-usage-dashboard.html
 *.snapshot.html
 tokenflow-usage-*.csv

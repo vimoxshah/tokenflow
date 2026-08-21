@@ -38,6 +38,8 @@ identity:
 providers:
   - anthropic
   - openai
+  - opencode
+  - hermes
   - cline
   - cursor
   - headroom
@@ -52,6 +54,10 @@ sources:
     paths: ["~/.claude", "~/.claude-work"]
   openai:
     paths: ["~/.codex"]         # Codex CLI / IDE / Desktop
+  opencode:
+    db: "~/.local/share/opencode/opencode.db"   # $XDG_DATA_HOME-aware
+  hermes:
+    db: "~/.hermes/state.db"    # $HERMES_HOME honoured
   cline:
     path: "~/.cline/data/sessions"
   cursor:

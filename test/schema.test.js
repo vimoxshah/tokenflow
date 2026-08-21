@@ -101,6 +101,24 @@ test('model classification never guesses a vendor it cannot see', () => {
   assert.equal(unknown.model, 'totally-made-up-model-9000', 'the raw string is preserved');
 });
 
+test('gateway-namespaced free/preview models classify by their own slug prefix', () => {
+  // Real models seen on the opencode and hermes gateways.
+  assert.equal(classifyModel('minimax/minimax-m2.5:free').provider, 'minimax');
+  assert.equal(classifyModel('upstage/solar-pro4:free').provider, 'upstage');
+  assert.equal(classifyModel('tencent/hy3:free').provider, 'tencent');
+  assert.equal(classifyModel('tencent/hy3-preview').provider, 'tencent');
+  assert.equal(classifyModel('nvidia/nemotron-3-super-120b-a12b:free').provider, 'nvidia');
+  assert.equal(classifyModel('mimo-v2.5-free').provider, 'xiaomi');
+  // A vendor slug inside an openrouter prefix wins over the namespace.
+  assert.equal(classifyModel('openrouter/deepseek/v3').provider, 'deepseek');
+  // OpenRouter's own house/stealth series attributes to OpenRouter itself —
+  // the prefix is evidence, not a guess.
+  assert.equal(classifyModel('openrouter/owl-alpha').provider, 'openrouter');
+  // A stealth model with no namespace at all stays unknown: nothing local
+  // names its vendor, so none is invented.
+  assert.equal(classifyModel('x-preview-f-free').provider, 'unknown');
+});
+
 test('a provider hint never overrides evidence in the model name', () => {
   const c = classifyModel('claude-opus-5', { providerHint: 'openai' });
   assert.equal(c.provider, 'anthropic', 'the model name wins over a routing hint');

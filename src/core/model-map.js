@@ -35,6 +35,18 @@ export const BUILTIN_MODEL_RULES = [
   { match: '(^|/)(nova)|^amazon\\.', provider: 'amazon', label: 'Amazon / Nova' },
   { match: '(^|/)(phi-|orca)', provider: 'microsoft', label: 'Microsoft' },
   { match: '(^|/)composer-', provider: 'cursor', label: 'Cursor' },
+  // Gateways publish free/preview models under their own namespace; the slug
+  // prefix is the publisher's own attribution, same evidence as any vendor
+  // prefix above.
+  { match: '(^|/)minimax|(^|/)abab', provider: 'minimax', label: 'MiniMax' },
+  { match: 'upstage|(^|/)solar', provider: 'upstage', label: 'Upstage' },
+  { match: 'tencent|hunyuan|(^|/)hy\\d', provider: 'tencent', label: 'Tencent / Hunyuan' },
+  { match: '^nvidia|(^|/)nemotron', provider: 'nvidia', label: 'NVIDIA' },
+  { match: 'xiaomi|(^|/)(mi-?)?mimo', provider: 'xiaomi', label: 'Xiaomi / MiMo' },
+  // OpenRouter's own house/stealth series ("openrouter/owl-alpha"). This must
+  // stay AFTER the vendor rules: "openrouter/deepseek/v3" is DeepSeek, and
+  // only slugs no vendor rule can identify fall back to the namespace owner.
+  { match: '(^|/)openrouter/', provider: 'openrouter', label: 'OpenRouter' },
 ];
 
 const compiled = new WeakMap();

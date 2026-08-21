@@ -28,8 +28,9 @@ There is no `npm install` step, because there is nothing to install. Node 22.5+ 
 
 **Platform.** macOS, Linux and Windows. Every push runs the test suite plus an end-to-end pass
 — ingest, `status`, `validate`, CSV export, HTML export — on all three, against Node 22 and 24.
-Log discovery is `os.homedir()`-relative (`~/.claude`, `~/.codex`, `~/.cline`, `~/.cursor`), so it
-resolves the same way on each, and every source path is overridable in config.
+Log discovery is `os.homedir()`-relative (`~/.claude`, `~/.codex`, `~/.cline`, `~/.cursor`,
+`~/.local/share/opencode`, `~/.hermes`), so it resolves the same way on each, and every source
+path is overridable in config.
 
 Two conveniences are bash-only: the `./tokenflow` wrapper and `Refresh & Open Dashboard.command`.
 Anywhere without bash — Windows `cmd`/PowerShell included — use the `npm run` scripts or
@@ -88,6 +89,8 @@ It answers the questions you can't answer from a billing page:
 |---|---|---|---|
 | `anthropic` | `~/.claude*/projects/**/*.jsonl` | full per-request tokens: input, output, cache read, cache write (incl. long-TTL refresh), thinking | primary |
 | `openai` | `~/.codex/sessions/**/*.jsonl` | per-turn tokens: fresh input, cached input, cache write, output, reasoning | primary |
+| `opencode` | `$XDG_DATA_HOME/opencode/opencode.db` | per-request tokens: fresh input, cache read/write, output, reasoning | primary |
+| `hermes` | `~/.hermes/state.db` | per-session-per-model tokens, measured cost when recorded | primary |
 | `cline` | `~/.cline/data/sessions/**` | sessions, model, duration — **no token counts exist in this source** | activity |
 | `cursor` | `~/.cursor/ai-tracking/ai-code-tracking.db` | AI-authored edits, per-commit AI/human line attribution | activity |
 | `headroom` | `~/.headroom/savings_events.jsonl` | **measured** per-request cost + prompt-compression delta from a local gateway | overlay |
