@@ -289,21 +289,33 @@ Want it current without ever thinking about it? Schedule `tokenflow up --no-serv
 a `launchd` agent, on Linux with a systemd timer or cron, on Windows with Task Scheduler. The file
 on disk is then always fresh when you open it.
 
-## 11. Live mode — watcher, menu bar, capacity
+## 11. Live mode — watcher, native menu bar app, capacity
 
 Section 10 is the pull-based path. TokenFlow also runs live:
 
 ```bash
 tokenflow watch                 # incremental refresh every N seconds (default 120)
-tokenflow watch --notify        # + OS alerts on limit crossings and new anomalies
-tokenflow menubar --swiftbar    # menu bar via SwiftBar/xbar — no Electron tray
-tokenflow status --bar          # the one-line adaptive summary the menu bar shows
+node bin/tokenflow.js menubar --app   # build & launch TokenFlow.app (native menu bar)
 ```
 
-The watcher rewrites `data/status.json` after every cycle; the menu bar, four
-focused commands (`usage`, `cost`, `capacity`, `forecast`) and the dashboard's
-**Live** tab all read it. Declare caps in `config.yaml` and get burn rate,
-exhaustion ETA and reset countdowns per provider:
+**The menu bar app is TokenFlow's own** — a small native macOS application
+compiled on your machine from [`menubar/TokenFlow/main.swift`](menubar/TokenFlow/main.swift)
+(no third-party bar, no Electron). The status item adapts automatically:
+
+| Situation | Menu bar shows |
+|---|---|
+| a limit approaching | `▲ 82%` (orange) |
+| a limit exceeded | `✗ 105%` (red) |
+| priced usage today | `$4.83` |
+| unpriced day | tokens (`7d 5.04B` fallback) |
+
+Clicking it opens a full native dropdown — today/week/month rows, per-provider
+breakdown, capacity meters with reset countdowns and exhaustion ETA, forecast
+with confidence, anomaly alerts, freshness/watcher badge, plus **Refresh now**,
+**Open Dashboard**, and **Start/Stop watcher** actions. Dark/light follows the
+system; figures use monospaced digits.
+
+Declare caps in `config.yaml` and everything above lights up:
 
 ```yaml
 limits:
@@ -318,6 +330,9 @@ Vendor quotas are never invented — a limit exists because you declared it,
 evaluated against measured consumption. Forecasting is a conservative linear
 trend with stated confidence; anomaly detection is robust median/MAD with its
 arithmetic printed on every alert. Full story: **[docs/live-mode.md](docs/live-mode.md)**.
+
+SwiftBar/xbar users: `tokenflow menubar --swiftbar --out <dir>` still generates
+a text-protocol plugin for any compatible bar (Linux included).
 
 ## 12. Themes
 

@@ -1,16 +1,16 @@
-# Live mode — the watcher, the menu bar, capacity and alerts
+# Live mode — the watcher, the native menu bar app, capacity and alerts
 
 Everything in this document runs **locally**. The watcher reads your logs, the
-menu bar reads one JSON file, notifications come from your operating system.
-No network client exists anywhere in the codebase.
+menu bar app reads one JSON file, notifications come from your operating
+system. No network client exists anywhere in the codebase.
 
 ```
 tokenflow watch  ──every N s──▶  incremental refresh
         │
         ▼
-data/status.json   ◀── read by ──▶  tokenflow usage / cost / capacity / forecast
+data/status.json   ◀── read by ──▶  TokenFlow.app (native macOS menu bar)
+        │                            tokenflow usage / cost / capacity / forecast
         │                            tokenflow status --bar
-        │                            SwiftBar / xbar menu-bar plugin
         ▼                            dashboard header pill + Live tab
 OS notifications (opt-in): limit crossings, same-day high-severity anomalies
 ```
@@ -109,9 +109,47 @@ ratio, z-score — so you can check it rather than trust it. Notifications fire
 only for **same-day high-severity** anomalies; history replaying as alerts on
 a first run would be noise, so it doesn't happen.
 
-## Menu bar
+## Menu bar — TokenFlow.app (native, macOS)
 
-No Electron tray process. TokenFlow renders into menu bars you already run:
+TokenFlow ships its own menu bar application: a ~370 KB native binary compiled
+on your machine from [`menubar/TokenFlow/main.swift`](../menubar/TokenFlow/main.swift)
+with `swiftc` (Xcode Command Line Tools). No Electron, no third-party bar, no
+network. It reads `data/status.json` every 5 seconds and rebuilds its dropdown
+every time it opens.
+
+```bash
+tokenflow menubar --app             # build → ~/Applications/TokenFlow.app → launch
+tokenflow menubar --app --login-item
+                                    # …and start it on every login
+```
+
+**Status item (adaptive, most-urgent signal wins):**
+
+| Situation | Menu bar shows |
+|---|---|
+| a limit exceeded | `✗ 105%` in red |
+| a limit approaching | `▲ 82%` in orange |
+| healthy limit | `● 42%` in green |
+| no limits, priced usage | `$4.83` |
+| unpriced day | today's tokens |
+
+**The dropdown contains everything — no browser hop required:**
+
+- header: live/watcher badge + data freshness ("live · data updated just now")
+- Today / Week / Month rows — tokens, requests, estimated cost
+- Today by provider — inline share bars (▰▱), tokens and cost per provider
+- Capacity — a real meter per declared limit with %, exhaustion ETA and reset
+  countdown; "first projected hit" callout when one will cross before reset
+- Forecast — tomorrow / 7-day projections, month-end spend, confidence
+- Alerts — high-severity anomalies with their arithmetic
+- Actions — `Refresh now` (⌘R, runs a watch cycle), `Open Dashboard`,
+  `Start/Stop watcher`, `Quit`
+
+Dark/light follows the system appearance; all figures use monospaced digits.
+
+## Menu bar — other platforms (SwiftBar/xbar text protocol)
+
+For Linux bars or if you prefer SwiftBar on macOS:
 
 ```bash
 tokenflow menubar --swiftbar          # install for SwiftBar (~/Library/Plugins)
@@ -132,10 +170,8 @@ urgent signal wins:
 | no limits, priced usage | `TF $4.83` |
 | unpriced day, week has data | `TF 7d 5.04B` |
 
-The dropdown carries today/week/month, top providers, limit meters, forecast,
-active alerts, freshness, and one-click **Refresh now** / **Open Dashboard**.
-Works on macOS (SwiftBar/xbar); any Linux bar speaking the same text protocol
-(Argos, Waybar custom modules) works via `--out`.
+Any bar speaking the same text protocol (Argos, Waybar custom modules) works
+via `--out`.
 
 ## Data flow guarantees
 

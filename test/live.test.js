@@ -123,6 +123,27 @@ test('freshness is recomputed against the current clock, not frozen at write tim
   assert.equal(withComputedFreshness({ freshness: { lastRefresh: null } }).freshness.stale, true);
 });
 
+test('currentStatus trusts the watcher cadence and never forgets the daemon', async () => {
+  await withHome(async (_dir, { live, watch }) => {
+    // Daemon-written snapshot with watcher identity.
+    await watch.runCycle({ registry: [], providers: [], daemon: { intervalSeconds: 120 } });
+    let r = live.currentStatus();
+    assert.equal(r.fromWatch, true);
+    assert.equal(r.status.watcher?.mode, 'daemon');
+
+    // A snapshot older than the cache window but still within its own
+    // staleness budget must keep serving — with daemon facts intact even when
+    // a fresh compute happens for other reasons.
+    const st = live.readLiveStatus();
+    st.generatedAt = new Date(Date.now() - 5 * 60000).toISOString(); // 5 min old
+    st.freshness.lastRefresh = new Date(Date.now() - 5 * 60000).toISOString();
+    live.writeLiveStatus(st);
+    r = live.currentStatus(); // window = interval(120s)+60s < 5min -> compute path
+    assert.equal(r.fromWatch, false);
+    assert.equal(r.status.watcher?.pid, st.watcher.pid, 'fallback compute preserves watcher identity');
+  });
+});
+
 // ------------------------------------------------------- watch decisions ----
 
 test('computeDelayMs backs off exponentially and caps at 15 minutes', () => {

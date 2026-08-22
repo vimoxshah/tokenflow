@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { loadProviders, listProviders, getProvider } from '../src/core/registry.js';
 import { loadConfig, saveConfig, paths, ensureDirs, DEFAULT_CONFIG, merge } from '../src/core/config.js';
 import { refresh } from '../src/core/ingest.js';
@@ -957,11 +958,47 @@ async function cmdForecast() {
   console.log(`\n  ${C.dim}Projections are trends, not promises — they assume the recent pattern continues.${C.r}\n`);
 }
 
-/** `tokenflow menubar` — render / install menu-bar integrations. */
+/** `tokenflow menubar` — native app / render / install menu-bar integrations. */
 async function cmdMenubar() {
   const mode = String(flags.mode || loadConfig().ui?.menubarMode || 'auto');
-  const st = await liveStatus();
-  if (flags.render) return console.log(renderXbar(st, { mode }));
+
+  // ---- the real thing: TokenFlow's own native menu bar app -----------------
+  if (flags.app) {
+    if (process.platform !== 'darwin') {
+      throw Object.assign(new Error('the native menu bar app requires macOS'), {
+        hint: 'on Linux/Windows use --swiftbar/--xbar/--out with a compatible bar.',
+      });
+    }
+    const script = path.join(root(), 'scripts', 'build-menubar-app.sh');
+    console.log(`  building TokenFlow.app with swiftc…`);
+    execFileSync('bash', [script], { stdio: 'inherit' });
+    const src = path.join(root(), 'dist', 'TokenFlow.app');
+    const dest = path.join(os.homedir(), 'Applications', 'TokenFlow.app');
+    try { execFileSync('osascript', ['-e', 'quit app "TokenFlow"'], { stdio: 'ignore' }); } catch { /* not running */ }
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.cpSync(src, dest, { recursive: true });
+    execFileSync('open', [dest]);
+    console.log(`${C.g}✓${C.r} installed: ${dest}`);
+    console.log(`  ${C.dim}Look for "TF" (or TF $… / a percentage) in your menu bar — click it for the full dropdown.${C.r}`);
+    if (flags['login-item']) {
+      try {
+        execFileSync('osascript', ['-e',
+          `tell application "System Events" to make login item at end with properties {path:"${dest}", hidden:false}`,
+        ], { stdio: 'ignore' });
+        console.log(`  ${C.g}✓${C.r} added to Login Items (starts on every login)`);
+      } catch {
+        console.log(`  ${C.y}!${C.r} could not add the login item automatically — add "${dest}" in System Settings › Login Items.`);
+      }
+    }
+    return;
+  }
+
+  // ---- cross-platform text-protocol fallback --------------------------------
+  if (flags.render) {
+    const st = await liveStatus();
+    return console.log(renderXbar(st, { mode }));
+  }
   if (flags.swiftbar || flags.xbar || typeof flags.out === 'string') {
     const home = os.homedir();
     const dir = typeof flags.out === 'string'
@@ -976,16 +1013,24 @@ async function cmdMenubar() {
     console.log(`  Refresh cadence: every ${intervalMin} min via filename convention; display mode: ${mode}.${C.r}\n`);
     return;
   }
-  console.log(`
-  ${C.b}Menu bar integration${C.r}
-  usage: tokenflow menubar [--render | --swiftbar | --xbar | --out <dir>]
-                           [--mode auto|tokens|cost|limit]
 
-  ${C.dim}--render        print the xbar/SwiftBar-format text (used by the plugin)
-  --swiftbar      install the plugin script into ~/Library/Plugins
-  --xbar          install into the xbar plugin directory instead
-  --out <dir>     install into any compatible bar's plugin directory
-  --mode          what the bar shows: auto picks the most urgent signal${C.r}
+  console.log(`
+  ${C.b}Menu bar${C.r}
+  usage: tokenflow menubar [--app | --render | --swiftbar | --xbar | --out <dir>]
+                           [--mode auto|tokens|cost|limit] [--login-item]
+
+  ${C.b}macOS — native app (recommended)${C.r}
+    --app           build TokenFlow.app with swiftc, install to ~/Applications
+                    and launch. Rich dropdown: usage, providers, capacity
+                    meters, forecast, alerts, refresh — no third-party app.
+    --login-item    also add it to Login Items
+
+  ${C.b}Other bars / platforms${C.r}
+    --render        print the xbar/SwiftBar-format text (used by the plugin)
+    --swiftbar      install the plugin script into ~/Library/Plugins
+    --xbar          install into the xbar plugin directory instead
+    --out <dir>     install into any compatible bar's plugin directory
+    --mode          what the bar shows: auto picks the most urgent signal${C.r}
 `);
 }
 

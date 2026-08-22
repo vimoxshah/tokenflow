@@ -186,14 +186,27 @@ export function withComputedFreshness(status, nowMs = Date.now()) {
 /**
  * Freshness-aware status for live surfaces: prefer the watch daemon's file,
  * fall back to computing fresh right now. Returns `{status, fromWatch}`.
+ *
+ * The cache window derives from the watcher's own cadence (interval + slack),
+ * because a snapshot written 90 seconds into a 120-second cycle is exactly as
+ * current as the product promised — not stale. When a fallback compute does
+ * happen, daemon identity (pid, cycles, last error) is carried over from the
+ * cached file: a slow poll must never make the UI claim no watcher is running.
  */
-export function currentStatus({ maxAgeMs = 15000 } = {}) {
+export function currentStatus(opt = {}) {
   const cached = readLiveStatus();
-  if (cached && !cached.freshness?.stale) {
+  const cfg = opt.config || loadConfig();
+  const maxAgeMs = opt.maxAgeMs
+    ?? ((cfg.watch?.intervalSeconds ?? 120) * 1000) + 60000;
+  if (cached && !withComputedFreshness(cached).freshness.stale) {
     const age = Date.now() - new Date(cached.generatedAt).getTime();
     if (age <= maxAgeMs) return { status: withComputedFreshness(cached), fromWatch: true };
   }
-  return { status: buildLiveStatus(), fromWatch: false };
+  const fresh = buildLiveStatus({ config: cfg });
+  if (cached?.watcher) fresh.watcher = cached.watcher;
+  if (!fresh.lastCycle && cached?.lastCycle) fresh.lastCycle = cached.lastCycle;
+  if (!fresh.lastError && cached?.lastError) fresh.lastError = cached.lastError;
+  return { status: fresh, fromWatch: false };
 }
 
 // ---------------------------------------------------------------- format ----

@@ -197,22 +197,31 @@ Single-instance per data home; failures back off exponentially (15-minute
 ceiling) and land in `lastError`. See [live-mode.md](live-mode.md).
 
 ### `menubar`
-Menu-bar integration without an Electron tray:
+Menu bar surfaces. On macOS the primary is **TokenFlow's own native app**:
 
 ```bash
-tokenflow menubar --swiftbar           # install plugin into ~/Library/Plugins
-tokenflow menubar --xbar               # xbar's plugin directory
-tokenflow menubar --out <dir>          # any compatible bar
-tokenflow menubar --render             # print the xbar-format text
-tokenflow menubar --mode limit         # auto | tokens | cost | limit
+tokenflow menubar --app               # build TokenFlow.app (swiftc), install
+                                      # to ~/Applications and launch it
+tokenflow menubar --app --login-item  # also add it to Login Items
 ```
 
-The installed script calls `menubar --render` on the bar's schedule; the title
-adapts (limit % > cost > tokens) and carries alert glyphs. The dropdown has
-per-provider meters, limits, forecast, alerts, freshness, Refresh-now and
-Open-Dashboard actions.
+The app shows an adaptive status item (limit % with state color > today's
+cost > today's tokens). Its dropdown carries today/week/month usage, a
+per-provider breakdown, capacity meters with reset countdowns and ETAs, the
+forecast with confidence, high-severity anomaly alerts, freshness/watcher
+badges, and Refresh-now / Open-Dashboard / Start-Stop-watcher actions.
 
----
+Cross-platform text protocol for other bars:
+
+```bash
+tokenflow menubar --render            # print xbar/SwiftBar-format text
+tokenflow menubar --swiftbar          # install into ~/Library/Plugins
+tokenflow menubar --xbar              # install into xbar's plugin dir
+tokenflow menubar --out <dir>         # any compatible bar's plugin dir
+tokenflow menubar --mode <m>          # auto | tokens | cost | limit
+```
+
+Requires `swiftc` for `--app` (`xcode-select --install` provides it).
 
 ---
 
