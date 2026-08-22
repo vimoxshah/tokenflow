@@ -20,13 +20,19 @@ Store                   src/core/store.js
 Analytics engine        src/analytics/*.js              ← pure, no Node imports
       │                   computeView(bundle, filters)    the single entry point
       ▼
+Live intelligence       src/analytics/{forecast,anomalies,capacity}.js
+      │                 (pure too — same modules in CLI, server and browser)
+      ▼
+Live snapshot           src/core/live-status.js         data/status.json
+      │                   written by `tokenflow watch` (src/core/watch.js),
+      ▼                   read by menu bar / --bar commands / dashboard pill
 Filtering / aggregation in-process, in the browser      ← zero API calls per filter change
       │
       ▼
 Dashboard UI            src/ui/{index.html,app.js,charts.js,styles.css}
       │
       ▼
-Export                  src/export/{csv.js,html-snapshot.js,bundler.js}
+Export                  src/export/{csv.js,html-snapshot.js,bundler.js,menubar.js}
 ```
 
 ## Layer boundaries, and why they hold
@@ -49,8 +55,19 @@ arithmetic beyond formatting. Every number on screen has a named function behind
 `calculateInterfaceUsage`, `calculatePeriodComparison`, `calculateCorrelations`,
 `generateInsights` — and each is unit-tested against its formula.
 
-## Why a cube
+## The live layer keeps the same discipline
 
+`forecast.js`, `anomalies.js` and `capacity.js` import nothing from Node —
+they are analytics like any other, so `tokenflow forecast`, the Live tab and
+the menu bar literally cannot disagree. Wall-clock facts enter as arguments
+(`today`, `nowMs`, timezone offset), which is what makes reset countdowns
+testable and identical across surfaces. The watcher (`src/core/watch.js`) is
+the only writer of `data/status.json`; it is single-instanced per data home,
+backs off exponentially on failure, and never lets one bad provider stop the
+loop. Staleness is a property of *reading*, not of writing: every consumer
+recomputes it against the current clock.
+
+## Why a cube
 A dashboard that filters must either round-trip to a server on every interaction or hold the data
 locally. Holding a million request-level records in a browser tab is not viable; holding a
 pre-aggregated fact table is.

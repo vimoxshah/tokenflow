@@ -12,6 +12,7 @@ import url from 'node:url';
 import { Store, readJson } from './store.js';
 import { paths, loadConfig } from './config.js';
 import { summarizeQuality } from './validate.js';
+import { tzOffsetMinutes } from './schema.js';
 import { PRICING_TABLE_VERSION, PRICING_SOURCES, TIER_MULTIPLIERS } from './pricing.js';
 
 export function buildBundle({ config = loadConfig() } = {}) {
@@ -46,13 +47,19 @@ export function buildBundle({ config = loadConfig() } = {}) {
 
   const demo = sessions.some((s) => s.so === 'mock') || cube.rows.some((r) => r[6] === 'mock');
   const coverage = health.coverage;
+  const tz = cube.tz || config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return {
     meta: {
       generatedAt: new Date().toISOString(),
       appVersion: readJson(path.join(rootDir(), 'package.json'), {}).version || '0.0.0',
       cubeVersion: cube.version,
-      timezone: cube.tz || config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timezone: tz,
+      today: localToday(tz),
+      // Wall-clock offset of the dataset's timezone right now. Capacity reset
+      // countdowns and burn-rate hours are computed against this, so a limit
+      // resets when the *user's* calendar rolls over.
+      tzOffsetMinutes: tzOffsetMinutes(new Date(), tz),
       pricingTableVersion: PRICING_TABLE_VERSION,
       pricingSources: PRICING_SOURCES,
       tierMultipliers: TIER_MULTIPLIERS,
@@ -60,7 +67,6 @@ export function buildBundle({ config = loadConfig() } = {}) {
       lastRefreshDurationMs: store.state.lastRefreshDurationMs,
       coverage,
       demo,
-      today: localToday(cube.tz || config.timezone),
       includeOverlayDefault: !!config.analytics?.includeOverlaySources,
       defaultRange: config.ui?.defaultRange || 'all',
       defaultFrom: config.ui?.defaultFrom || null,
@@ -75,6 +81,9 @@ export function buildBundle({ config = loadConfig() } = {}) {
     sessions,
     activity,
     pricing,
+    // User-declared quota/budget caps; analytics/capacity.js evaluates them
+    // against the same cube every other surface reads.
+    limits: Array.isArray(config.limits) ? config.limits : [],
     health,
   };
 }

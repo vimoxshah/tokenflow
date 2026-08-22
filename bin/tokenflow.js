@@ -24,6 +24,13 @@ import { validateUsage } from '../src/core/validate.js';
 import { MAPPABLE_FIELDS, parseDelimited } from '../src/providers/generic/index.js';
 import { stringifyYaml, parseYaml } from '../src/core/yaml.js';
 import { PRICING_TABLE_VERSION, PRICING_SOURCES, TIER_MULTIPLIERS, buildPriceBook } from '../src/core/pricing.js';
+import {
+  buildLiveStatus, currentStatus, readLiveStatus, withComputedFreshness, barLine,
+} from '../src/core/live-status.js';
+import {
+  startWatch, runCycle, stopWatch, watchIsRunning, releaseWatchLock,
+} from '../src/core/watch.js';
+import { renderXbar, installSwiftBarPlugin } from '../src/export/menubar.js';
 
 const C = process.stdout.isTTY && !process.env.NO_COLOR
   ? { r: '\x1b[0m', b: '\x1b[1m', dim: '\x1b[2m', g: '\x1b[32m', y: '\x1b[33m', red: '\x1b[31m', c: '\x1b[36m', mag: '\x1b[35m' }
@@ -65,6 +72,12 @@ async function main() {
     case 'doctor': return cmdDoctor();
     case 'compact': return cmdCompact();
     case 'reset': return cmdReset();
+    case 'watch': return cmdWatch();
+    case 'usage': return cmdUsage();
+    case 'cost': return cmdCost();
+    case 'capacity': return cmdCapacity();
+    case 'forecast': return cmdForecast();
+    case 'menubar': return cmdMenubar();
     default:
       console.error(`${C.red}Unknown command "${cmd}".${C.r}\n`);
       return help(1);
@@ -208,6 +221,13 @@ async function cmdRefresh() {
 // =================================================================== status ==
 
 async function cmdStatus() {
+  // Menu-bar / wrapper fast path: one compact line from the live snapshot,
+  // without building a full analytics view.
+  if (flags.bar) {
+    const st = await liveStatus();
+    const line = barLine(st, String(flags.mode || 'auto'), String(flags.prefix || 'TF'));
+    return console.log(flags.json ? JSON.stringify(line, null, 2) : line.text);
+  }
   const b = buildBundle();
   if (flags.json) return console.log(JSON.stringify({ meta: b.meta, health: b.health }, null, 2));
   const h = b.health;
@@ -739,6 +759,240 @@ async function cmdReset() {
   console.log(`${C.g}✓${C.r} cleared ${p.data} (config and pricing kept)`);
 }
 
+// ==================================================================== live ==
+
+/** Fast path for live commands: watch snapshot when fresh, else compute now. */
+async function liveStatus() {
+  const { status } = currentStatus();
+  return status;
+}
+
+/**
+ * `tokenflow watch` — keep the store + status file current in the background.
+ *
+ *   --interval <s>  seconds between cycles (config: watch.intervalSeconds)
+ *   --once          one refresh+status cycle and exit (cron-friendly)
+ *   --notify        OS notifications on threshold crossings (also: config)
+ *   --status        is a watcher running? how fresh is it?
+ *   --stop          stop a running watcher
+ */
+async function cmdWatch() {
+  if (flags.stop) {
+    const r = stopWatch();
+    console.log(r.stopped ? `${C.g}✓${C.r} stopped watcher ${C.dim}(pid ${r.pid})${C.r}` : `${C.dim}○ ${r.reason}${C.r}`);
+    return;
+  }
+  if (flags.status) {
+    const running = watchIsRunning();
+    const st = readLiveStatus();
+    console.log(`  watcher   ${running ? `${C.g}running${C.r}` : `${C.dim}not running${C.r}`}`);
+    // Identity lines only describe a live process — a dead watcher's leftovers
+    // are history, not status.
+    if (running && st?.watcher?.pid != null) {
+      console.log(`  pid       ${st.watcher.pid} · every ${st.watcher.intervalSeconds ?? '?'}s · ${int(st.watcher.cycles)} cycle(s)`);
+    }
+    const lastErr = st?.lastError;
+    if (lastErr) console.log(`  ${C.y}last error${C.r} ${relativeTime(lastErr.at)}: ${lastErr.message}`);
+    if (st?.freshness) {
+      const fresh = withComputedFreshness(st).freshness;
+      console.log(`  data      ${fresh.stale ? `${C.y}stale${C.r}` : `${C.g}fresh${C.r}`} ${st.freshness.lastRefresh ? `· updated ${relativeTime(st.freshness.lastRefresh)}` : '(never refreshed)'}`);
+      console.log(`  status    ${paths().status}`);
+    }
+    if (!running && !flags.json) {
+      console.log(`\n  ${C.dim}start one:  tokenflow watch${C.r}`);
+    }
+    return;
+  }
+
+  const cfg = loadConfig();
+  const interval = Number(flags.interval) || cfg.watch?.intervalSeconds || 120;
+  const notifyOn = flags.notify === true || !!cfg.watch?.notifications;
+
+  if (flags.once) {
+    const r = await runCycle({ config: cfg, notifications: notifyOn });
+    if (r.skipped) return console.log(`${C.dim}○ another cycle is already running${C.r}`);
+    const st = readLiveStatus();
+    console.log(`${C.g}✓${C.r} cycle done · ${barLine(st).text.replace(/^TF /, '')} · status written`);
+    for (const tr of r.transitions) console.log(`  ${C.y}!${C.r} ${tr.title}`);
+    return;
+  }
+
+  process.on('SIGINT', () => { releaseWatchLock(); process.exit(0); });
+  process.on('SIGTERM', () => { releaseWatchLock(); process.exit(0); });
+  console.log(`${C.b}Tokenflow watcher${C.r} ${C.dim}· every ${interval}s${notifyOn ? ' · notifications on' : ''} · Ctrl+C to stop${C.r}`);
+  await startWatch({
+    intervalSeconds: interval,
+    notifications: notifyOn,
+    config: cfg,
+    onCycle: (r) => {
+      if (process.stdout.isTTY && !r?.error) {
+        const line = r?.report ? `✓ refreshed (${int(r.report.newRecords)} new)` : 'cycle complete';
+        rewrite(`  ${C.dim}${line}${C.r}`);
+      }
+    },
+  });
+}
+
+function printUsageRows(rows, { demo = false } = {}) {
+  const row = (k, u) => {
+    const c = u.cost ?? u.costMeasured;
+    console.log(`  ${pad(k, 12)} ${pad(compact(u.tokens?.total ?? 0), 9)} ${pad(int(u.requests ?? 0), 8)} sessions=${u.sessions ?? '—'}  cost=${c != null ? usd(c) : `${C.dim}n/a${C.r}`}`);
+  };
+  console.log(`\n  ${C.b}Usage${C.r}${demo ? `  ${C.red}[demo]${C.r}` : ''}`);
+  row('Today', rows.today);
+  row('Yesterday', rows.yesterday);
+  row('Week', rows.weekToDate);
+  row('Month', rows.monthToDate);
+  const cov = rows.coverage;
+  if (cov?.from) console.log(`  ${C.dim}coverage ${cov.from} → ${cov.to}${C.r}\n`);
+}
+
+/** `tokenflow usage` — the token/cost answer for today, week, month. */
+async function cmdUsage() {
+  const st = await liveStatus();
+  const payload = { freshness: st.freshness, usage: st.usage, providersToday: st.providersToday, modelsToday: st.modelsToday };
+  if (flags.json) return console.log(JSON.stringify(payload, null, 2));
+  if (!st.health.records) return console.log(`\n  ${C.y}No usage data yet.${C.r} Run ${C.c}tokenflow setup${C.r}, then ${C.c}tokenflow refresh${C.r}.\n`);
+  printUsageRows({ ...st.usage, coverage: st.health.coverage }, { demo: st.demo });
+  if (st.providersToday.length) {
+    console.log(`  ${C.dim}today's top: ${st.providersToday.map((p) => `${p.key} ${compact(p.tokens)}`).join(' · ')}${C.r}\n`);
+  }
+}
+
+/** `tokenflow cost` — estimated vs measured spend, who costs what. */
+async function cmdCost() {
+  const st = await liveStatus();
+  if (flags.json) {
+    return console.log(JSON.stringify({ cost: { today: pick2(st.usage.today), weekToDate: pick2(st.usage.weekToDate), monthToDate: pick2(st.usage.monthToDate) }, providersToday: st.providersToday, modelsToday: st.modelsToday }, null, 2));
+  }
+  if (!st.health.records) return console.log(`\n  ${C.y}No usage data yet.${C.r}\n`);
+  console.log(`\n  ${C.b}Cost${C.r}  ${C.dim}(estimated from the price table; measured = reported by a gateway)${C.r}`);
+  const line = (k, u) => console.log(`  ${pad(k, 12)} est=${u.cost != null ? usd(u.cost) : `${C.dim}n/a${C.r}`}  measured=${u.costMeasured != null ? usd(u.costMeasured) : '—'}`);
+  line('Today', st.usage.today);
+  line('Week', st.usage.weekToDate);
+  line('Month', st.usage.monthToDate);
+  const f = st.forecast;
+  if (f?.monthEndCost !== null) {
+    console.log(`  ${pad('Projection', 12)} month-end ≈ ${C.b}${usd(f.monthEndCost)}${C.r} ${C.dim}(${f.confidence} confidence)${C.r}`);
+  }
+  if (st.providersToday.length) {
+    console.log(`\n  ${C.dim}today by provider:${C.r} ${st.providersToday.filter((p) => p.cost != null).map((p) => `${p.key} ${usd(p.cost)}`).join(' · ') || 'no priced usage'}`);
+  }
+  console.log('');
+}
+
+function pick2(u) {
+  return { tokens: u.tokens, requests: u.requests, cost: u.cost ?? null, costMeasured: u.costMeasured ?? null };
+}
+
+const CAP_BAR_W = 24;
+
+function capacityBar(pctUsed) {
+  if (pctUsed == null) return `${C.dim}${'·'.repeat(CAP_BAR_W)}${C.r}`;
+  const filled = Math.min(CAP_BAR_W, Math.round(pctUsed * CAP_BAR_W));
+  const color = pctUsed >= 1 ? C.red : pctUsed >= 0.8 ? C.y : C.g;
+  return `${color}${'█'.repeat(filled)}${C.r}${C.dim}${'░'.repeat(CAP_BAR_W - filled)}${C.r}`;
+}
+
+/** `tokenflow capacity` — where each configured limit stands right now. */
+async function cmdCapacity() {
+  const st = await liveStatus();
+  if (flags.json) return console.log(JSON.stringify(st.capacity, null, 2));
+  const states = st.capacity?.states || [];
+  if (!states.length) {
+    console.log(`\n  No limits configured. TokenFlow never guesses vendor quotas — declare your own caps:`);
+    console.log(`  ${C.dim}# ~/.tokenflow/config.yaml${C.r}`);
+    console.log(`  ${C.dim}limits:${C.r}`);
+    console.log(`  ${C.dim}  - id: anthropic-month${C.r}`);
+    console.log(`  ${C.dim}    provider: anthropic      # optional filter${C.r}`);
+    console.log(`  ${C.dim}    scope: month             # day | week | month${C.r}`);
+    console.log(`  ${C.dim}    metric: tokens           # tokens | input | output | requests | cost${C.r}`);
+    console.log(`  ${C.dim}    cap: 120000000${C.r}\n`);
+    return;
+  }
+  console.log(`\n  ${C.b}Capacity${C.r}  ${C.dim}${st.timezone} · resets are local-calendar${C.r}\n`);
+  for (const s of states) {
+    const glyph = s.status === 'exceeded' ? `${C.red}✗${C.r}` : s.status === 'warn' ? `${C.y}⚠${C.r}` : `${C.g}✓${C.r}`;
+    const scopeLabel = s.provider ? ` [${s.provider}]` : '';
+    console.log(`  ${glyph} ${C.b}${s.label}${C.r} ${C.dim}(${s.scope}${scopeLabel})${C.r}`);
+    console.log(`     ${capacityBar(s.pctUsed)} ${s.pctUsed != null ? `${Math.round(s.pctUsed * 100)}%` : '—'} of ${compact(s.cap)}`);
+    const bits = [`used ${compact(s.used)}`, `remaining ${compact(Math.max(0, s.remaining))}`];
+    if (s.etaHours !== null && s.status !== 'exceeded') {
+      bits.push(`projected exhaustion in ${humanDuration(s.etaHours * 3600000)}`);
+    }
+    if (s.resetsInMs > 0) bits.push(`resets in ${humanDuration(s.resetsInMs)}`);
+    console.log(`     ${bits.join(' · ')}`);
+  }
+  if ((st.anomalies || []).some((a) => a.severity !== 'info')) {
+    console.log(`\n  ${C.y}${(st.anomalies || []).filter((a) => a.severity !== 'info').length} active alert(s) — see 'tokenflow forecast --alerts' or the dashboard Live tab.${C.r}`);
+  }
+  console.log('');
+}
+
+/** `tokenflow forecast` — where usage is heading, with stated confidence. */
+async function cmdForecast() {
+  const st = await liveStatus();
+  if (flags.json) {
+    return console.log(JSON.stringify({ forecast: st.forecast, anomalies: st.anomalies }, null, 2));
+  }
+  const f = st.forecast;
+  if (!f || f.tomorrow === null) {
+    return console.log(`\n  ${C.y}Not enough history to forecast yet.${C.r} ${f?.reason || ''}\n`);
+  }
+  console.log(`\n  ${C.b}Forecast${C.r}  ${C.dim}linear trend over the last ${f.n} days · ${f.confidence} confidence${C.r}`);
+  console.log(`  ${pad('Tomorrow', 14)} ≈ ${compact(f.tomorrow)} tokens`);
+  console.log(`  ${pad('Next 7 days', 14)} ≈ ${compact(f.next7days)} tokens${f.next7daysCost != null ? ` · ${usd(f.next7daysCost)}` : ''}`);
+  if (f.monthEnd !== null) console.log(`  ${pad('Month-end', 14)} ≈ ${compact(f.monthEnd)} tokens${f.monthEndCost !== null ? ` · ${usd(f.monthEndCost)}` : ''}`);
+  if (Array.isArray(f.tomorrowInterval)) {
+    console.log(`  ${C.dim}tomorrow's likely range: ${compact(f.tomorrowInterval[0])} – ${compact(f.tomorrowInterval[1])}${C.r}`);
+  }
+  const alerts = (st.anomalies || []);
+  if (alerts.length) {
+    console.log(`\n  ${C.b}Alerts${C.r}`);
+    for (const a of alerts.slice(0, 6)) {
+      const tag = a.severity === 'high' ? C.red : a.severity === 'warn' ? C.y : C.dim;
+      console.log(`   ${tag}●${C.r} [${a.date}] ${wrap(a.detail, 88, 8)}`);
+    }
+  }
+  console.log(`\n  ${C.dim}Projections are trends, not promises — they assume the recent pattern continues.${C.r}\n`);
+}
+
+/** `tokenflow menubar` — render / install menu-bar integrations. */
+async function cmdMenubar() {
+  const mode = String(flags.mode || loadConfig().ui?.menubarMode || 'auto');
+  const st = await liveStatus();
+  if (flags.render) return console.log(renderXbar(st, { mode }));
+  if (flags.swiftbar || flags.xbar || typeof flags.out === 'string') {
+    const home = os.homedir();
+    const dir = typeof flags.out === 'string'
+      ? flags.out
+      : flags.xbar
+        ? path.join(home, 'Library', 'Application Support', 'xbar', 'plugins')
+        : path.join(home, 'Library', 'Plugins');
+    const intervalMin = Math.max(1, Math.round(intervalSeconds() / 60));
+    const file = installSwiftBarPlugin({ dir, mode, intervalMinutes: intervalMin });
+    console.log(`${C.g}✓${C.r} plugin written: ${file}`);
+    console.log(`  ${C.dim}Point SwiftBar/xbar at "${dir}" (or restart it) and "tokenflow" appears in your menu bar.`);
+    console.log(`  Refresh cadence: every ${intervalMin} min via filename convention; display mode: ${mode}.${C.r}\n`);
+    return;
+  }
+  console.log(`
+  ${C.b}Menu bar integration${C.r}
+  usage: tokenflow menubar [--render | --swiftbar | --xbar | --out <dir>]
+                           [--mode auto|tokens|cost|limit]
+
+  ${C.dim}--render        print the xbar/SwiftBar-format text (used by the plugin)
+  --swiftbar      install the plugin script into ~/Library/Plugins
+  --xbar          install into the xbar plugin directory instead
+  --out <dir>     install into any compatible bar's plugin directory
+  --mode          what the bar shows: auto picks the most urgent signal${C.r}
+`);
+}
+
+function intervalSeconds() {
+  return Number(flags.interval) || loadConfig().watch?.intervalSeconds || 120;
+}
+
 // ===================================================================== help ==
 
 function help(code = 0) {
@@ -752,6 +1006,18 @@ function help(code = 0) {
     tokenflow dashboard             open the local dashboard (no refresh)
     tokenflow demo                  explore with clearly-labelled synthetic data
                                    (--no-serve to generate the data and exit)
+
+  ${C.b}Live${C.r}
+    tokenflow watch                 keep data + status current in the background
+    tokenflow watch --once          one cycle and exit (cron-friendly)
+    tokenflow watch --status        is a watcher running? how fresh is the data?
+    tokenflow watch --stop          stop a running watcher
+    tokenflow usage                 today / week / month tokens & cost (--json)
+    tokenflow cost                  estimated vs measured spend, projections
+    tokenflow capacity              configured limits: %, burn, reset countdowns
+    tokenflow forecast              trend projection + active alerts
+    tokenflow menubar --swiftbar    install a SwiftBar/xbar menu-bar plugin
+    tokenflow status --bar          the one-line menu-bar summary
 
   ${C.b}Everyday${C.r}
     tokenflow status                totals, coverage, data health, insights

@@ -124,6 +124,10 @@ export function calculateDimensionSeries(rows, ix, dim, buckets, opt = {}) {
  * same length as the current one, immediately preceding it.
  */
 export function calculateDimensionGrowth(ix, dim, filters, { from, to }) {
+  // An empty store has no coverage; growth against nothing is nothing.
+  if (!from || !to) {
+    return { window: { from: null, to: null }, previousWindow: { from: null, to: null }, rows: [] };
+  }
   const days = daysBetween(from, to) + 1;
   const prevTo = addDays(from, -1);
   const prevFrom = addDays(prevTo, -(days - 1));

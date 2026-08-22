@@ -155,6 +155,45 @@ over this. Series colours belong to the **mode**, not the skin, and were validat
 colour-blind separation against every skin's chart surface — which is why changing the look can
 never change what a colour means.
 
+### `limits` — declared capacity caps
+
+TokenFlow never invents vendor quota data. A limit exists because you wrote it here, and the
+engine evaluates it against measured consumption (Live tab, `tokenflow capacity`, menu bar):
+
+```yaml
+limits:
+  - id: anthropic-monthly     # required, unique
+    provider: anthropic       # optional cube filters — provider | model | project
+    scope: month              # day | week | month  (your local calendar)
+    metric: tokens            # tokens | input | output | requests | cost
+    cap: 120000000            # tokens, or dollars when metric is cost
+    warnAt: 0.8               # optional warn threshold (default 0.8)
+```
+
+From each limit the engine derives: consumption in the window, % used, remaining,
+today's hourly pace, a trailing-7-day daily pace, projected exhaustion ETA and
+the exact reset instant in your timezone. Invalid definitions are reported via
+`tokenflow capacity --json` (`invalid`) and by the dashboard — never silently
+ignored. See [live-mode.md](live-mode.md) for semantics.
+
+### `watch` — the background refresher
+
+```yaml
+watch:
+  intervalSeconds: 120      # between incremental refresh passes
+  notifications: false      # OS notifications on limit crossings / new anomalies
+  staleAfterSeconds: 600    # when live surfaces should call the data stale
+```
+
+The watcher only runs while you started it (`tokenflow watch`); nothing is
+installed or auto-started. `notifications: true` is what `--notify` overrides
+per run.
+
+### `ui.menubarMode`
+
+Default display mode for `tokenflow status --bar` and the menu-bar plugin:
+`auto` (most urgent signal), `tokens`, `cost`, or `limit`.
+
 ---
 
 ## Pricing is separate

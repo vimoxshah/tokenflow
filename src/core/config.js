@@ -51,6 +51,10 @@ export const paths = () => {
     sessions: path.join(root, 'data', 'sessions.json'),
     activity: path.join(root, 'data', 'activity.json'),
     state: path.join(root, 'data', 'state.json'),
+    // Written by `tokenflow watch`, read by every live surface (menu bar,
+    // CLI --live, dashboard header). Atomic tmp+rename writes only.
+    status: path.join(root, 'data', 'status.json'),
+    watchPid: path.join(root, 'data', 'watch.pid'),
     cache: path.join(root, 'cache'),
     prefs: path.join(root, 'preferences.json'),
   };
@@ -72,6 +76,17 @@ export const DEFAULT_CONFIG = {
   },
   modelMappings: [], // user rules, prepended to the built-ins
   interfaceOverrides: {}, // { "<client>": "CLI" }
+  // User-declared quota / budget caps, evaluated by analytics/capacity.js.
+  // TokenFlow never invents vendor quota data; a limit exists only if you
+  // declared it here (or via the dashboard's Live tab).
+  limits: [],
+  // The background refresher (`tokenflow watch`). It runs only while you
+  // explicitly started it; nothing is installed or auto-started.
+  watch: {
+    intervalSeconds: 120, // between incremental refresh passes
+    notifications: false, // opt-in OS notifications on threshold crossings
+    staleAfterSeconds: 600, // when live surfaces should call the data stale
+  },
   ui: {
     // Visual theme: skin restyles the chrome, mode flips light/dark. The series
     // colours belong to the mode and are validated per surface, so a skin never

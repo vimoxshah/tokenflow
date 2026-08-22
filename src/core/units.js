@@ -129,3 +129,19 @@ export function relativeTime(iso, now = Date.now()) {
   if (d < 30) return `${d} day${d === 1 ? '' : 's'} ago`;
   return longDate(iso.slice(0, 10));
 }
+
+/**
+ * "2h 13m" / "3d 4h" / "45s" from milliseconds — empty unit tails are dropped
+ * ("5h", not "5h 0m"). Null-safe: unknown stays null rather than pretending.
+ */
+export function countdown(ms) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return null;
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+}

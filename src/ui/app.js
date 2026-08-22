@@ -7,7 +7,7 @@
  * produce a number that disagrees with `tokenflow status`.
  */
 import { computeView, resolveRange, QUICK_RANGES, EMPTY_FILTERS, addDays, daysBetween, previousPeriod } from '../analytics/index.js';
-import { compact, int, usd, pct, signedPct, shortDate, longDate, hourLabel, hourWindow, relativeTime, humanDuration, DOW } from '../core/units.js';
+import { compact, int, usd, pct, signedPct, shortDate, longDate, hourLabel, hourWindow, relativeTime, humanDuration, countdown, DOW } from '../core/units.js';
 import { INTERFACE_ORDER } from '../core/schema.js';
 import {
   el, svg, timeSeries, columns, hbars, donut, compositionBar, calendarHeatmap,
@@ -33,6 +33,8 @@ const S = {
   tables: new Set(),
   refreshing: false,
   explorer: { page: 0, limit: 50, sort: 'ts', dir: 'desc', search: '', rows: [], total: 0, loading: false },
+  /** Latest /api/live snapshot (live mode only; null in a static snapshot). */
+  live: null,
   colors: {
     provider: new ColorScale(),
     model: new ColorScale(),
@@ -51,6 +53,7 @@ const COMP_COLORS = {
 
 const TABS = [
   ['overview', 'Overview'],
+  ['live', 'Live'],
   ['providers', 'Providers'],
   ['models', 'Models'],
   ['interfaces', 'Interfaces'],
@@ -109,6 +112,44 @@ async function boot() {
     history.replaceState(null, '', location.pathname);
     doRefresh();
   }
+  ensureLiveLoop();
+}
+
+// ============================================================ live polling ==
+
+let liveTimer = null;
+
+/**
+ * Poll the live snapshot once a minute while the dashboard is open. This is
+ * what makes the header pill and the Live tab's watcher strip current without
+ * any user action. In a static snapshot there is no server: the loop never
+ * starts, and the Live tab renders purely from the bundle.
+ */
+function ensureLiveLoop() {
+  if (SNAPSHOT || liveTimer) return;
+  const tick = async () => {
+    try {
+      const r = await fetch('/api/live', { cache: 'no-store' });
+      if (r.ok) { S.live = await r.json(); updateLivePill(); }
+    } catch { /* server gone (dashboard closed): pill just stays absent */ }
+  };
+  tick();
+  liveTimer = setInterval(tick, 60000);
+}
+
+function updateLivePill() {
+  const host = document.getElementById('header-actions');
+  let pill = document.getElementById('live-pill');
+  const w = S.live?.watcher;
+  const fresh = S.live && !S.live.freshness?.stale;
+  if (!w) { if (pill) pill.remove(); return; }
+  if (!pill) {
+    pill = el('span', { class: 'live-pill', id: 'live-pill' });
+    host.appendChild(pill);
+  }
+  const age = S.live.freshness?.ageMs;
+  pill.textContent = `● live · ${age != null ? relativeTime(S.live.generatedAt).replace(' ago', '') : ''}`;
+  pill.title = `Watcher running (pid ${w.pid}, every ${w.intervalSeconds ?? '?'}s). Data ${fresh ? 'is fresh' : 'may be stale'}.`;
 }
 
 /**
@@ -244,6 +285,7 @@ function render() {
   host.textContent = '';
   const fn = {
     overview: viewOverview,
+    live: viewLive,
     providers: () => viewDimension('provider', 'Provider intelligence'),
     models: viewModels,
     interfaces: viewInterfaces,
@@ -2073,3 +2115,288 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === 'r' && (ev.metaKey || ev.ctrlKey) === false && ev.target === document.body && !SNAPSHOT) doRefresh();
   if (ev.key === 'Escape') tooltip.hide();
 });
+
+// ============================================================== live view ==
+
+const SEV = {
+  high: { label: 'high', cls: 'sev-high' },
+  warn: { label: 'watch', cls: 'sev-warn' },
+  info: { label: 'info', cls: 'sev-info' },
+};
+
+function liveWatcherCard() {
+  const body = el('div');
+  const w = S.live?.watcher;
+  if (w) {
+    const age = S.live.freshness?.ageMs;
+    body.appendChild(el('div', { class: 'chips', style: 'padding:10px 14px' }, [
+      el('span', { class: 'badge ok', text: `● watcher running · pid ${w.pid}` }),
+      el('span', { class: 'muted', text: `every ${w.intervalSeconds ?? '?'}s · ${int(w.cycles)} cycles` + (age != null ? ` · snapshot ${relativeTime(S.live.generatedAt)}` : '') }),
+    ]));
+  } else {
+    const c = el('code', { text: 'tokenflow watch', style: 'font-size:12px' });
+    body.appendChild(el('div', { class: 'chips', style: 'padding:10px 14px;gap:8px;flex-wrap:wrap' }, [
+      el('span', { class: 'badge stale', text: '○ watcher not running' }),
+      el('span', { class: 'muted', text: 'run ' }),
+      c,
+      el('span', { class: 'muted', text: ' to keep the status file, menu bar and alerts current' }),
+    ]));
+  }
+  return card('Real-time engine', 'The watcher refreshes incrementally and rewrites data/status.json after every cycle.', body);
+}
+
+function limitRow(s) {
+  // Past ~10× a cap, percentages stop communicating; multiples do.
+  const pctText = s.pctUsed == null ? '—'
+    : s.pctUsed >= 10 ? `${Math.round(s.pctUsed)}×`
+    : `${(s.pctUsed * 100).toFixed(1)}%`;
+  const color = s.status === 'exceeded' ? 'var(--critical)' : s.status === 'warn' ? 'var(--warning)' : 'var(--series-1)';
+  const row = el('div', { style: 'display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--hairline)' });
+  const glyph = s.status === 'exceeded' ? '✗' : s.status === 'warn' ? '⚠' : '✓';
+  const left = el('div', { style: 'min-width:220px' });
+  left.appendChild(el('div', {}, [document.createTextNode(`${glyph} ${s.label}`), s.provider ? el('span', { class: 'muted', text: `  [${s.provider}]` }) : null]));
+  left.appendChild(el('div', { class: 'hint', text: `${s.scope} · ${s.metric}` }));
+  row.appendChild(left);
+  const barWrap = el('div', { style: 'flex:1;min-width:120px' });
+  barWrap.appendChild(miniBar(Math.max(0, Math.min(1, s.pctUsed ?? 0)), color));
+  row.appendChild(barWrap);
+  const right = el('div', { style: 'text-align:right;min-width:190px' });
+  right.appendChild(el('div', { text: `${pctText} of ${compact(s.cap)}` }));
+  const sub = [];
+  if (s.status !== 'exceeded' && s.etaHours != null) sub.push(`ETA ${countdown(s.etaHours * 3600000)}`);
+  if (s.resetsInMs > 0) sub.push(`resets in ${countdown(s.resetsInMs)}`);
+  if (sub.length) right.appendChild(el('div', { class: 'hint', text: sub.join(' · ') }));
+  row.appendChild(right);
+  return row;
+}
+
+function capacityCard() {
+  const cap = S.view.capacity || { states: [], invalid: [], summary: {} };
+  const body = el('div', { style: 'padding:6px 14px 14px' });
+
+  if (!cap.states.length) {
+    const yaml = [
+      '# ~/.tokenflow/config.yaml',
+      'limits:',
+      '  - id: anthropic-monthly',
+      '    provider: anthropic        # optional: provider | model | project',
+      '    scope: month               # day | week | month',
+      '    metric: tokens             # tokens | input | output | requests | cost',
+      '    cap: 120000000             # tokens (or $ for metric: cost)',
+      '    warnAt: 0.8                # optional warn threshold',
+    ].join('\n');
+    body.appendChild(el('p', { class: 'hint', text: 'TokenFlow never invents vendor quota numbers — a limit exists only if you declare it. Declare one here or paste this into your config:' }));
+    const pre = el('pre', { class: 'mono', text: yaml, style: 'background:var(--surface-2);padding:10px;border-radius:8px;overflow:auto;font-size:11.5px;line-height:1.55' });
+    body.appendChild(pre);
+    const actions = btn('⧉ Copy YAML', () => {
+      navigator.clipboard.writeText(yaml).then(() => { actions.textContent = '✓ Copied'; setTimeout(() => { actions.textContent = '⧉ Copy YAML'; }, 1500); }).catch(() => {});
+    }, 'ghost sm');
+    return card('Capacity & budgets', 'Burn rate, exhaustion ETA and reset countdowns for your declared limits.', body, actions);
+  }
+
+  const sum = cap.summary || {};
+  if (sum.counts && (sum.counts.exceeded || sum.counts.warn)) {
+    body.appendChild(el('div', { class: 'chips', style: 'padding:2px 0 8px' }, [
+      sum.counts.exceeded ? el('span', { class: 'badge demo', text: `${sum.counts.exceeded} exceeded` }) : null,
+      sum.counts.warn ? el('span', { class: 'badge warn', text: `${sum.counts.warn} approaching` }) : null,
+      sum.firstToHit ? el('span', { class: 'muted', text: `first projected hit: ${sum.firstToHit.label} in ${countdown(sum.firstToHit.etaHours * 3600000)}` }) : null,
+    ].filter(Boolean)));
+  }
+  for (const s of cap.states) body.appendChild(limitRow(s));
+  if (cap.invalid?.length) {
+    body.appendChild(el('p', { class: 'hint', text: `${cap.invalid.length} invalid limit definition(s) in config were ignored — check \`tokenflow capacity\`.` }));
+  }
+  const manage = SNAPSHOT
+    ? null
+    : btn('⚙ Manage limits', openLimitEditor, 'ghost sm');
+  return card('Capacity & budgets', 'Evaluated against all primary usage regardless of dashboard filters — quota windows are facts about your accounts, not filter states.', body, manage);
+}
+
+function openLimitEditor() {
+  const cur = (S.bundle.limits || []).map((l) => ({ ...l }));
+  const body = el('div');
+
+  // A simple editable list is clearer than a grid here.
+  const rows = el('div');
+  const renderRows = () => {
+    rows.textContent = '';
+    for (const l of cur) {
+      const r = el('div', { style: 'display:flex;gap:8px;align-items:center;padding:4px 0' });
+      r.appendChild(el('span', { class: 'mono', text: `${l.id}`, style: 'min-width:140px' }));
+      r.appendChild(el('span', { class: 'muted', text: `${[l.provider, l.model, l.project].filter(Boolean).join('/') || 'all sources'} · ${l.scope} · ${l.metric} · cap ${compact(l.cap)}` }));
+      const spacer = el('div', { style: 'flex:1' });
+      r.appendChild(spacer);
+      r.appendChild(btn('Remove', () => { cur.splice(cur.indexOf(l), 1); renderRows(); }, 'ghost sm'));
+      rows.appendChild(r);
+    }
+    if (!cur.length) rows.appendChild(el('p', { class: 'hint', text: 'No limits yet — add one below.' }));
+  };
+  renderRows();
+  body.appendChild(rows);
+
+  const f = {};
+  const field = (key, placeholder, type = 'text') => {
+    const input = el('input', { placeholder, type, 'aria-label': key });
+    input.style.cssText = 'flex:1;min-width:90px';
+    f[key] = input;
+    return input;
+  };
+  const scopeSel = el('select', { 'aria-label': 'scope' });
+  for (const o of ['day', 'week', 'month']) scopeSel.appendChild(el('option', { value: o, text: o }));
+  const metricSel = el('select', { 'aria-label': 'metric' });
+  for (const o of ['tokens', 'input', 'output', 'requests', 'cost']) metricSel.appendChild(el('option', { value: o, text: o }));
+
+  const form = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:10px' }, [
+    field('id', 'id (required)'),
+    field('provider', 'provider (optional)'),
+    field('model', 'model (optional)'),
+    scopeSel, metricSel,
+    field('cap', 'cap', 'number'),
+    field('warnAt', 'warnAt 0–1', 'number'),
+  ]);
+  for (const c of form.children) c.style.flexGrow = '0';
+  body.appendChild(form);
+
+  const errBox = el('p', { class: 'hint', style: 'color:var(--critical)' });
+  body.appendChild(errBox);
+
+  const foot = el('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' });
+  foot.appendChild(btn('Cancel', () => document.getElementById('modal-close').click(), 'ghost sm'));
+  foot.appendChild(btn('Save limits', async () => {
+    errBox.textContent = '';
+    // The form is only part of the save when the user actually named a new
+    // limit. Removal-only saves must not inject an empty draft — that bug
+    // made every "remove" also POST a junk row and fail validation.
+    const wantsAdd = f.id.value.trim() !== '' || f.cap.value !== '';
+    if (wantsAdd && f.id.value.trim() === '') {
+      errBox.textContent = 'New limit needs an id (or clear the form to save removals only).';
+      return;
+    }
+    const def = {
+      id: f.id.value.trim(),
+      provider: f.provider.value.trim() || undefined,
+      model: f.model.value.trim() || undefined,
+      scope: scopeSel.value,
+      metric: metricSel.value,
+      cap: Number(f.cap.value),
+      ...(f.warnAt.value !== '' ? { warnAt: Number(f.warnAt.value) } : {}),
+    };
+    const next = wantsAdd ? [...cur, def] : [...cur];
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ limits: next }),
+      });
+      const out = await res.json();
+      if (!res.ok || !out.ok) {
+        errBox.textContent = `Invalid: ${(out.invalid || []).map((x) => `${x.id ? x.id + ': ' : ''}${x.errors.join('; ')}`).join(' | ')}`;
+        return;
+      }
+      S.bundle.limits = out.limits;
+      recompute();
+      render();
+      document.getElementById('modal-close').click();
+    } catch (e) {
+      errBox.textContent = `Save failed: ${e.message}`;
+    }
+  }, 'sm'));
+  body.appendChild(foot);
+
+  openModal('Manage capacity limits', body);
+}
+
+function forecastCard() {
+  const v = S.view;
+  const f = v.forecast;
+  const body = el('div');
+
+  if (!f || f.tomorrow === null) {
+    body.appendChild(el('p', { class: 'hint', text: f?.reason || 'Not enough history yet.' }));
+    return card('Forecast', 'A conservative linear trend over recent days — never a promise.', body);
+  }
+
+  const kpis = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:10px 14px 2px' });
+  const kpiTile = (label, val, sub) => {
+    const d = el('div', { style: 'background:var(--surface-2);border-radius:8px;padding:10px' });
+    d.appendChild(el('div', { class: 'hint', text: label }));
+    d.appendChild(el('div', { class: 'k-value str', text: val, style: 'font-size:20px' }));
+    if (sub) d.appendChild(el('div', { class: 'hint', text: sub }));
+    return d;
+  };
+  kpis.appendChild(kpiTile('Tomorrow (projected)', compact(f.tomorrow), f.tomorrowInterval ? `${compact(f.tomorrowInterval[0])} – ${compact(f.tomorrowInterval[1])}` : null));
+  kpis.appendChild(kpiTile('Next 7 days', compact(f.next7days), f.next7daysCost != null ? usd(f.next7daysCost) : null));
+  if (f.monthEnd !== null) {
+    kpis.appendChild(kpiTile('Month-end', compact(f.monthEnd), `measured so far ${compact(f.monthEndActualToDate)}${f.monthEndCost !== null ? ` · ≈${usd(f.monthEndCost)} est.` : ''}`));
+  }
+  kpis.appendChild(kpiTile('Confidence', f.confidence, f.n ? `${f.n}-day trend` : null));
+  body.appendChild(kpis);
+
+  // History + projection side by side: measured bars, then forecast bars in a
+  // dashed-looking muted tone, clearly separated by an empty slot.
+  const daily = v.daily.slice(-14);
+  const data = daily.map((d) => ({
+    label: shortDate(d.key),
+    value: d.total,
+    fmtXLong: d.key,
+    color: 'var(--series-1)',
+  }));
+  if (f.tomorrow !== null) {
+    data.push({ label: 'tomorrow*', value: f.tomorrow, color: 'var(--hairline)', extra: [{ name: 'Projected', value: compact(f.tomorrow) }] });
+  }
+  // The month-end projection deliberately stays OUT of the chart: a whole-
+  // month total beside daily bars would flatten the history into unreadability.
+  // It lives in the KPI tiles above, labelled as a projection.
+  const wrapChart = el('div', { style: 'padding:6px 14px 12px' });
+  requestAnimationFrame(() => observeWidth(wrapChart, (w) => {
+    wrapChart.textContent = '';
+    wrapChart.appendChild(columns({
+      data, width: w, height: 200, fmtY: (x) => compact(x), valueLabel: 'Tokens',
+      ariaLabel: 'Recent daily usage with projections appended',
+    }));
+  }));
+  body.appendChild(wrapChart);
+  body.appendChild(el('p', { class: 'hint', style: 'padding:0 14px 12px', text: '* Projected, not measured. The trend assumes the recent pattern continues; confidence is stated above and drops sharply on thin or volatile history.' }));
+
+  return card('Forecast', 'Measured history first; projections always labelled and kept apart.', body);
+}
+
+function anomaliesCard() {
+  const v = S.view;
+  const body = el('div', { style: 'padding:6px 14px 14px' });
+  const anomalies = v.anomalies || [];
+
+  if (!anomalies.length) {
+    body.appendChild(el('p', { class: 'hint', text: 'No anomalies detected in the current dataset. Detection covers token/cost/request spikes, weekday gaps and sudden drops — each reported with its own arithmetic.' }));
+  } else {
+    for (const a of anomalies) {
+      const sev = SEV[a.severity] || SEV.info;
+      const row = el('div', { style: 'display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hairline)' });
+      row.appendChild(el('span', { class: `badge ${sev.cls}`, text: sev.label }));
+      row.appendChild(el('span', { class: 'mono muted', text: a.date, style: 'min-width:86px;font-size:11px' }));
+      row.appendChild(el('span', { text: a.detail }));
+      body.appendChild(row);
+    }
+  }
+
+  const fresh = [...(v.firstSeen?.models || []).map((m) => ({ kind: 'model', ...m })), ...(v.firstSeen?.providers || []).map((p) => ({ kind: 'provider', ...p }))];
+  if (fresh.length) {
+    const chips = el('div', { class: 'chips', style: 'padding-top:10px' });
+    chips.appendChild(el('span', { class: 'muted', text: 'New this week: ' }));
+    for (const x of fresh) {
+      chips.appendChild(el('span', { class: 'chip', text: `${x.kind} ${x.entity} (${shortDate(x.firstSeen)})` }));
+    }
+    body.appendChild(chips);
+  }
+  return card('Anomalies & changes', 'Robust median/MAD detection — every alert shows observed vs expected so you can check it.', body);
+}
+
+function viewLive() {
+  ensureLiveLoop();
+  const root = el('div', { class: 'grid' });
+  if (!SNAPSHOT) root.appendChild(liveWatcherCard());
+  root.appendChild(capacityCard());
+  root.appendChild(forecastCard());
+  root.appendChild(anomaliesCard());
+  return root;
+}

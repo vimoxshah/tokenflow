@@ -289,7 +289,37 @@ Want it current without ever thinking about it? Schedule `tokenflow up --no-serv
 a `launchd` agent, on Linux with a systemd timer or cron, on Windows with Task Scheduler. The file
 on disk is then always fresh when you open it.
 
-## 11. Themes
+## 11. Live mode — watcher, menu bar, capacity
+
+Section 10 is the pull-based path. TokenFlow also runs live:
+
+```bash
+tokenflow watch                 # incremental refresh every N seconds (default 120)
+tokenflow watch --notify        # + OS alerts on limit crossings and new anomalies
+tokenflow menubar --swiftbar    # menu bar via SwiftBar/xbar — no Electron tray
+tokenflow status --bar          # the one-line adaptive summary the menu bar shows
+```
+
+The watcher rewrites `data/status.json` after every cycle; the menu bar, four
+focused commands (`usage`, `cost`, `capacity`, `forecast`) and the dashboard's
+**Live** tab all read it. Declare caps in `config.yaml` and get burn rate,
+exhaustion ETA and reset countdowns per provider:
+
+```yaml
+limits:
+  - id: anthropic-monthly
+    provider: anthropic
+    scope: month
+    metric: tokens            # or cost / requests / input / output
+    cap: 120000000
+```
+
+Vendor quotas are never invented — a limit exists because you declared it,
+evaluated against measured consumption. Forecasting is a conservative linear
+trend with stated confidence; anomaly detection is robust median/MAD with its
+arithmetic printed on every alert. Full story: **[docs/live-mode.md](docs/live-mode.md)**.
+
+## 12. Themes
 
 Three skins, each in dark and light, switchable from the header and persisted:
 
@@ -311,7 +341,7 @@ what a colour means — a real hazard in themeable dashboards, and the reason th
 attributes (`data-skin`, `data-mode`) rather than six unrelated stylesheets. Set your default in
 `config.yaml` under `ui.skin` / `ui.mode`.
 
-## 12. Export
+## 13. Export
 
 ```bash
 tokenflow export --csv                    # the current filter, as tokenflow-usage-2026-08-20.csv
@@ -336,7 +366,7 @@ Restored records are provisional — the next refresh that reaches the real logs
 instead of double counting. Relatedly, `refresh --full` refuses to drop records belonging to a
 source it cannot currently read, because it could not rebuild them; `--force` overrides.
 
-## 13. Contributing
+## 14. Contributing
 
 ```bash
 npm test              # 102 tests: normalization, adapters, analytics, store, formatting
@@ -362,6 +392,7 @@ See **[docs/architecture.md](docs/architecture.md)** for the layering, and
 ## Documentation
 
 - [getting-started.md](docs/getting-started.md) — install to first dashboard
+- [live-mode.md](docs/live-mode.md) — watcher, menu bar, capacity, forecasts, alerts
 - [configuration.md](docs/configuration.md) — every config field, annotated
 - [providers.md](docs/providers.md) — every adapter, what it reads, what it cannot know
 - [data-model.md](docs/data-model.md) — the unified schema and token accounting rules

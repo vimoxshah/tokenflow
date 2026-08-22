@@ -16,7 +16,9 @@ import { randomBytes } from 'node:crypto';
 import { buildBundle, queryRecords, rootDir } from '../core/bundle.js';
 import { refresh } from '../core/ingest.js';
 import { loadProviders, listProviders } from '../core/registry.js';
-import { loadConfig, paths, savePrefs, loadPrefs } from '../core/config.js';
+import { loadConfig, saveConfig, paths, savePrefs, loadPrefs, DEFAULT_CONFIG, merge } from '../core/config.js';
+import { currentStatus } from '../core/live-status.js';
+import { normalizeLimits } from '../analytics/capacity.js';
 import { streamRecordsCsv, exportFilename } from '../export/csv.js';
 import { writeJson, readJson } from '../core/store.js';
 
@@ -103,6 +105,50 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
       if (p === '/api/records') {
         return json(res, queryRecords(Object.fromEntries(url.searchParams)));
       }
+      /**
+       * The live snapshot: the watcher's last write when it is fresh, else a
+       * fresh computation. Same shape the menu bar and `tokenflow usage`
+       * consume, so the dashboard's Live tab cannot disagree with either.
+       */
+      if (p === '/api/live') {
+        const { status, fromWatch } = currentStatus({ maxAgeMs: 30000 });
+        return json(res, { ...status, fromWatch });
+      }
+      /**
+       * Limited config editing from the dashboard: only the limits list and
+       * watch preferences may change, both validated before saving. Everything
+       * else (providers, sources, identity) stays CLI-managed on purpose.
+       */
+      if (p === '/api/config' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const cfg = loadConfig();
+        const out = { updated: [] };
+        if (body.limits !== undefined) {
+          const { limits, invalid } = normalizeLimits(body.limits);
+          if (invalid.length) return json(res, { ok: false, invalid }, 400);
+          cfg.limits = limits;
+          out.updated.push('limits');
+          out.limits = limits;
+        }
+        if (body.watch !== undefined) {
+          const w = body.watch || {};
+          cfg.watch = {
+            intervalSeconds: w.intervalSeconds !== undefined
+              ? Math.max(10, Number(w.intervalSeconds) || 120)
+              : (cfg.watch?.intervalSeconds ?? 120),
+            notifications: w.notifications !== undefined
+              ? !!w.notifications
+              : !!cfg.watch?.notifications,
+            staleAfterSeconds: w.staleAfterSeconds !== undefined
+              ? Math.max(60, Number(w.staleAfterSeconds) || 600)
+              : (cfg.watch?.staleAfterSeconds ?? 600),
+          };
+          out.updated.push('watch');
+          out.watch = cfg.watch;
+        }
+        saveConfig(cfg);
+        return json(res, { ok: true, ...out });
+      }
       if (p === '/api/export.csv') {
         const q = Object.fromEntries(url.searchParams);
         res.writeHead(200, {
@@ -173,9 +219,9 @@ function send(res, code, type, body) {
   res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(body);
 }
-function json(res, obj) {
+function json(res, obj, code = 200) {
   const s = JSON.stringify(obj);
-  res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(s);
 }
 function sendFile(res, file) {

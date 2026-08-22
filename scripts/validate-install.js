@@ -65,6 +65,24 @@ const cube = store.cube();
 const bundle = buildBundle();
 add('cube loads', Array.isArray(cube.rows), `${cube.rows.length} rows`);
 
+// ---- live layer ------------------------------------------------------------
+try {
+  const { normalizeLimits } = await import('../src/analytics/capacity.js');
+  const { limits, invalid } = normalizeLimits(cfg?.limits || []);
+  add('limits config valid', invalid.length === 0,
+    invalid.length ? invalid.map((x) => `${x.id ?? `#${x.index}`}: ${x.errors.join('; ')}`).join(' | ')
+      : `${limits.length} limit(s) declared`);
+  const statusFile = p.status;
+  const st = fs.existsSync(statusFile)
+    ? JSON.parse(fs.readFileSync(statusFile, 'utf8'))
+    : null;
+  add('live status file readable', st === null || (st && typeof st === 'object' && !!st.schema),
+    st === null ? 'not present — run `tokenflow watch` or `watch --once` to create it'
+      : `schema ${st.schema}, generatedAt ${st.generatedAt}`);
+} catch (err) {
+  add('live layer checks', false, err.message);
+}
+
 if (cube.rows.length) {
   // Sum the request-level facts and compare with the cube. If these disagree,
   // the aggregates are stale and `tokenflow compact` should be run.

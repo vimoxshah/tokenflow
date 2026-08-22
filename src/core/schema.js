@@ -265,7 +265,8 @@ function partsFormatter(tz) {
   return f;
 }
 
-function tzOffsetMinutes(d, tz) {
+/** Offset of `tz` east of UTC in minutes at instant `d` (fallback: host zone). */
+export function tzOffsetMinutes(d, tz) {
   if (!tz) return -d.getTimezoneOffset();
   try {
     const dtf = new Intl.DateTimeFormat('en-US', {

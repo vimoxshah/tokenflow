@@ -119,6 +119,14 @@ Generates deterministic synthetic data and opens the dashboard. `--days <n>`, `-
 Totals, coverage, composition, peak, cost, data health and the top insights — the same numbers
 the dashboard shows, from the same analytics code. `--json` for scripting.
 
+| Flag | Effect |
+|---|---|
+| `--bar` | print only the one-line menu-bar summary (see `menubar`) |
+| `--mode <m>` | with `--bar`: `auto` (default) / `tokens` / `cost` / `limit` |
+| `--prefix <s>` | with `--bar`: leading label (default `TF`) |
+
+---
+
 ### `providers`
 What is detected, connected, or disabled, with the reason for each. `--json`.
 
@@ -142,6 +150,69 @@ tokenflow export --html ~/Desktop/tokenflow.html
 ```
 
 Missing values are written as empty cells, never as `0`.
+
+---
+
+## Live
+
+These four read the watcher's snapshot (`data/status.json`) when it is fresh
+and compute on the spot otherwise — so they are fast to run repeatedly and
+always agree with the dashboard.
+
+### `usage`
+Today / yesterday / week-to-date / month-to-date: tokens by bucket, requests,
+sessions, estimated cost, plus today's top providers and models. `--json`
+returns the full slices.
+
+### `cost`
+Estimated vs measured spend for the same windows, today's spend by provider,
+and the month-end projection with its confidence. `--json`.
+
+### `capacity`
+Every configured limit (see [live-mode.md](live-mode.md#capacity--budgets) and
+[configuration.md](configuration.md)): bar, % of cap, burn rate, projected
+exhaustion ETA, reset countdown, sorted most-urgent first. With no limits
+configured it prints the exact YAML to paste instead of pretending to know
+vendor quotas. `--json` includes validation errors for bad definitions.
+
+### `forecast`
+Tomorrow (with likely range), next 7 days, month-end projection, confidence,
+sample size — followed by active anomaly alerts with their arithmetic.
+`--json` returns `{ forecast, anomalies }`.
+
+### `watch`
+The background refresher. One cycle = incremental refresh → rebuild
+`data/status.json` → (opt-in) notify transitions.
+
+```bash
+tokenflow watch                 # every watch.intervalSeconds (default 120)
+tokenflow watch --interval 30   # this run only
+tokenflow watch --once          # single cycle, exit (cron-friendly)
+tokenflow watch --notify        # OS notifications for threshold crossings
+tokenflow watch --status        # running? pid? how fresh is the data?
+tokenflow watch --stop          # stop a running watcher
+```
+
+Single-instance per data home; failures back off exponentially (15-minute
+ceiling) and land in `lastError`. See [live-mode.md](live-mode.md).
+
+### `menubar`
+Menu-bar integration without an Electron tray:
+
+```bash
+tokenflow menubar --swiftbar           # install plugin into ~/Library/Plugins
+tokenflow menubar --xbar               # xbar's plugin directory
+tokenflow menubar --out <dir>          # any compatible bar
+tokenflow menubar --render             # print the xbar-format text
+tokenflow menubar --mode limit         # auto | tokens | cost | limit
+```
+
+The installed script calls `menubar --render` on the bar's schedule; the title
+adapts (limit % > cost > tokens) and carries alert glyphs. The dropdown has
+per-provider meters, limits, forecast, alerts, freshness, Refresh-now and
+Open-Dashboard actions.
+
+---
 
 ---
 

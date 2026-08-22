@@ -33,10 +33,19 @@ jobs:
         run: |
           node bin/tokenflow.js demo --no-open --no-serve
           node bin/tokenflow.js status
+          node bin/tokenflow.js status --bar
           node bin/tokenflow.js validate
           node scripts/validate-install.js
           node bin/tokenflow.js export --csv --all --out "$RUNNER_TEMP"
           node bin/tokenflow.js export --html "$RUNNER_TEMP/dash.html"
+          # the live layer must work on every platform, not just where it was born
+          node bin/tokenflow.js watch --once
+          node bin/tokenflow.js watch --status
+          node bin/tokenflow.js usage | head -3
+          node bin/tokenflow.js capacity --json > /dev/null
+          node bin/tokenflow.js forecast --json > /dev/null
+          test -f "$TOKENFLOW_HOME/data/status.json"
+          node bin/tokenflow.js menubar --render | head -1
         shell: bash
         env:
           TOKENFLOW_HOME: ${{ runner.temp }}/tokenflow-home

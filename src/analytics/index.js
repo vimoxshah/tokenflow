@@ -33,6 +33,9 @@ import { calculateEfficiency, calculateCost, unpricedModels, calculateSessionPro
 import { calculatePeriodComparison, previousPeriod } from './comparison.js';
 import { calculateActivityProxies, calculateWorkSeries, calculateCorrelations, calculateActivityContrast } from './productivity.js';
 import { generateInsights } from './insights.js';
+import { buildForecast, linearForecast, monthEndProjection, exhaustionEta } from './forecast.js';
+import { detectAnomalies, firstSeenEntities } from './anomalies.js';
+import { evaluateLimits, summarizeCapacity, normalizeLimits } from './capacity.js';
 import { buildPriceBook } from '../core/pricing.js';
 
 const plugins = new Map();
@@ -91,7 +94,8 @@ export function resolveRange(id, coverage, today) {
 }
 
 /**
- * @param {{cube:object, sessions:any[], activity:object, meta?:object, pricing?:object}} bundle
+ * @param {{cube:object, sessions:any[], activity:object, meta?:object,
+ *          pricing?:object, limits?:object[]}} bundle
  * @param {Partial<typeof EMPTY_FILTERS> & {granularity?:'day'|'week'|'month', compare?:{a:object,b:object}, drillDate?:string}} [filters]
  */
 export function computeView(bundle, filters = {}) {
@@ -182,6 +186,29 @@ export function computeView(bundle, filters = {}) {
 
   const drill = filters.drillDate ? dayDetail(rows, ix, filters.drillDate, sessions) : null;
 
+  // ---- forward-looking + structural intelligence --------------------------
+  // `today` is the dataset timezone's calendar today (meta), so "this month"
+  // and reset windows mean the user's local calendar, never the host's.
+  const todayIso = bundle.meta?.today || range.to;
+  const forecast = buildForecast(daily, todayIso);
+  const anomalies = detectAnomalies(daily);
+  const firstSeen = {
+    models: firstSeenEntities(ix, { today: todayIso, dim: 'm', withinDays: 7 }).slice(0, 3),
+    providers: firstSeenEntities(ix, { today: todayIso, dim: 'p', withinDays: 7 }).slice(0, 3),
+  };
+  // Capacity is evaluated against the WHOLE primary dataset on purpose: a
+  // quota window is a fact about your accounts, not about the dashboard's
+  // current filter state. Per-limit provider/model/project scoping happens
+  // inside evaluateLimits.
+  const capEval = evaluateLimits(bundle.limits || [], {
+    cube: bundle.cube,
+    today: todayIso,
+    nowMs: Date.now(),
+    tzOffsetMinutes: bundle.meta?.tzOffsetMinutes ?? 0,
+    coverageFrom: coverage.from,
+  });
+  const capacity = { ...capEval, summary: summarizeCapacity(capEval.states) };
+
   const view = {
     range,
     coverage,
@@ -214,6 +241,10 @@ export function computeView(bundle, filters = {}) {
     productivity: { proxies, work, correlations, contrast },
     comparison,
     drill,
+    forecast,
+    anomalies,
+    firstSeen,
+    capacity,
     facets: {
       provider: facet(ix, 'p'),
       model: facet(ix, 'm'),
@@ -290,4 +321,7 @@ export {
   calculatePeriodComparison, previousPeriod,
   calculateActivityProxies, calculateWorkSeries, calculateCorrelations, calculateActivityContrast,
   generateInsights, daysBetween, addDays, dateRange, weekStart, monthKey,
+  buildForecast, linearForecast, monthEndProjection, exhaustionEta,
+  detectAnomalies, firstSeenEntities,
+  evaluateLimits, summarizeCapacity, normalizeLimits,
 };

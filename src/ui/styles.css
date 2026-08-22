@@ -619,3 +619,26 @@ dialog h2 { margin: 0; font-size: 15px; }
   font-family: var(--mono); font-size: 11.5px; background: var(--surface-2);
   border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; color: var(--text-primary);
 }
+
+/* ---------------------------------------------------------------- live --- */
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  letter-spacing: .02em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--good) 45%, transparent);
+  color: var(--good);
+  background: color-mix(in srgb, var(--good) 8%, var(--surface-1));
+}
+
+.badge.ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+.badge.warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.badge.stale { color: var(--text-muted); }
+
+.sev-high { color: #fff; background: var(--critical); border-color: transparent; font-weight: 640; }
+.sev-warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.sev-info { color: var(--text-muted); }
