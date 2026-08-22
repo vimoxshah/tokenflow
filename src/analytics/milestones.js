@@ -30,6 +30,7 @@ const isActiveDay = (d) => Boolean(d.tokenActive) || Boolean(d.active);
  * @returns {Milestone[]}
  */
 export function detectMilestones(daily) {
+  /** @type {Milestone[]} */
   const out = [];
   if (!Array.isArray(daily) || daily.length < 2) return out;
 
