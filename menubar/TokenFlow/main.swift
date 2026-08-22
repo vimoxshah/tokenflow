@@ -1,24 +1,17 @@
-//  TokenFlowBar v2 — TokenFlow's native macOS menu bar application.
+//  TokenFlowBar v3 — native menu bar app: status item + SwiftUI popover.
 //
-//  Reads $TOKENFLOW_HOME/data/status.json (written by `tokenflow watch`) and
-//  renders an adaptive status item plus a rich native dropdown built entirely
-//  from custom views: usage rows, a 14-day sparkline, per-provider share
-//  meters, rolling-window activity, declared-limit meters with reset
-//  countdowns, forecast, anomaly alerts and milestone celebrations.
+//  Design system "Aurora Compact":
+//    · 360pt popover canvas on a 4pt spacing grid, 12pt card radii
+//    · SF Pro Rounded numerals for hero figures; monospaced digits for tables
+//    · semantic palette: indigo brand accent, green/orange/red state colors,
+//      a fixed per-provider hue set; dark/light via system semantics only
+//    · first-party Swift Charts for the sparkline — no hand-drawn chart code
 //
 //  Everything is local. Nothing leaves the machine.
-//
-//  Design system ("Aurora, distilled"):
-//    · one canvas width (460pt); manual frames, no wrapping, tail truncation
-//    · every content row is a custom view — AppKit dims *disabled* menu items,
-//      so plain attributed titles read washed-out; views render at full ink
-//    · type scale: section headers 10pt bold uppercase indigo; row labels
-//      12.5pt; ALL figures monospaced-digit semibold
-//    · state colors only where they mean something: green/orange/red for
-//      limit health and freshness, controlAccent for brand/chart ink
-//    · dark/light follows the system via semantic colors
 
 import AppKit
+@preconcurrency import SwiftUI
+import Charts
 
 // ============================================================ data model ===
 
@@ -49,7 +42,6 @@ struct TFStatus: Decodable {
         var pctUsed: Double?
         var status: String?
         var etaHours: Double?
-        var etaVia: String?
         var resetsInMs: Double?
     }
     struct CapacitySummary: Decodable {
@@ -86,8 +78,6 @@ struct TFStatus: Decodable {
         var id: String?; var type: String?; var icon: String?
         var title: String?; var detail: String?; var date: String?
     }
-    /// Rolling-window slices. Unknown extra keys are ignored by design so the
-    /// Node side can annotate freely without breaking older builds.
     struct Windows: Decodable { var last5h: UsageSlice?; var last24h: UsageSlice? }
 
     var generatedAt: String?
@@ -159,12 +149,7 @@ func processAlive(_ pid: Int?) -> Bool {
 
 // ============================================================ formatting ====
 
-private let numFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
-private let numSmallFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-private let labelFont = NSFont.systemFont(ofSize: 12.5)
-private let sectionFont = NSFont.systemFont(ofSize: 10, weight: .bold)
-
-func compactTokens(_ n: Double?) -> String {
+private func compactTokens(_ n: Double?) -> String {
     guard let n, n.isFinite else { return "—" }
     let sign = n < 0 ? "-" : ""
     let v = abs(n)
@@ -186,7 +171,7 @@ func compactTokens(_ n: Double?) -> String {
     return sign + String(format: "%.1f", v)
 }
 
-func money(_ n: Double?) -> String {
+private func money(_ n: Double?) -> String {
     guard let n, n.isFinite else { return "—" }
     let sign = n < 0 ? "-" : ""
     let a = abs(n)
@@ -195,7 +180,7 @@ func money(_ n: Double?) -> String {
     return "\(sign)$\(String(format: "%.2f", a))"
 }
 
-func countdown(_ ms: Double?) -> String {
+private func countdown(_ ms: Double?) -> String {
     guard let ms, ms.isFinite, ms >= 0 else { return "—" }
     let sec = Int((ms / 1000).rounded())
     if sec < 60 { return "\(sec)s" }
@@ -207,7 +192,7 @@ func countdown(_ ms: Double?) -> String {
     return h % 24 > 0 ? "\(d)d \(h % 24)h" : "\(d)d"
 }
 
-func relativeAge(_ msAgo: Double?) -> String {
+private func relativeAge(_ msAgo: Double?) -> String {
     guard let msAgo else { return "never" }
     if msAgo < 45_000 { return "just now" }
     let min = Int(msAgo / 60_000)
@@ -217,376 +202,104 @@ func relativeAge(_ msAgo: Double?) -> String {
     return "\(hr / 24)d ago"
 }
 
-// ============================================================ layout kit ====
+// ========================================================== design tokens ===
 
-enum Layout {
-    static let width = 460.0
-    static let pad = 16.0
-    static var rightEdge: Double { width - pad }
+enum TF {
+    static let width: CGFloat = 356
+    static let pad: CGFloat = 14
+    static let accent = Color.indigo
+    static let good = Color.green
+    static let warn = Color.orange
+    static let bad = Color.red
+    static let palette: [Color] = [.indigo, .teal, .purple, .orange, .pink]
+
+    static func cardBG(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.045)
+    }
+
+    // type scale — SF Pro Rounded for figures gives the friendly-premium feel
+    static func hero(_ size: CGFloat = 22) -> Font {
+        .system(size: size, weight: .bold, design: .rounded).monospacedDigit()
+    }
+    static func figure(_ size: CGFloat = 13, _ weight: Font.Weight = .semibold) -> Font {
+        .system(size: size, weight: weight).monospacedDigit()
+    }
+    static let sectionFont = Font.system(size: 10.5, weight: .semibold)
+    static let labelFont = Font.system(size: 12.5)
+    static let captionFont = Font.caption
+    static let microFont = Font.system(size: 9.5)
 }
 
-/// Deterministic, pleasant provider dot colors (fixed palette, stable order).
-let providerPalette: [NSColor] = [.systemIndigo, .systemTeal, .systemPurple,
-                                  .systemOrange, .systemPink, .systemBlue]
+// ============================================================ state/model ===
 
-final class DotView: NSView {
-    var color: NSColor
-    init(color: NSColor, size: CGFloat = 8) {
-        self.color = color
-        super.init(frame: NSRect(x: 0, y: 0, width: size, height: size))
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-    override func draw(_ dirtyRect: NSRect) {
-        color.setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-    }
+final class StatusModel: ObservableObject {
+    @Published var status: TFStatus?
+    @Published var refreshing = false
+    @Published var actionError: String?
+    func load() { status = loadStatus() }
 }
 
-func label(_ text: String, font: NSFont, color: NSColor,
-           x: Double, y: Double, w: Double, align: NSTextAlignment = .left) -> NSTextField {
-    let f = NSTextField(labelWithString: text)
-    f.font = font
-    f.textColor = color
-    f.alignment = align
-    f.lineBreakMode = .byTruncatingTail
-    f.frame = NSRect(x: x, y: y, width: w, height: font.pointSize + 4)
-    return f
+struct AppActions {
+    var refresh: () -> Void = {}
+    var openDashboard: () -> Void = {}
+    var toggleWatcher: () -> Void = {}
+    var runSetup: () -> Void = {}
+    var quit: () -> Void = {}
 }
 
-/// Rounded track + fill meter. Height-configurable so capacity rows get a
-/// chunkier bar than the hairline share-meters on provider rows.
-final class MeterView: NSView {
-    let fraction: CGFloat
-    let tint: NSColor
+// ============================================================ app delegate ==
 
-    init(fraction: CGFloat, tint: NSColor, height: CGFloat = 9) {
-        self.fraction = min(1, max(0, fraction))
-        self.tint = tint
-        super.init(frame: NSRect(x: 0, y: 0, width: 110, height: height))
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let radius = bounds.height / 2
-        NSColor.separatorColor.withAlphaComponent(0.5).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
-        guard fraction > 0.001 else { return }
-        let w = max(bounds.height, bounds.width * fraction)
-        tint.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: bounds.height),
-                     xRadius: radius, yRadius: radius).fill()
-    }
-}
-
-/// Section header: 10pt bold uppercase, letterspaced, accent-tinted. Height 20.
-final class SectionHeaderView: NSView {
-    init(_ title: String) {
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 20))
-        let t = NSTextField(labelWithString: title.uppercased())
-        t.font = sectionFont
-        t.textColor = .controlAccentColor
-        let para = NSMutableParagraphStyle(); para.lineBreakMode = .byTruncatingTail
-        t.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
-            .font: sectionFont, .foregroundColor: NSColor.controlAccentColor, .kern: NSNumber(value: 0.7),
-        ])
-        t.frame = NSRect(x: Layout.pad, y: 3, width: Layout.width - Layout.pad * 2, height: 14)
-        addSubview(t)
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-}
-
-/// Label left, value right (mono semibold). Height 22.
-final class InfoRowView: NSView {
-    init(label: String, value: String, valueColor: NSColor = .labelColor) {
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 22))
-        let l = NSTextField(labelWithString: label)
-        l.font = labelFont; l.textColor = .labelColor
-        l.lineBreakMode = .byTruncatingTail
-        l.frame = NSRect(x: Layout.pad, y: 3.5, width: 200, height: 15)
-        addSubview(l)
-        let v = NSTextField(labelWithString: value)
-        v.font = numFont; v.textColor = valueColor
-        v.alignment = .right
-        v.frame = NSRect(x: Layout.rightEdge - 240, y: 3.5, width: 240, height: 15)
-        addSubview(v)
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-}
-
-/// Usage row: window/period label · "tokens · requests" secondary · cost right.
-final class UsageRowView: NSView {
-    init(name: String, _ u: TFStatus.UsageSlice?) {
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 22))
-        let l = NSTextField(labelWithString: name)
-        l.font = labelFont; l.textColor = .labelColor
-        l.frame = NSRect(x: Layout.pad, y: 3.5, width: 64, height: 15)
-        addSubview(l)
-
-        let tokens = compactTokens(u?.tokens?.total ?? 0)
-        let reqs = Int(u?.requests ?? 0)
-        let mid = NSTextField(labelWithString: "\(tokens) tok · \(reqs) req")
-        mid.font = numSmallFont; mid.textColor = .secondaryLabelColor
-        mid.lineBreakMode = .byTruncatingTail
-        mid.frame = NSRect(x: 84, y: 4, width: 220, height: 15)
-        addSubview(mid)
-
-        let cost = u?.cost ?? u?.costMeasured
-        let c = NSTextField(labelWithString: cost.map(money) ?? "—")
-        c.font = numFont
-        c.textColor = cost != nil ? .labelColor : .secondaryLabelColor
-        c.alignment = .right
-        c.frame = NSRect(x: Layout.rightEdge - 104, y: 3.5, width: 104, height: 15)
-        addSubview(c)
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-}
-
-/// Provider row: colored dot · name · share meter · tokens · cost.
-final class ProviderRowView: NSView {
-    init(index: Int, _ p: TFStatus.ProviderRow, maxTokens: Double) {
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 24))
-        let color = providerPalette[index % providerPalette.count]
-        let dot = DotView(color: color)
-        dot.frame.origin = NSPoint(x: Layout.pad, y: 8)
-        addSubview(dot)
-
-        let name = NSTextField(labelWithString: p.key)
-        name.font = labelFont; name.textColor = .labelColor
-        name.lineBreakMode = .byTruncatingTail
-        name.frame = NSRect(x: Layout.pad + 14, y: 4.5, width: 108, height: 15)
-        addSubview(name)
-
-        let meter = MeterView(fraction: CGFloat(maxTokens > 0 ? (p.tokens ?? 0) / maxTokens : 0),
-                              tint: color, height: 6)
-        meter.frame.origin = NSPoint(x: 152, y: 9)
-        addSubview(meter)
-
-        let tokens = NSTextField(labelWithString: compactTokens(p.tokens))
-        tokens.font = numSmallFont; tokens.textColor = .labelColor
-        tokens.alignment = .right
-        tokens.frame = NSRect(x: 250, y: 4.5, width: 66, height: 15)
-        addSubview(tokens)
-
-        let cost = p.cost ?? p.costMeasured
-        let costField = NSTextField(labelWithString: cost.map(money) ?? "")
-        costField.font = numSmallFont
-        costField.textColor = cost != nil ? .secondaryLabelColor : NSColor.secondaryLabelColor.withAlphaComponent(0.001)
-        costField.alignment = .right
-        costField.frame = NSRect(x: Layout.rightEdge - 74, y: 4.5, width: 74, height: 15)
-        addSubview(costField)
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-}
-
-/// 14-day sparkline: rounded bars, today solid accent, history 35% alpha,
-/// zero days as hairline stubs so gaps stay honest. Height 48.
-final class SparklineView: NSView {
-    let days: [TFStatus.RecentDay]
-
-    init(days: [TFStatus.RecentDay]) {
-        self.days = days
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 48))
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard !days.isEmpty else { return }
-        let areaX = Layout.pad
-        let areaW = Layout.width - Layout.pad * 2
-        let baseY: CGFloat = 6
-        let maxHeight: CGFloat = 36
-        let slot = areaW / CGFloat(days.count)
-        let barW = min(18, slot - 3)
-
-        // baseline
-        NSColor.separatorColor.withAlphaComponent(0.6).setFill()
-        NSBezierPath(rect: NSRect(x: areaX, y: baseY - 1, width: areaW, height: 1)).fill()
-
-        let maxTotal = days.compactMap(\.total).max() ?? 0
-        for (i, d) in days.enumerated() {
-            let isToday = i == days.count - 1
-            let total = d.total ?? 0
-            let inactive = !(d.active ?? false) && total <= 0
-            let h: CGFloat = total > 0 ? max(4, CGFloat(total / max(maxTotal, 1)) * maxHeight) : (inactive ? 2 : 3)
-            let x = areaX + slot * CGFloat(i) + (slot - barW) / 2
-            let rect = NSRect(x: x, y: baseY, width: barW, height: h)
-            let path = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
-            if isToday {
-                NSColor.controlAccentColor.setFill()
-            } else if inactive {
-                NSColor.separatorColor.setFill()
-            } else {
-                NSColor.controlAccentColor.withAlphaComponent(0.32).setFill()
-            }
-            path.fill()
-        }
-    }
-}
-
-/// Capacity row: ✓/⚠/✗ label · meter · pct · ETA/reset. Width-corrected.
-final class LimitRowView: NSView {
-    init(state: TFStatus.LimitState) {
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 26))
-
-        let st = state.status ?? "unknown"
-        let tint: NSColor = st == "exceeded" ? .systemRed : st == "warn" ? .systemOrange : .systemGreen
-        let glyph = st == "exceeded" ? "✗" : st == "warn" ? "⚠" : "✓"
-        let name = state.label ?? state.id ?? "limit"
-
-        let nameField = NSTextField(labelWithString: "\(glyph) \(name)")
-        nameField.font = .systemFont(ofSize: 12.5, weight: .medium)
-        nameField.textColor = .labelColor
-        nameField.lineBreakMode = .byTruncatingTail
-        nameField.frame = NSRect(x: Layout.pad, y: 5.5, width: 168, height: 15)
-        addSubview(nameField)
-
-        let meter = MeterView(fraction: CGFloat(state.pctUsed ?? 0), tint: tint, height: 8)
-        meter.frame.origin = NSPoint(x: 188, y: 9)
-        addSubview(meter)
-
-        let pctUsed = state.pctUsed ?? 0
-        let pctText = pctUsed >= 10 ? "\(Int(pctUsed))×" : "\(Int((pctUsed * 100).rounded()))%"
-        let pctField = NSTextField(labelWithString: pctText)
-        pctField.font = numFont
-        pctField.textColor = st == "ok" ? .secondaryLabelColor : tint
-        pctField.alignment = .right
-        pctField.frame = NSRect(x: 304, y: 5.5, width: 52, height: 15)
-        addSubview(pctField)
-
-        var tail = "resets \(countdown(state.resetsInMs))"
-        if let eta = state.etaHours, st != "exceeded" {
-            tail = "ETA \(countdown(eta * 3600_000)) · " + tail
-        }
-        let tailField = NSTextField(labelWithString: tail)
-        tailField.font = numSmallFont
-        tailField.textColor = .secondaryLabelColor
-        tailField.alignment = .right
-        tailField.lineBreakMode = .byTruncatingHead
-        tailField.frame = NSRect(x: 358, y: 6.5, width: 86, height: 14)
-        addSubview(tailField)
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-}
-
-/// Celebration banner: 🎉 icon + bold title + supporting detail line.
-final class MilestoneRowView: NSView {
-    init(icon: String, title: String, detail: String) {
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 36))
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
-        layer?.cornerRadius = 8
-
-        let iconField = NSTextField(labelWithString: icon.isEmpty ? "🎉" : icon)
-        iconField.font = .systemFont(ofSize: 15)
-        iconField.frame = NSRect(x: Layout.pad, y: 9, width: 22, height: 18)
-        addSubview(iconField)
-
-        let t = NSTextField(labelWithString: title)
-        t.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        t.textColor = .labelColor
-        t.lineBreakMode = .byTruncatingTail
-        t.frame = NSRect(x: Layout.pad + 28, y: 17, width: Layout.width - Layout.pad * 2 - 28, height: 15)
-        addSubview(t)
-
-        let d = NSTextField(labelWithString: detail)
-        d.font = .systemFont(ofSize: 10.5)
-        d.textColor = .secondaryLabelColor
-        d.lineBreakMode = .byTruncatingTail
-        d.frame = NSRect(x: Layout.pad + 28, y: 3, width: Layout.width - Layout.pad * 2 - 28, height: 13)
-        addSubview(d)
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-}
-
-/// Header: brand + live/stale badge, freshness subline. Height 40.
-final class HeaderRowView: NSView {
-    init(demo: Bool, watcherLive: Bool, stale: Bool, updated: String, everyN: Double?, cycles: Int?) {
-        super.init(frame: NSRect(x: 0, y: 0, width: Layout.width, height: 42))
-
-        let brand = NSTextField(labelWithString: "TokenFlow")
-        brand.font = .systemFont(ofSize: 14, weight: .bold)
-        brand.textColor = .labelColor
-        brand.frame = NSRect(x: Layout.pad, y: 21, width: 120, height: 17)
-        addSubview(brand)
-
-        let badgeText: String
-        let badgeColor: NSColor
-        switch (watcherLive, stale) {
-        case (true, false): badgeText = "● live"; badgeColor = .systemGreen
-        case (true, true): badgeText = "● live · stale"; badgeColor = .systemOrange
-        default: badgeText = "○ watcher off"; badgeColor = .secondaryLabelColor
-        }
-        let badge = NSTextField(labelWithString: badgeText)
-        badge.font = .systemFont(ofSize: 11, weight: .medium)
-        badge.textColor = badgeColor
-        badge.alignment = .right
-        badge.frame = NSRect(x: Layout.rightEdge - 160, y: 23, width: 160, height: 14)
-        addSubview(badge)
-
-        if demo {
-            let demoTag = NSTextField(labelWithString: "[DEMO DATA]")
-            demoTag.font = .systemFont(ofSize: 10, weight: .bold)
-            demoTag.textColor = .systemRed
-            demoTag.frame = NSRect(x: Layout.pad + 96, y: 23, width: 90, height: 13)
-            addSubview(demoTag)
-        }
-
-        var sub = "updated \(updated)"
-        if let n = everyN { sub += " · every \(Int(n))s" }
-        if let c = cycles { sub += " · \(c) cycles" }
-        let subline = NSTextField(labelWithString: sub)
-        subline.font = numSmallFont
-        subline.textColor = stale ? .systemOrange : .secondaryLabelColor
-        subline.frame = NSRect(x: Layout.pad, y: 4, width: Layout.width - Layout.pad * 2, height: 13)
-        addSubview(subline)
-    }
-    required init?(coder: NSCoder) { fatalError("unsupported") }
-}
-
-func menuView(_ view: NSView) -> NSMenuItem {
-    let it = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    it.view = view
-    it.isEnabled = false
-    return it
-}
-
-// ============================================================== app delegate =
-
-@objc final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+@objc final class AppDelegate: NSObject, NSApplicationDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let menu = NSMenu()
-    private var status: TFStatus?
-    private var refreshing = false
-    /// Set when an action could not spawn the CLI; rendered in the menu so a
-    /// dead click is never silent.
-    private var spawnError: String?
+    private let popover = NSPopover()
+    let model = StatusModel()
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        item.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        item.button?.toolTip = "TokenFlow — AI usage & capacity"
-        menu.autoenablesItems = false
-        menu.delegate = self
-        item.menu = menu
-        reloadAndRender()
-        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
-            self?.status = loadStatus()
-            self?.renderTitle()
+    lazy var actions: AppActions = AppActions(
+        refresh: { [weak self] in self?.runCLI(["watch", "--once"]) },
+        openDashboard: { [weak self] in self?.openDashboard() },
+        toggleWatcher: { [weak self] in self?.toggleWatcherAction() },
+        runSetup: { [weak self] in self?.runCLI(["setup"]) },
+        quit: { NSApp.terminate(nil) })
+
+    func applicationDidFinishLaunching(_ note: Notification) {
+        // Off-screen design verification: render light+dark previews, then quit.
+        let argv = CommandLine.arguments
+        if let i = argv.firstIndex(of: "--preview"), argv.count > i + 1 {
+            PreviewRenderer.render(argv[i + 1])
+            exit(0)
         }
-        RunLoop.main.add(timer, forMode: .common)
-    }
-
-    private func reloadAndRender() {
-        status = loadStatus()
-        // A successful read with data proves the CLI pipeline works again.
-        if status != nil, (status?.health?.records ?? 0) > 0 { spawnError = nil }
-        rebuildMenu()
+        item.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        item.button?.target = self
+        item.button?.action = #selector(togglePopover(_:))
+        item.button?.toolTip = "TokenFlow — AI usage & capacity"
+        let host = NSHostingController(rootView: MenuContentView(model: model, actions: actions))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        popover.behavior = .transient
+        model.load()
         renderTitle()
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.model.load()
+                self?.renderTitle()
+            }
+        }
     }
 
-    private var watcherRunning: Bool { processAlive(status?.watcher?.pid) }
+    @objc private func togglePopover(_ sender: Any?) {
+        if popover.isShown { popover.performClose(nil); return }
+        model.load()
+        renderTitle()
+        guard let button = item.button else { return }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
 
+    private var watcherRunning: Bool { processAlive(model.status?.watcher?.pid) }
+
+    /// Adaptive headline: worst limit when configured, else today's cost when
+    /// priced, else today's tokens — mirroring `status --bar`.
     private func headlineValue() -> (text: String, kind: String)? {
-        guard let s = status, let today = s.usage?["today"],
+        guard let s = model.status, let today = s.usage?["today"],
               let tokens = today.tokens?.total, (s.health?.records ?? 0) > 0 else { return nil }
         if let worst = s.capacity?.summary?.worst, let pct = worst.pctUsed {
             switch worst.status {
@@ -607,7 +320,7 @@ func menuView(_ view: NSView) -> NSMenuItem {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.labelColor,
         ]
-        if refreshing {
+        if model.refreshing {
             button.attributedTitle = NSAttributedString(string: "TF ⟳", attributes: base)
             return
         }
@@ -615,8 +328,7 @@ func menuView(_ view: NSView) -> NSMenuItem {
             button.attributedTitle = NSAttributedString(string: "TF", attributes: base)
             return
         }
-        let tint: NSColor
-        let prefix: String
+        let tint: NSColor; let prefix: String
         switch head.kind {
         case "exceeded": tint = .systemRed; prefix = "✗ "
         case "warn": tint = .systemOrange; prefix = "▲ "
@@ -631,192 +343,16 @@ func menuView(_ view: NSView) -> NSMenuItem {
         button.attributedTitle = out
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        status = loadStatus()
-        rebuildMenu()
-    }
+    // ---- actions -----------------------------------------------------------
 
-    private func actionItem(_ title: String, key: String = "", symbol: String? = nil,
-                            handler: @escaping () -> Void) -> NSMenuItem {
-        let it = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
-        it.target = self
-        it.representedObject = handler
-        if let symbol {
-            let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-            it.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
-                .withSymbolConfiguration(cfg)
-        }
-        return it
-    }
-
-    @objc private func menuAction(_ sender: NSMenuItem) {
-        (sender.representedObject as? (() -> Void))?()
-    }
-
-    private func rebuildMenu() {
-        menu.removeAllItems()
-
-        // ---- header --------------------------------------------------------
-        let fresh = status?.freshness
-        let stale = fresh?.stale ?? true
-        let snapshotAge: Double? = {
-            guard let gen = status?.generatedAt, let t = parseISO(gen) else { return nil }
-            return Date().timeIntervalSince(t) * 1000
-        }()
-        let updatedAge = status?.lastRefreshDate.map { Date().timeIntervalSince($0) * 1000 } ?? snapshotAge
-        menu.addItem(menuView(HeaderRowView(
-            demo: status?.demo == true,
-            watcherLive: watcherRunning,
-            stale: stale,
-            updated: relativeAge(updatedAge),
-            everyN: status?.watcher?.intervalSeconds,
-            cycles: status?.watcher?.cycles,
-        )))
-        menu.addItem(.separator())
-
-        // ---- empty store ------------------------------------------------------
-        guard let s = status, let today = s.usage?["today"], (s.health?.records ?? 0) > 0 else {
-            menu.addItem(menuView(SectionHeaderView("Getting started")))
-            menu.addItem(noteItem("No usage data yet.", color: .labelColor, size: 12.5))
-            menu.addItem(actionItem("Run tokenflow setup…", symbol: "wand.and.stars") { [weak self] in
-                self?.runCLI(["setup"])
-            })
-            menu.addItem(.separator())
-            menu.addItem(actionItem("Quit TokenFlow", key: "q", symbol: "power") {
-                NSApp.terminate(nil)
-            })
-            return
-        }
-
-        // ---- milestone banner ---------------------------------------------------
-        if let m = s.milestones?.first {
-            menu.addItem(menuView(MilestoneRowView(
-                icon: m.icon ?? "🎉",
-                title: m.title ?? "Milestone",
-                detail: m.detail ?? "",
-            )))
-            menu.addItem(.separator())
-        }
-
-        // ---- usage -----------------------------------------------------------------
-        menu.addItem(menuView(SectionHeaderView("Usage")))
-        menu.addItem(menuView(UsageRowView(name: "Today", today)))
-        menu.addItem(menuView(UsageRowView(name: "Week", s.usage?["weekToDate"])))
-        menu.addItem(menuView(UsageRowView(name: "Month", s.usage?["monthToDate"])))
-
-        // ---- sparkline ------------------------------------------------------------
-        if let days = s.recentDays, days.count >= 2 {
-            menu.addItem(menuView(SparklineView(days: days)))
-        }
-
-        // ---- rolling windows ---------------------------------------------------------
-        if let w = s.windows {
-            menu.addItem(.separator())
-            menu.addItem(menuView(SectionHeaderView("Recent windows")))
-            menu.addItem(menuView(UsageRowView(name: "Last 5h", w.last5h)))
-            menu.addItem(menuView(UsageRowView(name: "Last 24h", w.last24h)))
-            menu.addItem(noteItem("measured locally · hour granularity"))
-        }
-
-        // ---- providers ------------------------------------------------------------------
-        if let provs = s.providersToday, !provs.isEmpty {
-            menu.addItem(.separator())
-            menu.addItem(menuView(SectionHeaderView("Today by provider")))
-            let maxTokens = provs.compactMap(\.tokens).max() ?? 0
-            for (i, p) in provs.prefix(5).enumerated() {
-                menu.addItem(menuView(ProviderRowView(index: i, p, maxTokens: maxTokens)))
-            }
-        }
-
-        // ---- capacity ----------------------------------------------------------------------
-        menu.addItem(.separator())
-        menu.addItem(menuView(SectionHeaderView("Capacity")))
-        let states = s.capacity?.states ?? []
-        if !states.isEmpty {
-            for st in states.prefix(5) {
-                menu.addItem(menuView(LimitRowView(state: st)))
-            }
-            if let hit = s.capacity?.summary?.firstToHit, let eta = hit.etaHours {
-                menu.addItem(noteItem("First projected hit: \(hit.label ?? "?") in \(countdown(eta * 3600_000))"))
-            }
-        } else {
-            menu.addItem(noteItem("No limits configured — set budgets in the Live tab."))
-        }
-
-        // ---- forecast --------------------------------------------------------------------------
-        if let f = s.forecast, let tomorrow = f.tomorrow {
-            menu.addItem(.separator())
-            menu.addItem(menuView(SectionHeaderView("Forecast")))
-            var line = "Tomorrow ≈ \(compactTokens(tomorrow))"
-            if let week = f.next7days { line += "  ·  7d ≈ \(compactTokens(week))" }
-            menu.addItem(menuView(InfoRowView(label: line, value: f.monthEndCost.map { "≈ \(money($0)) mo-end" } ?? "")))
-            menu.addItem(noteItem("Confidence: \(f.confidence ?? "?")\(f.n.map { " (\($0)-day trend)" } ?? "")"))
-        }
-
-        // ---- alerts -----------------------------------------------------------------------------
-        let highs = (s.anomalies ?? []).filter { $0.severity == "high" }.prefix(2)
-        if highs.count > 0 {
-            menu.addItem(.separator())
-            menu.addItem(menuView(SectionHeaderView("Alerts")))
-            for a in highs {
-                menu.addItem(noteItem("‼️ \((a.date ?? "")) — \((a.detail ?? "").replacingOccurrences(of: "\n", with: " "))", size: 11))
-            }
-        }
-        if let err = s.lastError?.message {
-            menu.addItem(noteItem("⚠︎ Watcher error: \(err)", color: .systemOrange, size: 11))
-        }
-        if let spawnErr = spawnError {
-            menu.addItem(noteItem("⚠︎ Action failed: \(spawnErr)", color: .systemOrange, size: 11))
-            menu.addItem(noteItem("Try: node bin/tokenflow.js \(s.health?.records ?? 0 > 0 ? "watch --once" : "setup") in Terminal", size: 10))
-        }
-
-        // ---- actions ------------------------------------------------------------------------------
-        menu.addItem(.separator())
-        let refresh: NSMenuItem = actionItem(refreshing ? "Refreshing…" : "Refresh now",
-                                             key: "r", symbol: "arrow.clockwise") { [weak self] in
-            self?.refreshNow()
-        }
-        refresh.keyEquivalentModifierMask = NSEvent.ModifierFlags([.command])
-        menu.addItem(refresh)
-        menu.addItem(actionItem("Open Dashboard", symbol: "macwindow") { [weak self] in
-            self?.openDashboard()
-        })
-        if watcherRunning {
-            menu.addItem(actionItem("Stop watcher", symbol: "stop.circle") { [weak self] in
-                self?.runCLI(["watch", "--stop"])
-                self?.reloadSoon()
-            })
-        } else {
-            menu.addItem(actionItem("Start watcher", symbol: "play.circle") { [weak self] in
-                self?.startWatcherDetached()
-                self?.reloadSoon()
-            })
-        }
-        menu.addItem(.separator())
-        menu.addItem(actionItem("Quit TokenFlow", key: "q", symbol: "power") {
-            NSApp.terminate(nil)
-        })
-    }
-
-    private func noteItem(_ text: String, color: NSColor = .secondaryLabelColor, size: CGFloat = 10.5) -> NSMenuItem {
-        let it = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        it.attributedTitle = NSAttributedString(
-            string: text,
-            attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: color])
-        it.isEnabled = false
-        return it
-    }
-
-    // -------------------------------------------------------------- actions --
-
-    private func nodeProcess(_ args: [String], detached: Bool) -> Process? {
+    private func makeProcess(_ args: [String], detached: Bool) -> Process? {
         let node = Paths.nodePath
         guard node == "/usr/bin/env" || FileManager.default.fileExists(atPath: node) else {
-            spawnError = "node not found at \(node)"
+            DispatchQueue.main.async { self.model.actionError = "node not found at \(node)" }
             return nil
         }
         guard FileManager.default.fileExists(atPath: Paths.cliPath) else {
-            spawnError = "tokenflow CLI missing at \(Paths.cliPath)"
+            DispatchQueue.main.async { self.model.actionError = "tokenflow CLI missing at \(Paths.cliPath)" }
             return nil
         }
         let proc = Process()
@@ -835,40 +371,37 @@ func menuView(_ view: NSView) -> NSMenuItem {
     }
 
     private func runCLI(_ args: [String]) {
-        guard !refreshing else { return }
-        guard let proc = nodeProcess(args, detached: false) else { reloadAndRender(); return }
-        refreshing = true
+        guard !model.refreshing, let proc = makeProcess(args, detached: false) else { return }
+        model.refreshing = true
         renderTitle()
-        rebuildMenu()
         proc.terminationHandler = { [weak self] p in
-            guard let self else { return }
-            let failed = p.terminationReason == .uncaughtSignal || p.terminationStatus != 0
-            let name = args.first ?? "command"
             DispatchQueue.main.async {
-                self.refreshing = false
-                if failed { self.spawnError = "\(name) exited with status \(p.terminationStatus)" }
-                self.reloadAndRender()
+                guard let self else { return }
+                self.model.refreshing = false
+                if p.terminationReason == .uncaughtSignal || p.terminationStatus != 0 {
+                    self.model.actionError = "\(args.first ?? "command") exited (\(p.terminationStatus))"
+                }
+                self.model.load()
+                self.renderTitle()
             }
         }
         do { try proc.run() } catch {
-            refreshing = false
-            spawnError = error.localizedDescription
-            reloadAndRender()
+            model.refreshing = false
+            model.actionError = error.localizedDescription
+            renderTitle()
         }
     }
 
-    private func refreshNow() { runCLI(["watch", "--once"]) }
-
-    /// Children survive parent exit on Unix; null stdio keeps them quiet.
     private func startWatcherDetached() {
-        guard let proc = nodeProcess(["watch"], detached: true) else { return }
+        guard let proc = makeProcess(["watch"], detached: true) else { return }
         try? proc.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            self?.model.load(); self?.renderTitle()
+        }
     }
 
-    private func reloadSoon() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            self?.reloadAndRender()
-        }
+    private func toggleWatcherAction() {
+        if watcherRunning { runCLI(["watch", "--stop"]) } else { startWatcherDetached() }
     }
 
     private func openDashboard() {
@@ -876,10 +409,577 @@ func menuView(_ view: NSView) -> NSMenuItem {
     }
 }
 
-// ==================================================================== boot ===
+// ============================================================== swiftui ui ==
+
+private struct Pill: View {
+    let text: String
+    let color: Color
+    var filled = false
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold)).monospacedDigit()
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(filled ? color : color.opacity(0.15)))
+            .foregroundColor(filled ? .white : color)
+    }
+}
+
+private struct SectionHeader: View {
+    let title: String
+    init(_ title: String) { self.title = title }
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title.uppercased())
+                .font(TF.sectionFont)
+                .tracking(0.7)
+                .foregroundStyle(.secondary)
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
+        }
+    }
+}
+
+private struct TFMeter: View {
+    let fraction: Double
+    let color: Color
+    var height: CGFloat = 6
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08))
+                Capsule().fill(color)
+                    .frame(width: max(4, geo.size.width * min(1, max(0, fraction))))
+            }
+        }
+        .frame(height: height)
+    }
+}
+
+// ---------------------------------------------------------------- sections --
+
+private struct BrandRow: View {
+    let demo: Bool
+    let live: Bool
+    let stale: Bool
+    let updated: String
+    let everyN: Double?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(LinearGradient(colors: [.indigo, .teal],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+            }.frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("TokenFlow").font(.system(size: 14, weight: .bold))
+                Text(subline).font(TF.microFont).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if demo { Pill(text: "DEMO", color: TF.bad, filled: true) }
+            Pill(text: live ? (stale ? "● live · stale" : "● live") : "○ paused",
+                 color: live ? (stale ? TF.warn : TF.good) : .secondary)
+        }
+    }
+
+    private var subline: String {
+        var s = "updated \(updated)"
+        if let n = everyN { s += " · every \(Int(n))s" }
+        return s + " · local-only"
+    }
+}
+
+private struct MilestoneBanner: View {
+    let m: TFStatus.Milestone
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(m.icon ?? "🎉").font(.system(size: 19))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(m.title ?? "Milestone")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                Text(m.detail ?? "")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.white.opacity(0.85))
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(LinearGradient(colors: [.indigo, .purple],
+                                 startPoint: .topLeading, endPoint: .bottomTrailing)))
+    }
+}
+
+private struct Sparkline: View {
+    let days: [TFStatus.RecentDay]
+
+    var body: some View {
+        Chart(Array(days.enumerated()), id: \.offset) { pair in
+            AreaMark(x: .value("Day", pair.offset), y: .value("Tokens", pair.element.total ?? 0))
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(LinearGradient(colors: [TF.accent.opacity(0.30), TF.accent.opacity(0.02)],
+                                                startPoint: .top, endPoint: .bottom))
+            LineMark(x: .value("Day", pair.offset), y: .value("Tokens", pair.element.total ?? 0))
+                .interpolationMethod(.catmullRom)
+                .foregroundStyle(TF.accent)
+                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+            if pair.offset == days.count - 1 {
+                PointMark(x: .value("Day", pair.offset), y: .value("Tokens", pair.element.total ?? 0))
+                    .symbolSize(36)
+                    .foregroundStyle(TF.accent)
+            }
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .frame(height: 52)
+    }
+}
+
+private struct HeroCard: View {
+    let today: TFStatus.UsageSlice
+    let days: [TFStatus.RecentDay]
+
+    private var cost: Double? { today.cost ?? today.costMeasured }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("TODAY").font(TF.sectionFont).tracking(0.7).foregroundStyle(.secondary)
+                Spacer()
+                if let c = cost {
+                    Text(money(c))
+                        .font(.system(size: 12.5, weight: .bold).monospacedDigit())
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Capsule().fill(TF.accent))
+                        .foregroundColor(.white)
+                } else {
+                    Pill(text: "no price data", color: .secondary)
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(compactTokens(today.tokens?.total ?? 0)).font(TF.hero()).foregroundStyle(.primary)
+                Text("tokens").font(TF.captionFont).foregroundStyle(.secondary)
+            }
+            Text("\(Int(today.requests ?? 0)) requests · \(today.sessions ?? 0) sessions")
+                .font(TF.captionFont).foregroundStyle(.secondary)
+            Sparkline(days: days)
+        }
+    }
+}
+
+private struct StatCard: View {
+    let label: String
+    let slice: TFStatus.UsageSlice?
+    @Environment(\.colorScheme) private var cs
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .semibold))
+                .tracking(0.6).foregroundStyle(.secondary)
+            Text(compactTokens(slice?.tokens?.total ?? 0))
+                .font(.system(size: 14, weight: .semibold, design: .rounded).monospacedDigit())
+            Text(costText).font(TF.microFont).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(TF.cardBG(cs)))
+    }
+
+    private var costText: String {
+        (slice?.cost ?? slice?.costMeasured).map(money) ?? "—"
+    }
+}
+
+private struct ProviderRow: View {
+    let index: Int
+    let row: TFStatus.ProviderRow
+    let maxTokens: Double
+
+    private var costText: String {
+        (row.cost ?? row.costMeasured).map(money) ?? ""
+    }
+
+    var body: some View {
+        let color = TF.palette[index % TF.palette.count]
+        let tokens = row.tokens ?? 0
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(row.key).font(TF.labelFont).lineLimit(1)
+            Spacer(minLength: 6)
+            TFMeter(fraction: maxTokens > 0 ? tokens / maxTokens : 0, color: color,
+                    height: 5).frame(width: 56)
+            Text(compactTokens(tokens)).font(TF.figure(11.5))
+            Text(costText).font(TF.figure(11, .regular))
+                .foregroundStyle(costText.isEmpty ? AnyShapeStyle(Color.clear) : AnyShapeStyle(Color.secondary))
+                .frame(width: 48, alignment: .trailing)
+        }
+        .frame(height: 20)
+    }
+}
+
+private struct CapacityRow: View {
+    let st: TFStatus.LimitState
+    @Environment(\.colorScheme) private var cs
+
+    private var tint: Color {
+        st.status == "exceeded" ? TF.bad : st.status == "warn" ? TF.warn : TF.good
+    }
+    private var glyph: String {
+        st.status == "exceeded" ? "✗" : st.status == "warn" ? "⚠" : "✓"
+    }
+    private var pctText: String {
+        guard let p = st.pctUsed else { return "—" }
+        return p >= 10 ? "\(Int(p))×" : "\(Int((p * 100).rounded()))%"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text("\(glyph) \(st.label ?? st.id ?? "limit")")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
+                Spacer()
+                Pill(text: pctText, color: tint)
+            }
+            TFMeter(fraction: st.pctUsed ?? 0, color: tint, height: 6)
+            HStack(spacing: 6) {
+                if let eta = st.etaHours, st.status != "exceeded" {
+                    Text("ETA \(countdown(eta * 3600_000))").font(TF.microFont)
+                }
+                Spacer()
+                Text("resets \(countdown(st.resetsInMs))").font(TF.microFont)
+            }.foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct AlertRow: View {
+    let a: TFStatus.Anomaly
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("‼️").font(.system(size: 12))
+            Text("\((a.date ?? "")) — \((a.detail ?? "").replacingOccurrences(of: "\n", with: " "))")
+                .font(.system(size: 11))
+                .foregroundStyle(.primary.opacity(0.85))
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(TF.bad.opacity(0.08)))
+    }
+}
+
+private struct NoteText: View {
+    var text: String
+    var color: Color = .secondary
+    init(_ text: String, color: Color = .secondary) {
+        self.text = text; self.color = color
+    }
+    var body: some View {
+        Text(text).font(TF.microFont).foregroundStyle(color).lineLimit(2)
+    }
+}
+
+private struct ForecastBlock: View {
+    let f: TFStatus.Forecast
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .foregroundStyle(TF.accent)
+                .font(.system(size: 14, weight: .semibold))
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Tomorrow ≈ \(compactTokens(f.tomorrow ?? 0))"
+                     + (f.next7days != nil ? " · 7d ≈ \(compactTokens(f.next7days!))" : ""))
+                    .font(TF.labelFont).foregroundStyle(.primary)
+                Text("Confidence: \(f.confidence ?? "?")\(f.n.map { " (\($0)-day trend)" } ?? "")")
+                    .font(TF.microFont).foregroundStyle(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                if let mc = f.monthEndCost {
+                    Text(money(mc)).font(TF.figure(13, .bold))
+                    Text("mo-end est.").font(TF.microFont).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------- getting started --
+
+private struct GettingStarted: View {
+    let onSetup: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No usage data yet").font(.system(size: 14, weight: .semibold))
+            Text("TokenFlow found nothing to ingest. Run setup to detect the AI tools already installed on this machine.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Button(action: onSetup) {
+                Label("Detect AI tools", systemImage: "wand.and.stars")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(TF.accent))
+                    .foregroundColor(.white)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+// -------------------------------------------------------------- actions bar --
+
+private struct ActionsBar: View {
+    let refreshing: Bool
+    let live: Bool
+    let actions: AppActions
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: actions.refresh) {
+                HStack(spacing: 6) {
+                    if refreshing {
+                        ProgressView().controlSize(.small).tint(.white)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    Text("Refresh").font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Capsule().fill(TF.accent))
+                .foregroundColor(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(refreshing)
+            .keyboardShortcut("r", modifiers: .command)
+
+            Button(action: actions.openDashboard) {
+                HStack(spacing: 6) {
+                    Image(systemName: "macwindow")
+                    Text("Dashboard").font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Capsule().fill(Color.primary.opacity(0.07)))
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Button(action: actions.toggleWatcher) {
+                Image(systemName: live ? "stop.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 19))
+                    .foregroundStyle(live ? AnyShapeStyle(TF.bad.opacity(0.85)) : AnyShapeStyle(TF.good))
+            }
+            .buttonStyle(.plain)
+            .help(live ? "Stop watcher" : "Start watcher")
+
+            Button(action: actions.quit) {
+                Image(systemName: "power")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Quit TokenFlow")
+        }
+    }
+}
+
+// ----------------------------------------------------------------- footer ----
+
+private struct FooterRow: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("local-first · nothing leaves this Mac").font(TF.microFont)
+            Spacer()
+            Text(version).font(TF.microFont)
+        }.foregroundStyle(.tertiary)
+    }
+
+    private var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+}
+
+// ------------------------------------------------------------------- root ----
+
+struct MenuContentView: View {
+    @ObservedObject var model: StatusModel
+    var actions: AppActions
+
+    private var s: TFStatus? { model.status }
+    private var hasData: Bool { (s?.health?.records ?? 0) > 0 }
+    private var watcherLive: Bool {
+        guard let pid = s?.watcher?.pid, pid > 1 else { return false }
+        return kill(pid_t(pid), 0) == 0 || errno != ESRCH
+    }
+    private var updatedAge: Double? {
+        guard let d = s?.lastRefreshDate else { return nil }
+        return Date().timeIntervalSince(d) * 1000
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            BrandRow(
+                demo: s?.demo == true,
+                live: watcherLive && hasData,
+                stale: s?.freshness?.stale ?? true,
+                updated: relativeAge(updatedAge),
+                everyN: s?.watcher?.intervalSeconds)
+
+            if let m = s?.milestones?.first {
+                MilestoneBanner(m: m)
+            }
+
+            if hasData, let today = s?.usage?["today"] {
+                HeroCard(today: today, days: s?.recentDays ?? [])
+
+                SectionHeader("Windows & totals")
+                HStack(spacing: 8) {
+                    StatCard(label: "Week", slice: s?.usage?["weekToDate"])
+                    StatCard(label: "Month", slice: s?.usage?["monthToDate"])
+                }
+                HStack(spacing: 8) {
+                    StatCard(label: "Last 5h", slice: s?.windows?.last5h)
+                    StatCard(label: "Last 24h", slice: s?.windows?.last24h)
+                }.font(TF.microFont)
+
+                if let provs = s?.providersToday, !provs.isEmpty {
+                    SectionHeader("Today by provider")
+                    VStack(spacing: 7) {
+                        let maxTokens = provs.compactMap(\.tokens).max() ?? 0
+                        ForEach(Array(provs.filter { ($0.tokens ?? 0) > 0 }.prefix(5).enumerated()),
+                                id: \.offset) { i, p in
+                            ProviderRow(index: i, row: p, maxTokens: maxTokens)
+                        }
+                    }
+                }
+
+                SectionHeader("Capacity")
+                capacityBlock
+
+                if let f = s?.forecast, f.tomorrow != nil {
+                    ForecastBlock(f: f)
+                }
+
+                alertRows
+
+                if let err = s?.lastError?.message {
+                    errorLine("⚠︎ Watcher error: \(err)")
+                }
+                if let err = model.actionError {
+                    errorLine("⚠︎ Action failed: \(err)")
+                }
+
+                Divider()
+                ActionsBar(refreshing: model.refreshing, live: watcherLive, actions: actions)
+            } else {
+                GettingStarted(onSetup: actions.runSetup)
+                if let err = model.actionError {
+                    errorLine("⚠︎ \(err)")
+                }
+                Divider()
+                ActionsBar(refreshing: model.refreshing, live: false, actions: actions)
+            }
+
+            FooterRow()
+        }
+        .padding(TF.pad)
+        .frame(width: TF.width)
+        // Opaque, appearance-adaptive backdrop: the popover supplies one at
+        // runtime, but off-screen previews composite transparency as black,
+        // which made light-mode text unreadable.
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder private var capacityBlock: some View {
+        let states = s?.capacity?.states ?? []
+        if states.isEmpty {
+            NoteText("No limits configured — set budgets in the dashboard's Live tab.")
+        } else {
+            VStack(spacing: 9) {
+                ForEach(Array(states.prefix(5).enumerated()), id: \.offset) { _, st in
+                    CapacityRow(st: st)
+                }
+                if let hit = s?.capacity?.summary?.firstToHit, let eta = hit.etaHours {
+                    NoteText("First projected hit: \(hit.label ?? "?") in \(countdown(eta * 3600_000))")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var alertRows: some View {
+        let highs = (s?.anomalies ?? []).filter { $0.severity == "high" }
+        if !highs.isEmpty {
+            SectionHeader("Alerts")
+            VStack(spacing: 6) {
+                ForEach(Array(highs.prefix(2).enumerated()), id: \.offset) { _, a in
+                    AlertRow(a: a)
+                }
+            }
+        }
+    }
+
+    private func errorLine(_ text: String) -> some View {
+        NoteText(text, color: .orange)
+    }
+}
+
+
+// ==================================================== off-screen previews ====
+
+enum PreviewRenderer {
+    @MainActor
+    static func render(_ prefix: String) {
+        guard let status = loadStatus() else {
+            FileHandle.standardError.write(Data("preview: no status at \(Paths.statusFile)\n".utf8))
+            exit(1)
+        }
+        let model = StatusModel()
+        model.status = status
+        for (name, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
+            let view = MenuContentView(model: model, actions: AppActions())
+                .environment(\.colorScheme, scheme)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            guard let ns = renderer.nsImage,
+                  let tiff = ns.tiffRepresentation,
+                  let rep = NSBitmapImageRep(data: tiff),
+                  let png = rep.representation(using: .png, properties: [:]) else { continue }
+            try? png.write(to: URL(fileURLWithPath: "\(prefix)-\(name).png"))
+            print("wrote \(prefix)-\(name).png")
+        }
+    }
+}
+
+// ===================================================================== boot ===
 
 let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
 app.setActivationPolicy(.accessory)
-app.run()
+
+let argv = CommandLine.arguments
+if let i = argv.firstIndex(of: "--preview"), argv.count > i + 1 {
+    // Off-screen design previews. ImageRenderer is MainActor-isolated, so the
+    // work is dispatched onto the main actor and the run loop below spins
+    // until it finishes, then exits.
+    let prefix = argv[i + 1]
+    // The main-queue drain inside app.run() executes this block; exit() ends
+    // the process before the run loop can spin forever.
+    DispatchQueue.main.async {
+        PreviewRenderer.render(prefix)
+        exit(0)
+    }
+    app.run()
+    exit(0)
+} else {
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.run()
+}
