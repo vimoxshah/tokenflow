@@ -86,6 +86,9 @@ struct TFStatus: Decodable {
         var id: String?; var type: String?; var icon: String?
         var title: String?; var detail: String?; var date: String?
     }
+    /// Rolling-window slices. Unknown extra keys are ignored by design so the
+    /// Node side can annotate freely without breaking older builds.
+    struct Windows: Decodable { var last5h: UsageSlice?; var last24h: UsageSlice? }
 
     var generatedAt: String?
     var demo: Bool?
@@ -98,7 +101,7 @@ struct TFStatus: Decodable {
     var watcher: Watcher?
     var lastError: LastError?
     var health: Health?
-    var windows: [String: UsageSlice]?
+    var windows: Windows?
     var recentDays: [RecentDay]?
     var milestones: [Milestone]?
 
@@ -554,6 +557,9 @@ func menuView(_ view: NSView) -> NSMenuItem {
     private let menu = NSMenu()
     private var status: TFStatus?
     private var refreshing = false
+    /// Set when an action could not spawn the CLI; rendered in the menu so a
+    /// dead click is never silent.
+    private var spawnError: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         item.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
@@ -571,6 +577,8 @@ func menuView(_ view: NSView) -> NSMenuItem {
 
     private func reloadAndRender() {
         status = loadStatus()
+        // A successful read with data proves the CLI pipeline works again.
+        if status != nil, (status?.health?.records ?? 0) > 0 { spawnError = nil }
         rebuildMenu()
         renderTitle()
     }
@@ -702,11 +710,11 @@ func menuView(_ view: NSView) -> NSMenuItem {
         }
 
         // ---- rolling windows ---------------------------------------------------------
-        if let windows = s.windows {
+        if let w = s.windows {
             menu.addItem(.separator())
             menu.addItem(menuView(SectionHeaderView("Recent windows")))
-            menu.addItem(menuView(UsageRowView(name: "Last 5h", windows["last5h"])))
-            menu.addItem(menuView(UsageRowView(name: "Last 24h", windows["last24h"])))
+            menu.addItem(menuView(UsageRowView(name: "Last 5h", w.last5h)))
+            menu.addItem(menuView(UsageRowView(name: "Last 24h", w.last24h)))
             menu.addItem(noteItem("measured locally · hour granularity"))
         }
 
@@ -757,6 +765,10 @@ func menuView(_ view: NSView) -> NSMenuItem {
         if let err = s.lastError?.message {
             menu.addItem(noteItem("⚠︎ Watcher error: \(err)", color: .systemOrange, size: 11))
         }
+        if let spawnErr = spawnError {
+            menu.addItem(noteItem("⚠︎ Action failed: \(spawnErr)", color: .systemOrange, size: 11))
+            menu.addItem(noteItem("Try: node bin/tokenflow.js \(s.health?.records ?? 0 > 0 ? "watch --once" : "setup") in Terminal", size: 10))
+        }
 
         // ---- actions ------------------------------------------------------------------------------
         menu.addItem(.separator())
@@ -799,8 +811,14 @@ func menuView(_ view: NSView) -> NSMenuItem {
 
     private func nodeProcess(_ args: [String], detached: Bool) -> Process? {
         let node = Paths.nodePath
-        guard node == "/usr/bin/env" || FileManager.default.fileExists(atPath: node),
-              FileManager.default.fileExists(atPath: Paths.cliPath) else { return nil }
+        guard node == "/usr/bin/env" || FileManager.default.fileExists(atPath: node) else {
+            spawnError = "node not found at \(node)"
+            return nil
+        }
+        guard FileManager.default.fileExists(atPath: Paths.cliPath) else {
+            spawnError = "tokenflow CLI missing at \(Paths.cliPath)"
+            return nil
+        }
         let proc = Process()
         if node == "/usr/bin/env" {
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -817,17 +835,26 @@ func menuView(_ view: NSView) -> NSMenuItem {
     }
 
     private func runCLI(_ args: [String]) {
-        guard !refreshing, let proc = nodeProcess(args, detached: false) else { return }
+        guard !refreshing else { return }
+        guard let proc = nodeProcess(args, detached: false) else { reloadAndRender(); return }
         refreshing = true
         renderTitle()
         rebuildMenu()
-        proc.terminationHandler = { [weak self] _ in
+        proc.terminationHandler = { [weak self] p in
+            guard let self else { return }
+            let failed = p.terminationReason == .uncaughtSignal || p.terminationStatus != 0
+            let name = args.first ?? "command"
             DispatchQueue.main.async {
-                self?.refreshing = false
-                self?.reloadAndRender()
+                self.refreshing = false
+                if failed { self.spawnError = "\(name) exited with status \(p.terminationStatus)" }
+                self.reloadAndRender()
             }
         }
-        do { try proc.run() } catch { refreshing = false; reloadAndRender() }
+        do { try proc.run() } catch {
+            refreshing = false
+            spawnError = error.localizedDescription
+            reloadAndRender()
+        }
     }
 
     private func refreshNow() { runCLI(["watch", "--once"]) }

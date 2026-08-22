@@ -73,9 +73,13 @@ export function buildLiveStatus(opt = {}) {
   const mtdM = measuresFor(`${today.slice(0, 7)}-01`, today);
 
   const todayRows = filterCube(ix, { from: today, to: today, includeOverlay });
-  const providersToday = rank(todayRows, ix, (r) => r[ix.d.p]).slice(0, 5)
+  // Zero-token rows (activity-only sources) never earn a slot in token
+  // rankings — an "unknown · 0 tok" row is noise, not information.
+  const providersToday = rank(todayRows, ix, (r) => r[ix.d.p])
+    .filter((g) => g.m.total > 0).slice(0, 5)
     .map((g) => ({ key: g.key, tokens: g.m.total, requests: g.m.req, ...costOf(g.m) }));
-  const modelsToday = rank(todayRows, ix, (r) => r[ix.d.m]).slice(0, 5)
+  const modelsToday = rank(todayRows, ix, (r) => r[ix.d.m])
+    .filter((g) => g.m.total > 0).slice(0, 5)
     .map((g) => ({ key: g.key, tokens: g.m.total, requests: g.m.req, ...costOf(g.m) }));
 
   // ---- rolling windows (measured locally — CodexBar-style "current window") --
@@ -89,7 +93,6 @@ export function buildLiveStatus(opt = {}) {
     return usageSlice(finalize(sumRows(rows, ix)));
   };
   const windows = {
-    note: 'measured rolling windows, hour granularity',
     last5h: sumSince(5),
     last24h: sumSince(24),
   };
