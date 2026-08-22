@@ -114,9 +114,14 @@ test('gateway-namespaced free/preview models classify by their own slug prefix',
   // OpenRouter's own house/stealth series attributes to OpenRouter itself —
   // the prefix is evidence, not a guess.
   assert.equal(classifyModel('openrouter/owl-alpha').provider, 'openrouter');
+  // OpenCode's own gateway catalog: these slugs are published by OpenCode
+  // (verified against real ingest — every x-preview-f-free record arrives via
+  // the opencode adapter), so attribution follows the publisher.
+  assert.equal(classifyModel('x-preview-f-free').provider, 'opencode');
+  assert.equal(classifyModel('muse-spark-1.2-contributor-free').provider, 'opencode');
   // A stealth model with no namespace at all stays unknown: nothing local
   // names its vendor, so none is invented.
-  assert.equal(classifyModel('x-preview-f-free').provider, 'unknown');
+  assert.equal(classifyModel('zz-stealth-model-9').provider, 'unknown');
 });
 
 test('a provider hint never overrides evidence in the model name', () => {

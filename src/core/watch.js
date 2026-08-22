@@ -78,6 +78,14 @@ export function detectTransitions(prev, next) {
     if (prevAnomalies.has(a.id)) continue;
     out.push({ kind: 'anomaly', id: a.id, title: `Unusual ${(a.type || 'event').replace(/_/g, ' ')}`, body: a.detail });
   }
+  // Milestones celebrate only on their first sighting too — the same record
+  // broken twice is one party, not two.
+  const prevMilestones = new Set((prev?.milestones || []).map((m) => m.id));
+  for (const m of next.milestones || []) {
+    if (!today || !m.id.endsWith(`:${today}`)) continue;
+    if (prevMilestones.has(m.id)) continue;
+    out.push({ kind: 'milestone', id: m.id, title: `${m.icon} ${m.title}`, body: m.detail });
+  }
   return out;
 }
 

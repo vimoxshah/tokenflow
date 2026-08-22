@@ -4,10 +4,10 @@ import {
   linearForecast, monthEndProjection, buildForecast, exhaustionEta, lastDayOfMonth,
 } from '../src/analytics/forecast.js';
 import { detectAnomalies, modifiedZ, firstSeenEntities } from '../src/analytics/anomalies.js';
-import {
-  normalizeLimit, normalizeLimits, evaluateLimits, summarizeCapacity,
+import { normalizeLimit, normalizeLimits, evaluateLimits, summarizeCapacity,
   resetFor, windowFor, localMidnightMs,
 } from '../src/analytics/capacity.js';
+import { detectMilestones } from '../src/analytics/milestones.js';
 import { indexCube } from '../src/analytics/aggregate.js';
 
 // ---------------------------------------------------------------- forecast --
@@ -319,4 +319,45 @@ test('capacity: burn rates, ETAs and first-to-hit ordering', async () => {
   assert.equal(summary.worst.id, 'day-tokens'); // exceeded sorts before everything
   assert.equal(summary.firstToHit.id, 'day-openai'); // earliest projected crossing
   assert.deepEqual(summary.counts, { total: 4, exceeded: 2, warn: 1 });
+});
+
+// ------------------------------------------------- milestones (celebration) --
+
+function day(key, total, cost = 0) {
+  return { key, total, cost, tokenActive: total > 0, active: true };
+}
+
+test('milestones: a record-breaking day is celebrated once history exists', () => {
+  const series = Array.from({ length: 10 }, (_, i) => day(`2026-08-${String(10 + i).padStart(2, '0')}`, 1000));
+  assert.deepEqual(detectMilestones(series), [], 'flat history: nothing to celebrate');
+
+  series.push(day('2026-08-20', 1500));
+  const out = detectMilestones(series);
+  const biggest = out.find((m) => m.type === 'biggest_day');
+  assert.ok(biggest);
+  assert.equal(biggest.id, 'biggest_day:2026-08-20');
+  assert.match(biggest.detail, /previous best/);
+
+  // Day one of a brand-new store is not a hollow record.
+  assert.deepEqual(detectMilestones([day('2026-08-20', 999999)]), []);
+});
+
+test('milestones: the highest newly-reached cost step wins, and only once', () => {
+  // History peaked at $8 — never crossed $10.
+  const series = Array.from({ length: 9 }, (_, i) => day(`2026-07-${String(1 + i).padStart(2, '0')}`, 5000, 8));
+  series.push(day('2026-07-10', 6000, 120)); // crosses both $10 and $100 in one day
+  const steps = detectMilestones(series).filter((m) => m.type === 'cost_threshold');
+  assert.deepEqual(steps.map((s) => s.title), ['First $100 day']);
+  // Tomorrow: nothing new to celebrate.
+  series.push(day('2026-07-11', 5000, 110));
+  assert.deepEqual(detectMilestones(series).filter((m) => m.type === 'cost_threshold'), []);
+});
+
+test('milestones: streaks fire at multiples of seven only', () => {
+  const series = [];
+  for (let i = 1; i <= 13; i++) series.push(day(`2026-08-${String(i).padStart(2, '0')}`, 1000));
+  assert.deepEqual(detectMilestones(series).filter((m) => m.type === 'streak'), []); // 13 days
+  series.push(day('2026-08-14', 1000));
+  const streaks = detectMilestones(series).filter((m) => m.type === 'streak');
+  assert.deepEqual(streaks.map((s) => s.title), ['14-day streak']);
 });

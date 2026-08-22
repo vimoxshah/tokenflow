@@ -58,9 +58,12 @@ export default createProvider({
         emit({
           id: `cursor-edit-${r.hash}-${r.createdAt}`,
           timestamp: new Date(Number(ts)).toISOString(),
-          // `default` / null are Cursor's own placeholders; do not guess a model.
+          // `default` / null are Cursor's own placeholders; do not guess a
+          // model. The PROVIDER however is certain — this row came from
+          // Cursor's own tracking DB — so providerHint attributes unmatched
+          // models to cursor instead of an anonymous "unknown" bucket.
           model: r.model && r.model !== 'default' ? r.model : null,
-          providerHint: null,
+          providerHint: 'cursor',
           client: 'cursor',
           application: 'Cursor',
           interfaceSignals: ['cursor'],

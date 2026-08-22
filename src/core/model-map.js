@@ -47,6 +47,11 @@ export const BUILTIN_MODEL_RULES = [
   // stay AFTER the vendor rules: "openrouter/deepseek/v3" is DeepSeek, and
   // only slugs no vendor rule can identify fall back to the namespace owner.
   { match: '(^|/)openrouter/', provider: 'openrouter', label: 'OpenRouter' },
+  // OpenCode's own gateway catalog (served through the opencode adapter):
+  // the "x" preview family and the muse-spark community series. These slugs
+  // are published by OpenCode itself, so attribution follows the publisher.
+  { match: '(^|/)x-preview(-|$)', provider: 'opencode', label: 'OpenCode' },
+  { match: '(^|/)muse-spark', provider: 'opencode', label: 'OpenCode' },
 ];
 
 const compiled = new WeakMap();

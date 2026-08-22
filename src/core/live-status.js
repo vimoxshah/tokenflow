@@ -21,6 +21,7 @@ import { filterCube, filterSessions, indexCube, rank, finalize, sumRows, weekSta
 import { loadConfig, paths, ensureDirs } from './config.js';
 import { readJson } from './store.js';
 import { compact, usd, countdown } from './units.js';
+import { detectMilestones } from '../analytics/milestones.js';
 
 // Formatting adapters over the shared units.js formatters (which the browser
 // bundle also uses): null means "nothing to show", never "—", never 0.
@@ -60,6 +61,7 @@ export function buildLiveStatus(opt = {}) {
   const v = computeView(b, {});
   const ix = indexCube(b.cube);
   const today = b.meta.today;
+  const tzOffsetMinutes = b.meta.tzOffsetMinutes ?? 0;
   const includeOverlay = !!b.meta.includeOverlayDefault;
 
   const measuresFor = (from, to) =>
@@ -75,6 +77,31 @@ export function buildLiveStatus(opt = {}) {
     .map((g) => ({ key: g.key, tokens: g.m.total, requests: g.m.req, ...costOf(g.m) }));
   const modelsToday = rank(todayRows, ix, (r) => r[ix.d.m]).slice(0, 5)
     .map((g) => ({ key: g.key, tokens: g.m.total, requests: g.m.req, ...costOf(g.m) }));
+
+  // ---- rolling windows (measured locally — CodexBar-style "current window") --
+  // Hour-granular slices of the cube: the boundary is the top of an hour, so a
+  // window may be up to 59 minutes conservative. That approximation is stated
+  // here rather than hidden.
+  const sumSince = (hoursBack) => {
+    const cutoff = new Date(nowMs + tzOffsetMinutes * 60000 - hoursBack * 3600000);
+    const cutoffKey = `${cutoff.toISOString().slice(0, 10)}T${String(cutoff.getUTCHours()).padStart(2, '0')}`;
+    const rows = ix.rows.filter((r) => `${r[ix.d.d]}T${String(r[ix.d.h]).padStart(2, '0')}` >= cutoffKey);
+    return usageSlice(finalize(sumRows(rows, ix)));
+  };
+  const windows = {
+    note: 'measured rolling windows, hour granularity',
+    last5h: sumSince(5),
+    last24h: sumSince(24),
+  };
+
+  // ---- recent days for sparklines + milestones -------------------------------
+  const recentDays = v.daily.slice(-14).map((d) => ({
+    key: d.key,
+    total: d.total || 0,
+    cost: Number(d.cost) || 0,
+    active: !!d.tokenActive,
+  }));
+  const milestones = detectMilestones(v.daily);
 
   const lastRefresh = b.meta.lastRefresh || null;
   const ageMs = lastRefresh ? Math.max(0, nowMs - new Date(lastRefresh).getTime()) : null;
@@ -107,6 +134,9 @@ export function buildLiveStatus(opt = {}) {
     },
     providersToday,
     modelsToday,
+    windows,
+    recentDays,
+    milestones,
     capacity: {
       summary: trimSummary(v.capacity.summary),
       states: v.capacity.states.map(trimLimitState),
