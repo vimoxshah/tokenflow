@@ -21,16 +21,19 @@
   el.innerHTML = `
   <svg viewBox="0 0 320 210" width="100%" role="img"
        aria-label="Stylised TokenFlow dashboard: daily token usage bars with a rising trend line">
-    <!-- header zone -->
-    <text x="24" y="26" font-family="-apple-system,sans-serif" font-size="11"
+    <!-- header zone: title + value grouped on the LEFT so the trend line
+         owns the full right edge and can never collide with the number -->
+    <text x="24" y="22" font-family="-apple-system,sans-serif" font-size="11"
           fill="#9ba3b5">tokens per day</text>
-    <text x="296" y="26" text-anchor="end" font-family="ui-monospace,monospace" font-size="13"
+    <text x="24" y="40" font-family="ui-monospace,monospace" font-size="14"
           font-weight="700" fill="#f2f4f8">4.83B</text>
+    <circle cx="118" cy="35" r="4" fill="#8f9dff"/>
 
-    <!-- trend line stays in its own band above the bars -->
-    <path class="hero-line" d="M20 50 C 60 46, 90 38, 130 41 S 200 28, 240 22 S 285 16, 300 12"
+    <!-- trend band: starts below the header block (y>=56), ends at the right
+         edge with its pulse dot — clear of all text by construction -->
+    <path class="hero-line" d="M20 96 C 60 90, 90 80, 130 84 S 200 66, 240 60 S 285 52, 300 48"
           stroke="#8f9dff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-    <circle cx="300" cy="12" r="4" fill="#8f9dff">
+    <circle cx="300" cy="48" r="4" fill="#8f9dff">
       <animate attributeName="r" values="3;5;3" dur="2.4s" repeatCount="indefinite"/>
     </circle>
 
