@@ -23,12 +23,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # upload-pages-artifact takes a single directory; stage site + media into it
+      - name: Stage site with screenshots
+        run: |
+          mkdir -p _pages/docs
+          cp -R site/. _pages/
+          cp -R docs/media _pages/docs/media
       - uses: actions/upload-pages-artifact@v3
         with:
-          # site plus docs/media (menu bar popover + dashboard screenshots)
-          path: |
-            site
-            docs/media
+          path: _pages
       - id: deployment
         uses: actions/deploy-pages@v4
 
