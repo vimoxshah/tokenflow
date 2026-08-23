@@ -22,7 +22,7 @@
     TokenFlow
   </a>
   <div class="navlinks">
-    <a href="#features">Features</a><a href="#usp">Why</a><a href="#map">Global</a>
+    <a href="#features">Features</a><a href="#depth">Under the hood</a><a href="#usp">Why</a><a href="#map">Global</a>
     <a href="#how">How it works</a>
     <a href="#sources">Sources</a><a href="https://github.com/vimoxshah/tokenflow" target="_blank" rel="noopener noreferrer">GitHub</a>
   </div>
@@ -79,6 +79,24 @@
       <h3>Period compare</h3><p>Diff any two time windows metric by metric, plus first-seen models, streaks and milestone tracking.</p></div>
     <div class="card reveal"><p class="metric">3 skins</p>
       <h3>Aurora · Terminal · Editorial</h3><p>Each in dark and light, colour-blind validated per mode so switching themes never changes what a colour means.</p></div>
+  </div>
+</div></section>
+
+<section id="depth"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Under the hood</p>
+    <h2>How deep does it go?</h2>
+    <p class="subhead">Every layer is built for honesty: adapters that only read, accounting that
+    never double counts, prices with receipts, and tests that enforce all of it.</p>
+  </div>
+  <div class="card reveal" style="padding:8px;">
+    <img src="architecture-hero.svg" alt="TokenFlow architecture: local logs → engine → dashboard, menu bar, CLI" style="width:100%;display:block;" loading="lazy">
+  </div>
+  <div class="grid grid-4" style="margin-top:16px;">
+    <div class="card reveal"><p class="metric">10</p><h3>Adapters</h3><p>Anthropic, Codex, OpenCode, Hermes, Cline, Cursor, gateway overlays, git, generic CSV/JSONL/SQLite import — incremental and resumable at the byte offset.</p></div>
+    <div class="card reveal"><p class="metric">145</p><h3>Tests + lint invariants</h3><p>Cache-bucket exclusivity, stream dedup, null-vs-zero semantics and pricing rules are asserted on every push across three OSes.</p></div>
+    <div class="card reveal"><p class="metric">12</p><h3>Analytics views</h3><p>KPIs, composition, provider/model intelligence, time patterns, peaks, efficiency, cost with coverage, correlations, compare, explorer, data health.</p></div>
+    <div class="card reveal"><p class="metric">3</p><h3>Surfaces</h3><p>A loopback web dashboard, a native Swift menu bar app with capacity forecasting, and a scriptable CLI — all reading the same pre-aggregated cube.</p></div>
   </div>
 </div></section>
 

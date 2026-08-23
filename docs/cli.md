@@ -127,6 +127,21 @@ the dashboard shows, from the same analytics code. `--json` for scripting.
 
 ---
 
+### `digest`
+A shareable summary of a usage window, rendered from the same cube as everything else: headline
+tokens/cost/requests, by source, by provider, top models, pace vs your 14-day average, nearest
+capacity limit and any high-severity alerts. Markdown by default; paste it into Slack, an issue,
+or a stand-up note.
+
+```bash
+tokenflow digest                       # last 7 days, markdown to stdout
+tokenflow digest --format text         # plain text
+tokenflow digest --from 2026-08-01 --to 2026-08-07
+tokenflow digest --out week.md        # write instead of print
+```
+
+---
+
 ### `providers`
 What is detected, connected, or disabled, with the reason for each. `--json`.
 

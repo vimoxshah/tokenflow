@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" width="100%" role="img" aria-label="TokenFlow architecture: local AI tool logs flow through adapters into a token store, then to dashboard, CLI, and menu bar — nothing leaves the machine.">
+  <defs>
+    <linearGradient id="tfh-accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3987e5"/><stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="tfh-card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2333"/><stop offset="1" stop-color="#141926"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .tfh-title{font:600 13px -apple-system,'Segoe UI',sans-serif;fill:#eef1f7}
+    .tfh-sub{font:400 10px -apple-system,'Segoe UI',sans-serif;fill:#98a1b5}
+    .tfh-chip{font:500 10px ui-monospace,Menlo,monospace;fill:#c7cede}
+    .tfh-num{font:700 20px -apple-system,'Segoe UI',sans-serif;fill:url(#tfh-accent)}
+    .tfh-cap{font:400 9.5px -apple-system,'Segoe UI',sans-serif;fill:#98a1b5}
+    .card{fill:url(#tfh-card);stroke:#2a3348;rx:12}
+    .arrow{stroke:url(#tfh-accent);stroke-width:1.6;fill:none;stroke-dasharray:4 5;opacity:.85}
+  </style>
+
+  <!-- sources -->
+  <g>
+    <rect class="card" x="16" y="34" width="150" height="232" rx="12"/>
+    <text class="tfh-title" x="30" y="56">Your tools' logs</text>
+    <text class="tfh-chip" x="30" y="84">~/.claude/*.jsonl</text>
+    <text class="tfh-chip" x="30" y="106">~/.codex/sessions</text>
+    <text class="tfh-chip" x="30" y="128">opencode.db</text>
+    <text class="tfh-chip" x="30" y="150">~/.hermes/state.db</text>
+    <text class="tfh-chip" x="30" y="172">~/.cline · ~/.cursor</text>
+    <text class="tfh-chip" x="30" y="194">CSV · JSONL · SQLite</text>
+    <text class="tfh-cap" x="30" y="230">read-only, incremental,</text>
+    <text class="tfh-cap" x="30" y="244">byte-offset resumable</text>
+  </g>
+
+  <!-- engine -->
+  <g>
+    <rect class="card" x="220" y="34" width="190" height="232" rx="12"/>
+    <text class="tfh-title" x="234" y="56">TokenFlow engine</text>
+    <text class="tfh-cap" x="234" y="74">zero dependencies · Node 22+</text>
+    <text class="tfh-chip" x="234" y="100">adapters → normalize</text>
+    <text class="tfh-chip" x="234" y="122">cache ≠ input accounting</text>
+    <text class="tfh-chip" x="234" y="144">stream dedup (max-of-run)</text>
+    <text class="tfh-chip" x="234" y="166">versioned price table</text>
+    <text class="tfh-chip" x="234" y="188">pre-aggregated cube</text>
+    <text class="tfh-cap" x="234" y="222">null ≠ 0 · measured ≠ estimated</text>
+    <text class="tfh-cap" x="234" y="236">145 tests enforce it</text>
+  </g>
+
+  <!-- surfaces -->
+  <g>
+    <rect class="card" x="464" y="34" width="180" height="70" rx="12"/>
+    <text class="tfh-title" x="478" y="58">Web dashboard</text>
+    <text class="tfh-cap" x="478" y="76">12 views · loopback only · themes</text>
+
+    <rect class="card" x="464" y="118" width="180" height="70" rx="12"/>
+    <text class="tfh-title" x="478" y="142">Native menu bar app</text>
+    <text class="tfh-cap" x="478" y="160">cost, limits, forecast, source &amp;</text>
+    <text class="tfh-cap" x="478" y="173">model breakdown, theme toggle</text>
+
+    <rect class="card" x="464" y="202" width="180" height="64" rx="12"/>
+    <text class="tfh-title" x="478" y="226">CLI + exports</text>
+    <text class="tfh-cap" x="478" y="244">refresh · status · watch · CSV/HTML</text>
+  </g>
+
+  <!-- stats column -->
+  <g>
+    <rect class="card" x="688" y="34" width="176" height="232" rx="12"/>
+    <text class="tfh-num" x="702" y="72">15+</text>
+    <text class="tfh-cap" x="702" y="88">providers &amp; gateways</text>
+    <text class="tfh-num" x="702" y="124">35+</text>
+    <text class="tfh-cap" x="702" y="140">models auto-classified</text>
+    <text class="tfh-num" x="702" y="176">12</text>
+    <text class="tfh-cap" x="702" y="192">analytics views</text>
+    <text class="tfh-num" x="702" y="228">0</text>
+    <text class="tfh-cap" x="702" y="244">runtime dependencies</text>
+  </g>
+
+  <!-- arrows -->
+  <path class="arrow" d="M170 150 H 214"/>
+  <path class="arrow" d="M414 120 C 440 110, 442 80, 458 70"/>
+  <path class="arrow" d="M414 150 H 458"/>
+  <path class="arrow" d="M414 180 C 440 190, 442 220, 458 230"/>
+
+  <!-- privacy band -->
+  <rect x="16" y="278" width="848" height="16" rx="4" fill="#10141d"/>
+  <text class="tfh-cap" x="440" y="290" text-anchor="middle">local-first — logs are read in place, normalized on this machine, and never uploaded anywhere</text>
+</svg>

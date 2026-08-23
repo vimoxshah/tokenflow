@@ -79,6 +79,7 @@ async function main() {
     case 'capacity': return cmdCapacity();
     case 'forecast': return cmdForecast();
     case 'menubar': return cmdMenubar();
+    case 'digest': return cmdDigest();
     default:
       console.error(`${C.red}Unknown command "${cmd}".${C.r}\n`);
       return help(1);
@@ -959,6 +960,22 @@ async function cmdForecast() {
 }
 
 /** `tokenflow menubar` — native app / render / install menu-bar integrations. */
+async function cmdDigest() {
+  const { run: runDigest } = await import('../src/commands/digest.js');
+  const f = {};
+  for (const [k, v] of Object.entries(flags)) if (v != null) f[k] = v;
+  const out = await runDigest({
+    from: f.from, to: f.to,
+    format: f.format === 'text' ? 'text' : 'markdown',
+  });
+  if (typeof f.out === 'string') {
+    fs.writeFileSync(f.out, out + '\n');
+    console.log(`${C.g}✓${C.r} wrote ${f.out}`);
+  } else {
+    console.log(out);
+  }
+}
+
 async function cmdMenubar() {
   const mode = String(flags.mode || loadConfig().ui?.menubarMode || 'auto');
 

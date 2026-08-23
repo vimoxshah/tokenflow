@@ -736,7 +736,11 @@ export function scaleLegend(max, fmt) {
 export function scatter(points, o) {
   const H = o.height || 320;
   const W = o.width || 900;
-  const M = { t: 16, r: 24, b: 54, l: 62 };
+  // Left margin adapts to the widest y label so long formatters (e.g. int's
+  // "4,000,000") never bleed into the plot or collide with the axis title.
+  const sampleY = o.fmtY ? niceTicks(0, Math.max(1, ...points.map((p) => p.y).filter((v) => v !== null && isFinite(v))), 4).ticks : [];
+  const widestY = Math.max(0, ...sampleY.map((t) => String(o.fmtY(t)).length)) * 6.6;
+  const M = { t: 16, r: 24, b: 54, l: Math.max(62, Math.ceil(widestY) + 18) };
   const iw = W - M.l - M.r;
   const ih = H - M.t - M.b;
   const xs = points.map((p) => p.x).filter((v) => v !== null && isFinite(v));

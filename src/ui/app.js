@@ -1599,7 +1599,7 @@ function viewProductivity() {
           rows: [{ color: null, name: 'AI tokens', value: compact(s.usage) }, { color: null, name: metricLabel(m.metric), value: int(s.work) }],
         }));
         return scatter(pts, {
-          width: w, height: 300, fmtX: compact, fmtY: int,
+          width: w, height: 300, fmtX: compact, fmtY: compact,
           xLabel: 'AI tokens that day', yLabel: metricLabel(m.metric),
         });
       }, {

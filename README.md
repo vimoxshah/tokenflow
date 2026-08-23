@@ -14,12 +14,27 @@
 ![Overview — Aurora dark](docs/media/overview-aurora-dark.png)
 
 <p align="center">
+  <img src="docs/media/architecture-hero.svg" alt="TokenFlow architecture: local logs → engine → dashboard, menu bar, CLI" width="100%">
+</p>
+
+<p align="center">
   <img src="docs/media/menubar-light.png" width="30%" alt="TokenFlow menu bar popover — light">
   &nbsp;
   <img src="docs/media/menubar-dark.png" width="30%" alt="TokenFlow menu bar popover — dark">
 </p>
-<p align="center"><em>The native macOS menu bar popover — live cost, tokens, per-provider usage,
-capacity meters and forecast, in light and dark.</em></p>
+<p align="center"><em>The native macOS menu bar popover — live cost, tokens, per-provider,
+per-source and per-model usage, capacity meters and forecast, in light and dark.</em></p>
+
+**How deep it goes**
+
+| Layer | What's inside |
+|---|---|
+| **Ingestion** | 10 adapters (Anthropic, OpenAI/Codex, OpenCode, Hermes, Cline, Cursor, Headroom gateway, git, generic CSV/JSONL/SQLite import, demo). Incremental byte-offset resumes, re-read windows for upserted rows, budgeted refresh that stops cleanly mid-corpus |
+| **Correctness** | Cache read/write/input kept as mutually exclusive buckets; vendor convention differences handled; streaming re-reports collapsed to max-of-run; `null` never coerced to 0; measured gateway cost kept separate from estimates |
+| **Costing** | Versioned price table with per-entry source URLs and fetch dates; service-tier multipliers; long-TTL cache-write tier priced separately; unpriced models surface as `null` with a configure action — never silent `$0` |
+| **Analytics** | 12 views: overview KPIs, composition, provider/model intelligence, interfaces, hour×weekday heatmap + calendar, peaks, efficiency ratios, cost with coverage, git correlations (labelled), period compare, searchable data explorer, per-field data health |
+| **Live mode** | Watcher daemon, native Swift menu bar app (provider/source/model breakdowns, capacity meters with reset countdowns & ETAs, forecast with stated confidence, MAD-based anomaly alerts, appearance toggle), SwiftBar/xbar plugin |
+| **Engineering** | Zero runtime dependencies · 145 tests · lint invariants (e.g. "no `\|\| 0` on a token field") · tsc-clean JSDoc types · CI on macOS/Linux/Windows × Node 22/24 |
 
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
@@ -136,6 +151,7 @@ node bin/tokenflow.js dashboard      # live UI at http://127.0.0.1:7799 (loopbac
 node bin/tokenflow.js watch          # auto-refresh every N seconds (default 120)
 node bin/tokenflow.js import f.csv   # CSV/JSONL/SQLite via saved field mapping
 node bin/tokenflow.js export --csv   # --all for everything; --html for offline snapshot
+node bin/tokenflow.js digest         # shareable markdown summary (--format text, --from/--to, --out f.md)
 node bin/tokenflow.js up             # refresh → rebuild offline HTML → serve + open
 
 npm link                             # optional: global `tokenflow` command
