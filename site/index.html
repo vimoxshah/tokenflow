@@ -22,7 +22,8 @@
     TokenFlow
   </a>
   <div class="navlinks">
-    <a href="#features">Features</a><a href="#usp">Why</a><a href="#how">How it works</a>
+    <a href="#features">Features</a><a href="#usp">Why</a><a href="#map">Global</a>
+    <a href="#how">How it works</a>
     <a href="#sources">Sources</a><a href="https://github.com/vimoxshah/tokenflow" target="_blank" rel="noopener noreferrer">GitHub</a>
   </div>
 </div></nav>
@@ -95,6 +96,17 @@
       <h3>Auditable by design</h3><p>No runtime dependencies, no network client anywhere in the codebase, server bound to loopback only. One grep proves it. Your raw logs never leave the machine.</p></div>
   </div>
   <div class="chart-strip card reveal" id="chart-strip"><!-- comparison SVG injected --></div>
+</div></section>
+
+<section id="map"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Global activity</p>
+    <h2>The shape of your AI activity.</h2>
+    <p class="subhead">TokenFlow measures every request's path from your machine to each
+    provider. Where a request physically lands is vendor infrastructure no local log exposes,
+    so the map shows measured flows and says plainly what is unknown.</p>
+  </div>
+  <div class="card reveal" id="worldmap" style="padding:8px;"></div>
 </div></section>
 
 <section id="tagline" class="tagline-sec"><div class="wrap">
@@ -189,5 +201,6 @@
 </div></footer>
 
 <script src="charts.js"></script>
+<script src="worldmap.js"></script>
 <script src="three-bg.js"></script>
 <script src="main.js"></script>

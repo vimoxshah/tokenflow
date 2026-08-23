@@ -54,4 +54,26 @@
       scrollTrigger: { trigger: strip, start: 'top 80%' }
     });
   }
+
+  // world map: flows draw themselves, dots fade up in one wave
+  const map = document.getElementById('worldmap');
+  if (map) {
+    const flows = map.querySelectorAll('path.flow');
+    flows.forEach(p => { const L = p.getTotalLength(); p.style.strokeDasharray = `4 6`; p.style.strokeDashoffset = L; });
+    gsap.to(flows, {
+      strokeDashoffset: 0, duration: 1.6, stagger: .3, ease: 'power2.inOut',
+      scrollTrigger: { trigger: map, start: 'top 75%' }
+    });
+    gsap.from(map.querySelectorAll('circle[r="1.6"]'), {
+      opacity: 0, duration: .8, stagger: { amount: .9, from: 'random' },
+      scrollTrigger: { trigger: map, start: 'top 78%' }
+    });
+  }
+
+  // feature cards cascade
+  const grid = document.getElementById('feature-grid');
+  if (grid) gsap.from(grid.querySelectorAll('.card'), {
+    opacity: 0, y: 28, stagger: .07, duration: .7, ease: 'power2.out',
+    scrollTrigger: { trigger: grid, start: 'top 82%' }
+  });
 })();
