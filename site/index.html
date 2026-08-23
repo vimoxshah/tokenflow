@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TokenFlow — see where your AI tokens actually go</title>
+<meta name="description" content="Local-first, provider-agnostic analytics for the AI tokens you spend across Claude Code, Codex, Cline, Cursor and gateways. Zero dependencies. Nothing leaves your machine.">
+<style>
+  :root {
+    --bg: #0d1017; --bg2: #12161f; --card: #171c27; --line: #232a38;
+    --text: #e8ebf2; --dim: #8b93a7; --accent: #8f9dff; --good: #4ade80;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 72px 0 40px; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: 1.1; letter-spacing: -0.02em; }
+  h1 .accent { color: var(--accent); }
+  .tagline { font-size: 1.25rem; color: var(--dim); margin: 20px 0 32px; max-width: 46rem; }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 36px; }
+  .badge { background: var(--card); border: 1px solid var(--line); color: var(--dim);
+    font-size: .78rem; padding: 4px 12px; border-radius: 999px; }
+  .cta { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .btn { display: inline-block; padding: 13px 26px; border-radius: 10px;
+    font-weight: 600; font-size: 1rem; transition: transform .12s ease, opacity .12s ease; }
+  .btn:hover { transform: translateY(-1px); text-decoration: none; opacity: .92; }
+  .btn-primary { background: var(--accent); color: #0d1017; }
+  .btn-ghost { border: 1px solid var(--line); color: var(--text); background: var(--bg2); }
+  .note { font-size: .82rem; color: var(--dim); margin-top: 14px; }
+  section { padding: 44px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 1.5rem; letter-spacing: -0.01em; margin-bottom: 8px; }
+  .sub { color: var(--dim); margin-bottom: 26px; max-width: 42rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .card h3 { font-size: 1rem; margin-bottom: 8px; }
+  .card p { color: var(--dim); font-size: .92rem; }
+  pre { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 24px; overflow-x: auto; font-size: .88rem; line-height: 1.8;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  pre .c { color: var(--dim); } pre .k { color: var(--accent); }
+  ol { color: var(--dim); padding-left: 22px; }
+  ol li { margin-bottom: 10px; }
+  ol strong { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  td, th { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; }
+  code { background: var(--bg2); border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 7px; font-size: .85em; font-family: ui-monospace, Menlo, monospace; }
+  footer { padding: 48px 0 64px; border-top: 1px solid var(--line); color: var(--dim);
+    font-size: .88rem; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  @media (max-width: 640px) { header { padding-top: 48px; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <h1>See where your<br>AI tokens <span class="accent">actually</span> go.</h1>
+  <p class="tagline">TokenFlow is local-first, provider-agnostic analytics for the tokens you spend
+  across Claude&nbsp;Code, Codex, OpenCode, Cline, Cursor, gateways — anything that writes logs on
+  your machine.</p>
+  <div class="badges">
+    <span class="badge">zero dependencies</span>
+    <span class="badge">nothing leaves your machine</span>
+    <span class="badge">no API keys · no telemetry</span>
+    <span class="badge">MIT</span>
+  </div>
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/vimoxshah/tokenflow/releases/latest" id="download-btn">Download for macOS</a>
+    <a class="btn btn-ghost" href="https://github.com/vimoxshah/tokenflow">View on GitHub</a>
+  </div>
+  <p class="note">Unsigned build — right-click the app → Open on first launch.
+  Linux &amp; Windows: clone and run from source.</p>
+</header>
+
+<section id="why">
+  <h2>The questions billing pages can't answer</h2>
+  <p class="sub">Vendor consoles show one vendor, one account, at their granularity. TokenFlow reads
+  every tool's local logs on your machine and answers across all of them, at request granularity,
+  with the raw records still on disk so you can check the arithmetic.</p>
+  <div class="grid">
+    <div class="card"><h3>What am I actually spending?</h3><p>Tokens by day, provider, model and
+      interface — plus estimated cost from a versioned price table with its sources printed, and
+      measured cost when a gateway records it.</p></div>
+    <div class="card"><h3>Where did the tokens go?</h3><p>Four mutually exclusive buckets that sum
+      to the total: fresh input, cache read, cache write, output. Streaming re-reports collapsed
+      to run-maxima, never summed — the difference is up to 45× on real data.</p></div>
+    <div class="card"><h3>Is my usage trending up?</h3><p>Daily series, moving averages, period
+      comparison, forecasts with stated confidence, anomaly alerts — and correlations with git
+      activity labelled as correlations, never as productivity.</p></div>
+    <div class="card"><h3>Live, in the menu bar</h3><p>A native macOS app (no Electron) shows
+      today's spend at a glance, per-provider rolling windows, 5-hour session-block countdowns,
+      capacity meters against limits you declare, and exhaustion ETAs.</p></div>
+  </div>
+</section>
+
+<section id="start">
+  <h2>Three commands</h2>
+  <p class="sub">No configuration, no keys, no <code>npm install</code> — there is nothing to install.
+  Node 22.5+ is the only requirement.</p>
+<pre><span class="c"># detect what you already have, ingest, open the dashboard</span>
+git clone https://github.com/vimoxshah/tokenflow.git <span class="k">&amp;&amp;</span> cd tokenflow
+npm run setup        <span class="c"># finds ~/.claude*, ~/.codex, ~/.cursor, …</span>
+npm start            <span class="c"># refresh → offline file → dashboard at :7799</span></pre>
+  <p class="sub" style="margin-top:18px;">Just looking? <code>npm run demo</code> generates clearly-labelled
+  synthetic data so you can explore before pointing it at anything real.</p>
+</section>
+
+<section id="sources">
+  <h2>It speaks to what you already use</h2>
+  <table>
+    <tr><th>Source</th><th>Reads</th><th>Gives</th></tr>
+    <tr><td>Claude Code / Agent SDK</td><td><code>~/.claude*/projects/**</code></td><td>full per-request tokens incl. long-TTL cache writes</td></tr>
+    <tr><td>Codex CLI / IDE / Desktop</td><td><code>~/.codex/sessions/**</code></td><td>per-turn tokens, OpenAI-inclusive input handled correctly</td></tr>
+    <tr><td>OpenCode</td><td><code>opencode.db</code></td><td>per-request tokens + gateway routing</td></tr>
+    <tr><td>Hermes</td><td><code>~/.hermes/state.db</code></td><td>per-session-per-model tokens, measured cost</td></tr>
+    <tr><td>Cline</td><td>sessions dir</td><td>activity only — no token counts exist, and it never pretends otherwise</td></tr>
+    <tr><td>Cursor</td><td><code>ai-code-tracking.db</code></td><td>AI-authored edits, per-commit attribution</td></tr>
+    <tr><td>Gateways</td><td>e.g. Headroom JSONL</td><td>overlay records: measured cost, excluded from token totals</td></tr>
+    <tr><td>Git</td><td>any repository</td><td>the independent work signal for correlation</td></tr>
+    <tr><td>Anything else</td><td>CSV/JSON/JSONL/SQLite</td><td>a saved field mapping — no adapter needed</td></tr>
+  </table>
+</section>
+
+<section id="privacy">
+  <h2>Local by construction, not by policy</h2>
+  <p class="sub">There is no HTTP client in this codebase at all. The server binds to
+  <code>127.0.0.1</code>. Adapters read token counts and metadata and discard prompt text, source
+  code, and file content. Everything lives in <code>~/.tokenflow/</code>, which you can back up or
+  delete. Verify it yourself: <code>grep -rn "fetch\|https\?://" src/</code>.</p>
+</section>
+
+<section id="download-help">
+  <h2>Installing the macOS app</h2>
+  <ol>
+    <li><strong>Download</strong> the latest <code>TokenFlow-*.dmg</code> from
+      <a href="https://github.com/vimoxshah/tokenflow/releases/latest">Releases</a>.</li>
+    <li><strong>Open the DMG</strong> and drag TokenFlow.app into Applications.</li>
+    <li><strong>Launch from Launchpad.</strong> First launch only: right-click → Open → Open
+      (the build is unsigned).</li>
+    <li>The menu bar item appears. Click it for the full panel; use
+      <strong>Start watcher</strong> there to keep data current every two minutes.</li>
+  </ol>
+  <p class="sub" style="margin-top:16px;">Prefer terminal-only? The clone-and-run path above gives you
+  everything including the same menu bar app (<code>node bin/tokenflow.js menubar --app</code>).</p>
+</section>
+
+<footer>
+  <span>TokenFlow — MIT licensed, built in the open.</span>
+  <span><a href="https://github.com/vimoxshah/tokenflow">GitHub</a> ·
+        <a href="https://github.com/vimoxshah/tokenflow/releases">Releases</a> ·
+        <a href="https://github.com/vimoxshah/tokenflow/blob/main/docs/getting-started.md">Docs</a></span>
+</footer>
+</div>
+
+<script>
+// Point the download button at whatever the newest release asset actually is.
+fetch('https://api.github.com/repos/vimoxshah/tokenflow/releases/latest')
+  .then(r => r.json())
+  .then(rel => {
+    const dmg = (rel.assets || []).find(a => a.name.endsWith('.dmg'));
+    if (dmg) document.getElementById('download-btn').href = dmg.browser_download_url;
+  })
+  .catch(() => {}); // falls back to the releases page
+</script>
+</body>
+</html>

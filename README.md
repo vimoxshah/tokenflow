@@ -15,6 +15,21 @@
 
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
+### Download (macOS menu bar app)
+
+No clone needed — grab the latest **TokenFlow-*.dmg** from
+[**Releases**](https://github.com/vimoxshah/tokenflow/releases/latest), open it, drag
+**TokenFlow.app** to Applications, and launch it from Launchpad. It lives in your menu bar:
+today's spend at a glance, live provider windows, 5-hour session-block countdowns, capacity
+meters, forecasts — with **Refresh now / Open Dashboard / Start watcher** actions one click away.
+
+The DMG is unsigned (no Apple Developer account behind this project). On first launch macOS will
+warn: **right-click TokenFlow.app → Open → Open**, once. After that it opens normally.
+
+> The app is a front seat, not the engine. It drives the same CLI you'd run by hand, so the
+> [clone + three commands](#3-quick-install) below still apply for the full dashboard, imports,
+> and every other feature.
+
 ```bash
 git clone https://github.com/vimoxshah/tokenflow.git && cd tokenflow
 npm run setup        # detects the AI tools already on this machine

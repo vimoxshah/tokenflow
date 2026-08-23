@@ -1,0 +1,82 @@
+name: Release
+
+# Tag a release and everything is built and attached automatically:
+#
+#   git tag v1.0.1 && git push origin v1.0.1
+#
+# Assets produced:
+#   TokenFlow-<version>.dmg          macOS menu bar app, drag-to-Applications
+#   tokenflow-dashboard-demo.html    self-contained offline demo dashboard
+#   Source code (zip/tar.gz)         added by GitHub automatically
+#
+# The DMG job runs on macOS because the app is compiled with swiftc on the
+# target platform. The demo dashboard is built from synthetic data only —
+# no real usage ever leaves anyone's machine.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    name: macOS menu bar app (.dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: Build DMG
+        run: ./scripts/build-dmg.sh "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TokenFlow-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  demo-dashboard:
+    name: Offline demo dashboard (.html)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: Generate demo data and export one-file dashboard
+        run: |
+          node bin/tokenflow.js demo --no-open --no-serve
+          node bin/tokenflow.js export --html tokenflow-dashboard-demo.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-dashboard
+          path: tokenflow-dashboard-demo.html
+          if-no-files-found: error
+
+  release:
+    name: Attach assets to the GitHub release
+    needs: [dmg, demo-dashboard]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TokenFlow-dmg
+      - uses: actions/download-artifact@v4
+        with:
+          name: demo-dashboard
+      - name: Create or update the release with the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "TokenFlow ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            --repo "$GITHUB_REPOSITORY" \
+            TokenFlow-*.dmg tokenflow-dashboard-demo.html \
+            || gh release upload "$GITHUB_REF_NAME" \
+                 --clobber \
+                 --repo "$GITHUB_REPOSITORY" \
+                 TokenFlow-*.dmg tokenflow-dashboard-demo.html

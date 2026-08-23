@@ -9,6 +9,18 @@
 
 ## Install
 
+**macOS, from a DMG:** download `TokenFlow-<version>.dmg` from the
+[latest release](https://github.com/vimoxshah/tokenflow/releases/latest), open it, drag
+**TokenFlow.app** to Applications, launch from Launchpad. The app builds and launches everything
+it needs — refresh, watcher, dashboard. It is unsigned: right-click → Open the first time.
+
+The DMG is produced by [`scripts/build-dmg.sh`](../scripts/build-dmg.sh) and attached to releases
+automatically by [`.github/workflows/release.yml`](../.github/workflows/release.yml). Releases
+also carry `tokenflow-dashboard-demo.html` — a fully offline demo dashboard you can open in any
+browser without installing anything.
+
+**From source (all platforms):**
+
 ```bash
 git clone <this repo> tokenflow
 cd tokenflow
