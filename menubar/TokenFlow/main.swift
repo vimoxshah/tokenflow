@@ -831,15 +831,20 @@ private struct NoteText: View {
 private struct ForecastLine: View {
     let icon: String; let label: String; let tokens: Double?; let cost: Double?
     var body: some View {
+        // Fixed-width columns so every row's figures align vertically:
+        // [icon+label] grows | tokens right-aligned (72) | cost right-aligned (56)
         HStack(spacing: 6) {
             Image(systemName: icon).foregroundStyle(TF.accent).frame(width: 16)
             Text(label).font(TF.labelFont).foregroundStyle(.primary)
             Spacer(minLength: 8)
-            Text("≈ \(compactTokens(tokens ?? 0))").font(TF.figure(12)).foregroundStyle(.primary)
-            if let c = cost {
-                Text(money(c)).font(TF.figure(11)).foregroundStyle(.secondary)
-                    .frame(width: 52, alignment: .trailing)
-            }
+            Text("≈ \(compactTokens(tokens ?? 0))")
+                .font(TF.figure(12, .semibold)).foregroundStyle(.primary)
+                .frame(width: 72, alignment: .trailing)
+                .monospacedDigit()
+            Text(cost.map(money) ?? " ")
+                .font(TF.figure(11)).foregroundStyle(.secondary)
+                .frame(width: 56, alignment: .trailing)
+                .monospacedDigit()
         }.frame(height: 20)
     }
 }
@@ -852,20 +857,21 @@ private struct ForecastBlock: View {
                 .font(.system(size: 14, weight: .semibold))
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
+                // month-end estimate rides on the Tomorrow row's cost column
+                // so both rows share one aligned grid — no floating column
                 ForecastLine(icon: "sun.max", label: "Tomorrow", tokens: f.tomorrow,
-                             cost: f.next7days == nil ? f.monthEndCost : nil)
+                             cost: f.monthEndCost)
                 if let wk = f.next7days {
                     ForecastLine(icon: "calendar", label: "Next week",
                                  tokens: wk, cost: f.next7daysCost)
                 }
-                Text("Confidence: \(f.confidence ?? "?")\(f.n.map { " (\($0)-day trend)" } ?? "")")
-                    .font(TF.microFont).foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                if let mc = f.monthEndCost {
-                    Text(money(mc)).font(TF.figure(13, .bold))
-                    Text("mo-end est.").font(TF.microFont).foregroundStyle(.secondary)
+                HStack {
+                    Text("Confidence: \(f.confidence ?? "?")\(f.n.map { " (\($0)-day trend)" } ?? "")")
+                        .font(TF.microFont).foregroundStyle(.secondary)
+                    Spacer()
+                    if let mc = f.monthEndCost {
+                        Text("mo-end est.").font(TF.microFont).foregroundStyle(.secondary)
+                    }
                 }
             }
         }
