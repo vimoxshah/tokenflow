@@ -192,8 +192,20 @@ export default createProvider({
         // gateway). Classify with the same rules the engine will use so the
         // two never disagree.
         const billing = str(r.billing_provider)?.toLowerCase() || null;
-        const vendor = classifyModel(model && model !== 'default' ? model : null, { rules: ctx.rules }).provider;
+        // 'default' means Hermes did not record which model served the call —
+        // but billing_provider still knows who billed it. Attribute to the
+        // billing layer (e.g. nous) instead of dropping it into "unknown";
+        // a real vendor slug would be better, but the gateway is honest data.
+        const modelForClassify =
+          model && model !== 'default' ? model
+            : (billing ? `@${billing}` : null);
+        const cls = classifyModel(modelForClassify, { rules: ctx.rules });
+        const vendor = cls.provider;
         const gateway = billing && billing !== vendor ? billing : null;
+        // Pass the classified vendor explicitly: the engine re-classifies from
+        // the model string, but only when `provider` is absent. Sending it
+        // through guarantees the adapter's rules and the engine's agree even
+        // if rule sets drift between releases.
 
         const project = projectOf(r.git_repo_root || r.cwd);
         const startedAt = secToMs(r.started_at);
@@ -201,6 +213,8 @@ export default createProvider({
 
         emit({
           id: hashId('hermes', key, '#', emissionIndex),
+          provider: vendor,
+          provider_label: cls.provider_label,
           // Base emissions sit at the group's first API call; a delta lands at
           // the last_seen that revealed it, which is when that usage happened.
           timestamp: new Date((prev ? lastSeen : firstSeen) ?? lastSeen ?? firstSeen).toISOString(),

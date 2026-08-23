@@ -57,6 +57,14 @@ export const BUILTIN_MODEL_RULES = [
   // "unknown" hides real usage from the provider breakdown. Attribute to the
   // nous gateway family so the UI shows where the traffic actually ran.
   { match: '(^|/)stealth/', provider: 'nous', label: 'Nous (stealth)' },
+  // Billing-layer fallbacks from adapters: "@<gateway>" means the model slug
+  // was never recorded but the billing layer knows who served the call.
+  { match: '^@nous$', provider: 'nous', label: 'Nous' },
+  { match: '^@openrouter$', provider: 'openrouter', label: 'OpenRouter' },
+  // OpenRouter free-tier catalogues expose additional house/stealth slugs
+  // ("stepfun/step-*:free" and friends) that no vendor rule catches; route
+  // them to the namespace owner instead of "unknown".
+  { match: '(^|/)stepfun/', provider: 'stepfun', label: 'StepFun' },
 ];
 
 const compiled = new WeakMap();
