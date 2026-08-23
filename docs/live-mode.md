@@ -181,6 +181,14 @@ urgent signal wins:
 Any bar speaking the same text protocol (Argos, Waybar custom modules) works
 via `--out`.
 
+The SwiftBar dropdown carries the same breakdowns as the native popover:
+today/week/month totals, **by source** (claude-code, hermes, opencode… —
+provider rows name each model's vendor, so this is where Hermes appears under
+its own name), **top models**, limits, forecast and alerts. Appearance is the
+one thing a text-protocol plugin cannot control: SwiftBar renders plain text,
+so its light/dark look follows SwiftBar's own settings — use the native app's
+◐ button for an in-app toggle.
+
 ## Data flow guarantees
 
 - `data/status.json` is written atomically (tmp + rename). A reader never sees

@@ -56,6 +56,22 @@ export function renderXbar(status, opt = {}) {
   lines.push(`Month: ${compactTokens(m.tokens?.total ?? 0)}${costSuffix(m)}`);
   if (u.sessions != null) lines.push(`Sessions today: ${u.sessions}`);
 
+  // ---- by source / by model -------------------------------------------------
+  // Source = the tool that wrote the log (claude-code, opencode, hermes…).
+  // Provider rows name each model's vendor, so Hermes traffic appears under
+  // its vendors there; "by source" is where Hermes shows as itself.
+  const sources = status.sourcesToday || [];
+  const models = status.modelsToday || [];
+  if (sources.length || models.length) {
+    lines.push('---');
+    for (const p of sources.slice(0, 6)) {
+      lines.push(`source ${p.key}: ${compactTokens(p.tokens ?? 0)}${costSuffix(p)} · ${p.requests ?? 0} req | font-size=12`);
+    }
+    for (const mrow of models.slice(0, 5)) {
+      lines.push(`model ${mrow.key}: ${compactTokens(mrow.tokens ?? 0)}${costSuffix(mrow)} | font-size=12`);
+    }
+  }
+
   // ---- limits -------------------------------------------------------------
   const states = status.capacity?.states || [];
   if (states.length) {
