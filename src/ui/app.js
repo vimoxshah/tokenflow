@@ -7,6 +7,8 @@
  * produce a number that disagrees with `tokenflow status`.
  */
 import { computeView, resolveRange, QUICK_RANGES, EMPTY_FILTERS, addDays, daysBetween, previousPeriod } from '../analytics/index.js';
+import { indexCube, filterCube } from '../analytics/aggregate.js';
+import { calculateDimensionSeries } from '../analytics/dimensions.js';
 import { compact, int, usd, pct, signedPct, shortDate, longDate, hourLabel, hourWindow, relativeTime, humanDuration, countdown, DOW } from '../core/units.js';
 import { INTERFACE_ORDER } from '../core/schema.js';
 import {
@@ -25,6 +27,8 @@ const S = {
   granularity: 'day',
   /** @type {'line'|'stacked'} */
   seriesMode: 'stacked',
+  /** @type {'tokens'|'requests'|'cost'} metric shown by the provider daily chart */
+  providerMetric: 'tokens',
   rangeId: 'all',
   filters: { ...EMPTY_FILTERS },
   hidden: new Set(),
@@ -672,6 +676,7 @@ function viewOverview() {
 
   root.appendChild(mainSeriesCard(gran));
   root.appendChild(compositionCard());
+  root.appendChild(providerDailyCard());
 
   const two = el('div', { class: 'grid', style: 'grid-template-columns:repeat(auto-fit,minmax(420px,1fr))' });
   two.appendChild(shareCard('provider', 'Provider distribution', v.dimensions.providers, S.colors.provider, 'provider'));
@@ -1051,6 +1056,52 @@ function viewDimension(kind, title) {
 
   root.appendChild(growthCard(`${title.split(' ')[0]} growth`, growth));
   return root;
+}
+
+/**
+ * CodexBar-style multi-provider day-wise chart. One stacked bar per day, one
+ * segment per provider, switchable between Tokens / Requests / Cost. The
+ * series is recomputed for the chosen metric — the same cube rows, measured
+ * differently — so switching can never show a number the data does not back.
+ */
+function providerDailyCard() {
+  const v = S.view;
+  const metric = S.providerMetric;
+
+  // Recompute the stack under the selected metric from the same filtered rows
+  // computeView used; indexCube of the bundle gives us the accessor layout.
+  const ix = indexCube(S.bundle.cube);
+  const rows = filterCube(ix, { ...v.filters, from: v.range.from, to: v.range.to });
+  const bucketOf = (d) => d;
+  const buckets = v.series.map((s) => s.key);
+  const stack = calculateDimensionSeries(rows, ix, 'p', buckets, { topN: 6, bucketOf, metric });
+
+  const scale = S.colors.provider;
+  const keys = stack.keys.map((k) => ({ key: k, label: k, color: k === 'Other' ? OTHER_COLOR : scale.get(k) }));
+  const fmtY = metric === 'cost' ? usd : metric === 'requests' ? int : compact;
+  const unit = metric === 'cost' ? 'estimated cost' : metric;
+
+  const chips = el('div', { class: 'chips' });
+  for (const m of /** @type {['tokens'|'requests'|'cost', string][]} */ ([['tokens', 'Tokens'], ['requests', 'Requests'], ['cost', 'Cost']])) {
+    const c = el('button', { class: 'chip', text: m[1], 'aria-pressed': String(metric === m[0]) });
+    c.addEventListener('click', () => { S.providerMetric = m[0]; render(); });
+    chips.appendChild(c);
+  }
+
+  return chartCard('provider-daily', 'Provider usage — daily', `Stacked ${unit} per provider per day. Top 6 by volume; the rest fold into Other.`, (w) => {
+    const wrap = el('div');
+    wrap.appendChild(chips);
+    wrap.appendChild(timeSeries({
+      data: stack.series, keys, mode: 'stacked', width: w, height: 260,
+      fmtY, fmtX: (k) => (k.length === 10 ? shortDate(k) : k), fmtXLong: (k) => (k.length === 10 ? longDate(k) : k),
+      ariaLabel: `Daily usage by provider in ${unit}`,
+    }));
+    wrap.appendChild(legend(keys));
+    return wrap;
+  }, {
+    columns: [{ key: 'key', label: 'Date', text: true }, ...stack.keys.map((k) => ({ key: k, label: k, value: (r) => fmtY(r[k]) }))],
+    rows: [...stack.series].reverse(),
+  });
 }
 
 function stackCard(id, title, stack, scale) {
@@ -1832,6 +1883,26 @@ function viewHealth() {
   cards.appendChild(kpi('Malformed lines skipped', int(h.malformedLines)));
   cards.appendChild(kpi('Last refresh', relativeTime(m.lastRefresh), m.lastRefreshDurationMs ? `took ${humanDuration(m.lastRefreshDurationMs)}` : ''));
   root.appendChild(cards);
+
+  // ---- request geography: honest unavailability ------------------------------
+  // No supported source exposes the network region a request was served to:
+  // local session logs record tokens, models and timestamps, not IP egress.
+  // Rather than infer geography from model names (wrong) or show zeros, this
+  // panel states plainly what is and is not knowable from local logs.
+  // ---- request geography: honest unavailability ------------------------------
+  // No supported source exposes the network region a request was served to:
+  // local session logs record tokens, models and timestamps, not IP egress.
+  // Rather than infer geography from model names (wrong) or show zeros, this
+  // panel states plainly what is and is not knowable from local logs.
+  const geoBody = el('div');
+  geoBody.appendChild(el('p', { class: 'muted', text: 'Region data: not provided by provider for all connected sources.' }));
+  const geoDetail = el('p', { class: 'muted' });
+  const geoStrong = document.createElement('strong');
+  geoStrong.textContent = 'What is known instead: ';
+  geoDetail.appendChild(geoStrong);
+  geoDetail.appendChild(document.createTextNode('requests by provider, model, interface and client — all measured from your own logs on the Providers and Interfaces pages.'));
+  geoBody.appendChild(geoDetail);
+  root.appendChild(card('Request geography', 'Where requests are served is a property of vendor infrastructure, and none of the local sources report it. TokenFlow will surface per-region breakdowns the day a connected source exposes region data; until then every request is recorded with region not available, never guessed.', geoBody));
 
   root.appendChild(card('Field availability', 'Per-field share of records where the source reported nothing. These gaps are excluded from totals, never counted as zero.', table([
     { key: 'field', label: 'Field', text: true },

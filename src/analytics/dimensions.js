@@ -90,9 +90,15 @@ export const calculateProjectUsage = (rows, ix, opt) => calculateDimensionUsage(
 export function calculateDimensionSeries(rows, ix, dim, buckets, opt = {}) {
   const topN = opt.topN ?? 6;
   const keyFn = opt.bucketOf || ((d) => d);
+  const metric = opt.metric || 'tokens'; // tokens | requests | cost
   const top = rank(rows, ix, (r) => r[ix.d[dim]], { limit: topN }).map((g) => g.key);
   const topSet = new Set(top);
   const byBucket = new Map();
+  const measureOf = (r) => {
+    if (metric === 'requests') return r[ix.m.req];
+    if (metric === 'cost') return r[ix.m.costReq] > 0 ? (r[ix.m.cost] || 0) : 0;
+    return r[ix.m.in] + r[ix.m.out] + r[ix.m.cr] + r[ix.m.cw];
+  };
   for (const r of rows) {
     const b = keyFn(r[ix.d.d]);
     let row = byBucket.get(b);
@@ -103,9 +109,10 @@ export function calculateDimensionSeries(rows, ix, dim, buckets, opt = {}) {
       byBucket.set(b, row);
     }
     const k = r[ix.d[dim]];
-    const t = r[ix.m.in] + r[ix.m.out] + r[ix.m.cr] + r[ix.m.cw];
-    if (topSet.has(k)) row[k] += t;
-    else row.Other += t;
+    // Cost is only counted where it was actually computed from a rate; a
+    // request with no price contributes to the unpriced remainder, not zero.
+    if (topSet.has(k)) row[k] += measureOf(r);
+    else row.Other += measureOf(r);
   }
   const hasOther = [...byBucket.values()].some((r) => r.Other > 0);
   const keys = hasOther ? [...top, 'Other'] : top;

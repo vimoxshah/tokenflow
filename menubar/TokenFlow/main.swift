@@ -282,10 +282,12 @@ struct AppActions {
     let model = StatusModel()
     private var outsideMonitor: Any?
     private var insideMonitor: Any?
+    private var keyMonitor: Any?
 
     func applicationWillTerminate(_ note: Notification) {
         if let m = outsideMonitor { NSEvent.removeMonitor(m) }
         if let m = insideMonitor { NSEvent.removeMonitor(m) }
+        if let m = keyMonitor { NSEvent.removeMonitor(m) }
     }
 
     lazy var actions: AppActions = AppActions(
@@ -330,6 +332,15 @@ struct AppActions {
             self.popover.performClose(nil)
             return ev
         }
+        // Escape closes the popover: local keyDown monitor, same lifecycle as
+        // the click monitors. performClose drives the standard dismissal path.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
+            [weak self] ev in
+            guard let self, self.popover.isShown,
+                  ev.keyCode == 53 /* Escape */ else { return ev }
+            self.popover.performClose(nil)
+            return nil // consumed
+        }
         model.load()
         renderTitle()
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -364,8 +375,13 @@ struct AppActions {
             default: break
             }
         }
-        if let cost = today.cost ?? today.costMeasured { return (money(cost), "cost") }
-        return (compactTokens(tokens), "tokens")
+        // Compact command-center form: "$1.42 | 1.82M tok" when priced,
+        // tokens alone when today carries no cost signal.
+        let tokenPart = "\(compactTokens(tokens)) tok"
+        if let cost = today.cost ?? today.costMeasured {
+            return ("\(money(cost)) | \(tokenPart)", "cost")
+        }
+        return (tokenPart, "tokens")
     }
 
     private func renderTitle() {
