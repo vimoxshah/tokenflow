@@ -79,6 +79,25 @@ struct TFStatus: Decodable {
         var title: String?; var detail: String?; var date: String?
     }
     struct Windows: Decodable { var last5h: UsageSlice?; var last24h: UsageSlice? }
+    struct WindowStat: Decodable {
+        var tokens: Tokens?; var requests: Double?
+        var cost: Double?; var costMeasured: Double?
+    }
+    struct ProviderWindow: Decodable {
+        var key: String
+        var h5: WindowStat?; var d1: WindowStat?; var d7: WindowStat?
+    }
+    struct SessionBlock: Decodable {
+        var key: String; var label: String?
+        var startMs: Double?; var resetsInMs: Double?
+        var windowTokens: Double?; var windowRequests: Int?; var windowCost: Double?
+        var blocksToday: Int?
+    }
+    struct VelocityInfo: Decodable {
+        var todayTokensPerHour: Double?
+        var avgTokensPerHour: Double?
+        var ratio: Double?
+    }
 
     var generatedAt: String?
     var demo: Bool?
@@ -92,6 +111,9 @@ struct TFStatus: Decodable {
     var lastError: LastError?
     var health: Health?
     var windows: Windows?
+    var providerWindows: [ProviderWindow]?
+    var sessionBlocks: [SessionBlock]?
+    var velocity: VelocityInfo?
     var recentDays: [RecentDay]?
     var milestones: [Milestone]?
 
@@ -207,7 +229,12 @@ private func relativeAge(_ msAgo: Double?) -> String {
 enum TF {
     static let width: CGFloat = 356
     static let pad: CGFloat = 14
-    static let accent = Color.indigo
+    // Matches the web dashboard's Aurora accent (#8f9dff dark / #3d4dd6 light)
+    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x8f / 255.0, green: 0x9d / 255.0, blue: 0xff / 255.0, alpha: 1)
+            : NSColor(srgbRed: 0x3d / 255.0, green: 0x4d / 255.0, blue: 0xd6 / 255.0, alpha: 1)
+    })
     static let good = Color.green
     static let warn = Color.orange
     static let bad = Color.red
@@ -253,6 +280,13 @@ struct AppActions {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     let model = StatusModel()
+    private var outsideMonitor: Any?
+    private var insideMonitor: Any?
+
+    func applicationWillTerminate(_ note: Notification) {
+        if let m = outsideMonitor { NSEvent.removeMonitor(m) }
+        if let m = insideMonitor { NSEvent.removeMonitor(m) }
+    }
 
     lazy var actions: AppActions = AppActions(
         refresh: { [weak self] in self?.runCLI(["watch", "--once"]) },
@@ -276,6 +310,26 @@ struct AppActions {
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         popover.behavior = .transient
+        // Belt-and-braces auto-dismiss: .transient handles most cases, but
+        // explicit monitors guarantee a click anywhere outside the popover
+        // closes it — including clicks inside this accessory app's own windows.
+        outsideMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            DispatchQueue.main.async {
+                if let self, self.popover.isShown { self.popover.performClose(nil) }
+            }
+        }
+        insideMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown]) { [weak self] ev in
+            guard let self, self.popover.isShown,
+                  let hitWindow = ev.window,
+                  let contentWindow = self.popover.contentViewController?.view.window,
+                  hitWindow !== contentWindow,
+                  !String(describing: type(of: hitWindow)).contains("StatusBar")
+            else { return ev }
+            self.popover.performClose(nil)
+            return ev
+        }
         model.load()
         renderTitle()
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -540,11 +594,71 @@ private struct Sparkline: View {
     }
 }
 
+/// Day-wise bars with hover/tap tooltips: tokens + estimated cost per day.
+private struct HoverBarChart: View {
+    let days: [TFStatus.RecentDay]
+    @State private var hovered: Int? = nil
+    @Environment(\.colorScheme) private var cs
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topLeading) {
+                Color.clear.frame(height: 16)
+                if let i = hovered, days.indices.contains(i) {
+                    let d = days[i]
+                    Text("\(d.key.dropFirst(5)) · \(compactTokens(d.total)) tok\((d.cost ?? 0) > 0 ? " · \(money(d.cost))" : "")")
+                        .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .labelColor)))
+                        .foregroundColor(Color(nsColor: .textBackgroundColor))
+                        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: horizontalAnchor(for: i), vertical: .top))
+                }
+            }
+            HStack(alignment: .bottom, spacing: 3) {
+                ForEach(Array(days.enumerated()), id: \.offset) { i, d in
+                    let maxTotal = max(days.compactMap(\.total).max() ?? 0, 1)
+                    let isToday = i == days.count - 1
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(isToday ? TF.accent
+                              : hovered == i ? TF.accent.opacity(0.75)
+                              : TF.accent.opacity(0.30))
+                        .frame(height: barHeight(total: d.total ?? 0, maxTotal: maxTotal))
+                        .onHover { inside in if inside { withAnimation(.easeOut(duration: 0.12)) { hovered = i } } }
+                        .onTapGesture { hovered = i }
+                }
+            }
+            .frame(height: 46)
+        }
+        .contentShape(Rectangle())
+        .onHover { inside in if !inside { withAnimation(.easeOut(duration: 0.15)) { if hovered != nil { hovered = nil } } } }
+    }
+
+    private func barHeight(total: Double, maxTotal: Double) -> CGFloat {
+        if total <= 0 { return 2.5 }
+        return max(6, CGFloat(total / maxTotal) * 42)
+    }
+    private func horizontalAnchor(for i: Int) -> HorizontalAlignment {
+        let n = days.count
+        if n < 2 { return .center }
+        let frac = Double(i) / Double(n - 1)
+        if frac < 0.18 { return .leading }
+        if frac > 0.82 { return .trailing }
+        return .center
+    }
+}
+
 private struct HeroCard: View {
     let today: TFStatus.UsageSlice
     let days: [TFStatus.RecentDay]
 
+    var velocity: TFStatus.VelocityInfo?
+
     private var cost: Double? { today.cost ?? today.costMeasured }
+    private var paceText: String? {
+        guard let r = velocity?.ratio, r.isFinite, r > 0 else { return nil }
+        return String(format: "⚡ %.1f× your average pace", r)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -565,9 +679,17 @@ private struct HeroCard: View {
                 Text(compactTokens(today.tokens?.total ?? 0)).font(TF.hero()).foregroundStyle(.primary)
                 Text("tokens").font(TF.captionFont).foregroundStyle(.secondary)
             }
-            Text("\(Int(today.requests ?? 0)) requests · \(today.sessions ?? 0) sessions")
-                .font(TF.captionFont).foregroundStyle(.secondary)
-            Sparkline(days: days)
+            HStack(spacing: 8) {
+                Text("\(Int(today.requests ?? 0)) requests · \(today.sessions ?? 0) sessions")
+                    .font(TF.captionFont).foregroundStyle(.secondary)
+                if let pace = paceText {
+                    Text(pace).font(.system(size: 10.5, weight: .semibold))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Capsule().fill(TF.accent.opacity(0.14)))
+                        .foregroundColor(TF.accent)
+                }
+            }
+            HoverBarChart(days: days)
         }
     }
 }
@@ -686,6 +808,22 @@ private struct NoteText: View {
     }
 }
 
+
+private struct ForecastLine: View {
+    let icon: String; let label: String; let tokens: Double?; let cost: Double?
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).foregroundStyle(TF.accent).frame(width: 16)
+            Text(label).font(TF.labelFont).foregroundStyle(.primary)
+            Spacer(minLength: 8)
+            Text("≈ \(compactTokens(tokens ?? 0))").font(TF.figure(12)).foregroundStyle(.primary)
+            if let c = cost {
+                Text(money(c)).font(TF.figure(11)).foregroundStyle(.secondary)
+                    .frame(width: 52, alignment: .trailing)
+            }
+        }.frame(height: 20)
+    }
+}
 private struct ForecastBlock: View {
     let f: TFStatus.Forecast
     var body: some View {
@@ -695,9 +833,12 @@ private struct ForecastBlock: View {
                 .font(.system(size: 14, weight: .semibold))
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Tomorrow ≈ \(compactTokens(f.tomorrow ?? 0))"
-                     + (f.next7days != nil ? " · 7d ≈ \(compactTokens(f.next7days!))" : ""))
-                    .font(TF.labelFont).foregroundStyle(.primary)
+                ForecastLine(icon: "sun.max", label: "Tomorrow", tokens: f.tomorrow,
+                             cost: f.next7days == nil ? f.monthEndCost : nil)
+                if let wk = f.next7days {
+                    ForecastLine(icon: "calendar", label: "Next week",
+                                 tokens: wk, cost: f.next7daysCost)
+                }
                 Text("Confidence: \(f.confidence ?? "?")\(f.n.map { " (\($0)-day trend)" } ?? "")")
                     .font(TF.microFont).foregroundStyle(.secondary)
             }
@@ -808,6 +949,67 @@ private struct FooterRow: View {
     }
 }
 
+
+private struct ProviderWindowRow: View {
+    let index: Int
+    let w: TFStatus.ProviderWindow
+    @Environment(\.colorScheme) private var cs
+
+    private func cell(_ slice: TFStatus.WindowStat?) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(compactTokens(slice?.tokens?.total ?? 0))
+                .font(TF.figure(11)).foregroundStyle(.primary)
+            Text((slice?.cost ?? slice?.costMeasured).map(money) ?? "—")
+                .font(TF.microFont).foregroundStyle(.secondary)
+        }.frame(width: 64, alignment: .trailing)
+    }
+
+    var body: some View {
+        let color = TF.palette[index % TF.palette.count]
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(w.key).font(TF.labelFont).lineLimit(1)
+            Spacer(minLength: 6)
+            cell(w.h5); cell(w.d1); cell(w.d7)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(TF.cardBG(cs)))
+    }
+}
+
+private struct SessionBlockRow: View {
+    let b: TFStatus.SessionBlock
+
+    var body: some View {
+        let expired = (b.resetsInMs ?? 0) <= 0
+        let tint = b.key == "anthropic" ? Color.orange : Color.teal
+        return HStack(spacing: 10) {
+            Image(systemName: b.key == "anthropic" ? "c.circle.fill" : "z.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(b.label ?? b.key).font(.system(size: 12.5, weight: .medium))
+                Text(expired
+                     ? "awaiting first request of a new block"
+                     : "\(Int(b.windowRequests ?? 0)) requests this block")
+                    .font(TF.microFont).foregroundStyle(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(compactTokens(b.windowTokens ?? 0))
+                    .font(TF.figure(12.5)).foregroundStyle(.primary)
+                Text(expired ? "block elapsed" : "resets in \(countdown(b.resetsInMs))")
+                    .font(TF.microFont).monospacedDigit()
+                    .foregroundStyle(expired ? AnyShapeStyle(Color.secondary)
+                                             : AnyShapeStyle(Color.orange))
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(tint.opacity(0.07)))
+    }
+}
+
 // ------------------------------------------------------------------- root ----
 
 struct MenuContentView: View {
@@ -826,6 +1028,13 @@ struct MenuContentView: View {
     }
 
     var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            contentBody
+        }
+        .frame(maxHeight: 640)
+    }
+
+    private var contentBody: some View {
         VStack(alignment: .leading, spacing: 11) {
             BrandRow(
                 demo: s?.demo == true,
@@ -839,7 +1048,7 @@ struct MenuContentView: View {
             }
 
             if hasData, let today = s?.usage?["today"] {
-                HeroCard(today: today, days: s?.recentDays ?? [])
+                HeroCard(today: today, days: s?.recentDays ?? [], velocity: s?.velocity)
 
                 SectionHeader("Windows & totals")
                 HStack(spacing: 8) {
@@ -849,7 +1058,26 @@ struct MenuContentView: View {
                 HStack(spacing: 8) {
                     StatCard(label: "Last 5h", slice: s?.windows?.last5h)
                     StatCard(label: "Last 24h", slice: s?.windows?.last24h)
-                }.font(TF.microFont)
+                }
+
+                if let pw = s?.providerWindows, !pw.isEmpty {
+                    SectionHeader("Live provider windows")
+                    VStack(spacing: 6) {
+                        ForEach(Array(pw.enumerated()), id: \.offset) { i, w in
+                            ProviderWindowRow(index: i, w: w)
+                        }
+                    }
+                    NoteText("measured rolling usage per tool · hour granularity")
+                }
+
+                if let blocks = s?.sessionBlocks, !blocks.isEmpty {
+                    SectionHeader("Sessions · 5h model")
+                    VStack(spacing: 7) {
+                        ForEach(blocks, id: \.key) { b in
+                            SessionBlockRow(b: b)
+                        }
+                    }
+                }
 
                 if let provs = s?.providersToday, !provs.isEmpty {
                     SectionHeader("Today by provider")

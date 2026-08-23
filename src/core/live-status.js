@@ -97,6 +97,96 @@ export function buildLiveStatus(opt = {}) {
     last24h: sumSince(24),
   };
 
+  // ---- per-provider rolling windows ------------------------------------------
+  // Same hour-granular slices as the totals above, scoped to one provider.
+  const sumSinceFor = (hoursBack, provider) => {
+    const cutoff = new Date(nowMs + tzOffsetMinutes * 60000 - hoursBack * 3600000);
+    const cutoffKey = `${cutoff.toISOString().slice(0, 10)}T${String(cutoff.getUTCHours()).padStart(2, '0')}`;
+    const rows = ix.rows.filter((r) =>
+      r[ix.d.p] === provider &&
+      `${r[ix.d.d]}T${String(r[ix.d.h]).padStart(2, '0')}` >= cutoffKey);
+    return usageSlice(finalize(sumRows(rows, ix)));
+  };
+
+  const providerWindows = providersToday.slice(0, 4).map((p) => ({
+    key: p.key,
+    h5: sumSinceFor(5, p.key),
+    d1: sumSinceFor(24, p.key),
+    d7: sumSinceFor(168, p.key),
+  }));
+
+  // ---- Claude/Codex-style 5h session blocks -----------------------------------
+  // Measured locally from activity clusters: a new block starts after >=5h of
+  // silence, each block spans exactly 5h from its first active hour. This is
+  // a model of how session windows behave — stated here, not hidden.
+  const sessionBlockFor = (provider, label) => {
+    const cutoff48Key = new Date(nowMs + tzOffsetMinutes * 60000 - 48 * 3600000)
+      .toISOString().slice(0, 13) + ':00';
+    const GAP = 5 * 3600000;
+    const keyToMs = (k) => Date.parse(`${k}:00:00Z`) - tzOffsetMinutes * 60000;
+    const msToKey = (ms) => {
+      const local = new Date(ms + tzOffsetMinutes * 60000);
+      return `${local.toISOString().slice(0, 10)}T${String(local.getUTCHours()).padStart(2, '0')}`;
+    };
+    const active = [];
+    for (const r of ix.rows) {
+      if (r[ix.d.p] !== provider) continue;
+      const t = r[ix.m.in] + r[ix.m.out] + r[ix.m.cr] + r[ix.m.cw];
+      if (!(t > 0)) continue;
+      const k = `${r[ix.d.d]}T${String(r[ix.d.h]).padStart(2, '0')}`;
+      if (k >= cutoff48Key.slice(0, 16)) active.push(k);
+    }
+    active.sort();
+    let startMs = null; let endActiveMs = null;
+    for (const k of active) {
+      const ms = keyToMs(k);
+      if (startMs === null || ms - endActiveMs >= GAP) startMs = ms;
+      endActiveMs = ms;
+    }
+    if (startMs === null) return null;
+    const resetsInMs = Math.max(0, startMs + GAP - nowMs);
+    const rows = ix.rows.filter((r) => {
+      const k = `${r[ix.d.d]}T${String(r[ix.d.h]).padStart(2, '0')}`;
+      return r[ix.d.p] === provider && k >= msToKey(startMs);
+    });
+    const m = finalize(sumRows(rows, ix));
+    return {
+      key: provider,
+      label,
+      startMs,
+      resetsInMs,
+      windowTokens: m.total,
+      windowRequests: m.req,
+      windowCost: m.costReq > 0 ? m.cost : null,
+      blocksToday: blocksTodayCount(active, keyToMs, GAP),
+    };
+  };
+  function blocksTodayCount(activeKeys, keyToMs, gap) {
+    let count = 0; let prevEnd = null;
+    for (const k of activeKeys) {
+      const ms = keyToMs(k);
+      if (prevEnd === null || ms - prevEnd >= gap) count++;
+      prevEnd = ms;
+    }
+    return count;
+  }
+  const sessionBlocks = [
+    sessionBlockFor('anthropic', 'Claude'),
+    sessionBlockFor('openai', 'Codex'),
+  ].filter(Boolean);
+
+  // ---- velocity: today's pace vs your trailing-14-day average -----------------
+  const trailing14 = v.daily.slice(-15, -1);
+  const avgDaily14 = trailing14.length
+    ? trailing14.reduce((a, d) => a + (d.total || 0), 0) / trailing14.length
+    : null;
+  const hoursElapsedToday = Math.max(((nowMs / 60000 + tzOffsetMinutes) % 1440) / 60, 0.25);
+  const velocity = {
+    todayTokensPerHour: todayM.total / hoursElapsedToday,
+    avgTokensPerHour: avgDaily14 !== null ? avgDaily14 / 24 : null,
+    ratio: avgDaily14 > 0 ? (todayM.total / hoursElapsedToday) / (avgDaily14 / 24) : null,
+  };
+
   // ---- recent days for sparklines + milestones -------------------------------
   const recentDays = v.daily.slice(-14).map((d) => ({
     key: d.key,
@@ -138,6 +228,9 @@ export function buildLiveStatus(opt = {}) {
     providersToday,
     modelsToday,
     windows,
+    providerWindows,
+    velocity,
+    sessionBlocks,
     recentDays,
     milestones,
     capacity: {
