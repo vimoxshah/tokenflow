@@ -8,16 +8,22 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1017'/%3E%3Cpath d='M6 22 L12 14 L17 18 L26 8' stroke='%238f9dff' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="motion.css">
+<link rel="stylesheet" href="extras.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
+<canvas id="bg-3d" aria-hidden="true"></canvas>
+
 <nav><div class="wrap">
   <a class="brand" href="#">
     <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#171c27"/><path d="M6 22 L12 14 L17 18 L26 8" stroke="#8f9dff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
     TokenFlow
   </a>
   <div class="navlinks">
-    <a href="#why">Why</a><a href="#how">How it works</a><a href="#sources">Sources</a>
-    <a href="https://github.com/vimoxshah/tokenflow">GitHub</a>
+    <a href="#features">Features</a><a href="#usp">Why</a><a href="#how">How it works</a>
+    <a href="#sources">Sources</a><a href="https://github.com/vimoxshah/tokenflow">GitHub</a>
   </div>
 </div></nav>
 
@@ -25,7 +31,7 @@
 <header>
   <div class="hero-grid">
     <div>
-      <span class="eyebrow"><span class="dot"></span>v1.0 · local-first · MIT</span>
+      <span class="eyebrow"><span class="dot"></span>v1.0 · local-first · MIT · zero dependencies</span>
       <h1>Know where every AI token goes.</h1>
       <p class="sub">TokenFlow reads the logs your tools already write and turns them into honest
       analytics across Claude Code, Codex, OpenCode, Cursor and more. Zero dependencies.
@@ -35,39 +41,60 @@
           <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Z"/></svg>
           Download for macOS
         </a>
-        <a class="btn btn-ghost" href="#how">See how it works</a>
+        <a class="btn btn-ghost" href="#features">Explore features</a>
       </div>
       <p class="proof-line">145 tests on every push · macOS, Linux, Windows · no API keys, no telemetry</p>
     </div>
-    <div id="hero-visual"><!-- SVG injected by script below --></div>
+    <div id="hero-visual"><!-- animated SVG dashboard injected by hero.js --></div>
   </div>
 </header>
 </div>
 <script src="hero.js"></script>
-</div>
 
-<section id="why"><div class="wrap">
+<section id="features"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Features</p>
+    <h2>Everything a token dashboard should do. And the parts most skip.</h2>
+  </div>
+  <div class="grid grid-4" id="feature-grid">
+    <div class="card reveal"><p class="metric">12+</p>
+      <h3>Analytics views</h3><p>Daily series, composition, provider and model intelligence, interfaces, hour and weekday patterns, calendar heatmap, peaks, efficiency ratios and more.</p></div>
+    <div class="card reveal"><p class="metric">$ est + $ real</p>
+      <h3>Honest cost</h3><p>Estimated cost from a versioned price table with sources printed, cross-checked against measured gateway costs where they exist.</p></div>
+    <div class="card reveal"><p class="metric">5h</p>
+      <h3>Session blocks</h3><p>Claude and Codex style five hour session windows modelled from your activity, with reset countdowns right in the menu bar.</p></div>
+    <div class="card reveal"><p class="metric">ETA</p>
+      <h3>Limits and forecasts</h3><p>Declare caps in config and get capacity meters, burn rates, exhaustion ETAs, linear forecasts with stated confidence, and anomaly alerts with arithmetic shown.</p></div>
+    <div class="card reveal"><p class="metric">r = ?</p>
+      <h3>Work correlations</h3><p>Pearson correlation between token spend and git activity, labelled as correlation with n stated, never dressed up as productivity.</p></div>
+    <div class="card reveal"><p class="metric">1 file</p>
+      <h3>Offline export</h3><p>The whole dashboard inlines into one HTML file: CSS, chart code and data. Opens from disk forever, no server needed.</p></div>
+    <div class="card reveal"><p class="metric">Δ compare</p>
+      <h3>Period compare</h3><p>Diff any two time windows metric by metric, plus first-seen models, streaks and milestone tracking.</p></div>
+    <div class="card reveal"><p class="metric">3 skins</p>
+      <h3>Aurora · Terminal · Editorial</h3><p>Each in dark and light, colour-blind validated per mode so switching themes never changes what a colour means.</p></div>
+  </div>
+</div></section>
+
+<section id="usp"><div class="wrap">
   <div class="section-head reveal">
     <p class="kicker">Why TokenFlow</p>
-    <h2>The questions billing pages cannot answer.</h2>
-    <p class="subhead">Vendor consoles show one vendor, one account, at their granularity.
-    TokenFlow answers across every tool on your machine, at request granularity, with the raw
-    records still on disk so you can check the arithmetic.</p>
+    <h2>Built for correctness first. That is the whole point.</h2>
+    <p class="subhead">Most token dashboards sum whatever they find. On real data that inflates
+    usage by orders of magnitude. TokenFlow was built backwards from the mistakes, and every fix
+    is enforced by tests.</p>
   </div>
   <div class="grid grid-4">
-    <div class="card reveal"><p class="metric">4 buckets</p>
-      <h3>Tokens that add up</h3><p>Fresh input, cache read, cache write and output are mutually
-      exclusive and always sum to the total. Cache is never counted twice.</p></div>
-    <div class="card reveal"><p class="metric">45×</p>
-      <h3>Streaming done right</h3><p>Re-reported usage in streaming logs is collapsed to
-      run-maxima, never summed. The naive reading of real data was off by forty five times.</p></div>
-    <div class="card reveal"><p class="metric">$ honest</p>
-      <h3>Prices with receipts</h3><p>Every rate names the vendor page it came from. Unknown models
-      stay blank with an explanation, never a confident zero.</p></div>
-    <div class="card reveal"><p class="metric">0 bytes</p>
-      <h3>Local by construction</h3><p>There is no network client in this codebase. The server
-      binds to loopback. Verify it yourself with one grep.</p></div>
+    <div class="card usp reveal"><p class="metric">45×</p>
+      <h3>Streaming done right</h3><p>Streaming logs re-report growing usage. Summing them read one real day as 82.8B tokens instead of 1.8B. TokenFlow collapses each monotonic run to its maximum, verified against an independent gateway billing log.</p></div>
+    <div class="card usp reveal"><p class="metric">4 ≠ ∞</p>
+      <h3>Tokens that add up</h3><p>Fresh input, cache read, cache write and output are mutually exclusive buckets summing to the total. Cache refresh and reasoning are subsets, never added twice. Vendors disagree about input; both conventions are handled.</p></div>
+    <div class="card usp reveal"><p class="metric">null ≠ 0</p>
+      <h3>Missing is not zero</h3><p>A source that does not report a field stores null, not zero. Sums skip nulls and carry a not-available counter, so averages are never dragged down by data that does not exist.</p></div>
+    <div class="card usp reveal"><p class="metric">0 deps</p>
+      <h3>Auditable by design</h3><p>No runtime dependencies, no network client anywhere in the codebase, server bound to loopback only. One grep proves it. Your raw logs never leave the machine.</p></div>
   </div>
+  <div class="chart-strip card reveal" id="chart-strip"><!-- comparison SVG injected --></div>
 </div></section>
 
 <section id="tagline" class="tagline-sec"><div class="wrap">
@@ -161,6 +188,6 @@
         <a href="https://github.com/vimoxshah/tokenflow/blob/main/docs/getting-started.md">Docs</a></span>
 </div></footer>
 
+<script src="charts.js"></script>
+<script src="three-bg.js"></script>
 <script src="main.js"></script>
-</body>
-</html>

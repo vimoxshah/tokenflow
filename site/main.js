@@ -1,34 +1,57 @@
-/* download button -> newest release DMG; scroll reveals; tagline word activation */
+/* GSAP: hero entrance, scroll reveals, tagline word activation, chart draw-on-scroll */
 (function () {
-  // resolve the Download CTA to the latest release's .dmg asset
-  const btn = document.getElementById('download-btn');
-  fetch('https://api.github.com/repos/vimoxshah/tokenflow/releases/latest')
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(rel => {
-      const dmg = (rel.assets || []).find(a => a.name.endsWith('.dmg'));
-      if (dmg && btn) btn.href = dmg.browser_download_url;
-    })
-    .catch(() => {}); // keep the releases-page fallback
+  if (!window.gsap) return;
+  gsap.registerPlugin(window.ScrollTrigger);
 
-  // scroll-triggered reveal for sections and cards
-  const io = new IntersectionObserver((entries) => {
-    for (const e of entries) if (e.isIntersecting) {
-      e.target.classList.add('in');
-      io.unobserve(e.target);
-    }
-  }, { threshold: 0.15 });
-  document.querySelectorAll('.reveal').forEach(n => io.observe(n));
+  // hero entrance choreography
+  gsap.from('nav', { y: -64, opacity: 0, duration: .8, ease: 'power3.out' });
+  gsap.from('.eyebrow', { opacity: 0, y: 16, duration: .6, delay: .1, ease: 'power2.out' });
+  gsap.from('h1', { opacity: 0, y: 28, duration: .9, delay: .2, ease: 'power3.out' });
+  gsap.from('.sub', { opacity: 0, y: 20, duration: .7, delay: .38, ease: 'power2.out' });
+  gsap.from('.cta .btn', { opacity: 0, y: 16, stagger: .08, duration: .6, delay: .5, ease: 'power2.out' });
+  gsap.from('.proof-line', { opacity: 0, duration: .8, delay: .68 });
 
-  // tagline: words activate one at a time as they cross a trigger line
+  const heroSvg = document.querySelectorAll('#hero-visual rect.bar-pop, #hero-visual path.hero-line');
+  if (heroSvg.length) {
+    gsap.set(heroSvg, { clearProps: 'all' }); // hand bars/lines over to GSAP
+    gsap.from('#hero-visual rect.bar-pop',
+      { scaleY: 0, transformOrigin: 'bottom', stagger: .05, duration: .7, delay: .5, ease: 'back.out(1.4)' });
+    gsap.from('#hero-visual path.hero-line',
+      { strokeDasharray: 600, strokeDashoffset: 600, duration: 1.6, delay: .9, ease: 'power2.inOut', stagger: .3 });
+    gsap.to('#hero-visual', { y: -12, duration: 3, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 1.6 });
+  }
+
+  // section reveals
+  document.querySelectorAll('.reveal').forEach(el => {
+    gsap.from(el, { opacity: 0, y: 32, duration: .8, ease: 'power2.out',
+      scrollTrigger: { trigger: el, start: 'top 85%' } });
+  });
+
+  // tagline words activate one at a time on scroll
   const tag = document.querySelector('.tagline');
-  if (tag && 'IntersectionObserver' in window) {
-    const words = tag.textContent.trim().split(/\s+/);
-    tag.innerHTML = words.map(w =>
-      `<span class="w${w === 'honestly.' ? ' accent' : ''}">${w}</span>`).join(' ');
-    const spans = tag.querySelectorAll('.w');
-    const wio = new IntersectionObserver((entries) => {
-      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('on'); }
-    }, { rootMargin: '-35% 0px -35% 0px', threshold: 0 });
-    spans.forEach(s => wio.observe(s));
+  if (tag) {
+    const accentWords = new Set(['honestly.']);
+    tag.innerHTML = tag.textContent.trim().split(/\s+/).map(w =>
+      `<span class="w${accentWords.has(w) ? ' accent' : ''}">${w}</span>`).join(' ');
+    gsap.to(tag.querySelectorAll('.w'), { color: (i, t) =>
+        t.classList.contains('accent') ? '#8f9dff' : '#f2f4f8',
+      stagger: .09, ease: 'none',
+      scrollTrigger: { trigger: '#tagline', start: 'top 70%', end: 'top 25%', scrub: true } });
+  }
+
+  // comparison chart draws as it enters
+  const strip = document.getElementById('chart-strip');
+  if (strip && window.buildComparisonChart) {
+    buildComparisonChart(strip);
+    gsap.from('#chart-strip svg path.drawn', {
+      strokeDashoffset: (i, t) => t.getTotalLength(),
+      strokeDasharray: (i, t) => t.getTotalLength(),
+      duration: 1.8, ease: 'power2.inOut',
+      scrollTrigger: { trigger: strip, start: 'top 80%' }
+    });
+    gsap.from('#chart-strip svg rect.gbar', {
+      scaleY: 0, transformOrigin: 'bottom', stagger: .04, duration: .6, ease: 'power2.out',
+      scrollTrigger: { trigger: strip, start: 'top 80%' }
+    });
   }
 })();

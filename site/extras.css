@@ -1,0 +1,13 @@
+/* three.js background canvas + chart strip layout */
+#bg-3d { position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: .5; }
+body > nav, body > .wrap { position: relative; z-index: 1; }
+
+.chart-strip { margin-top: 16px; padding: 16px; }
+
+.card.usp { border-color: #2a3040; }
+.card.usp .metric { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
