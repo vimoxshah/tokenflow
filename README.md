@@ -13,6 +13,14 @@
 
 ![Overview — Aurora dark](docs/media/overview-aurora-dark.png)
 
+<p align="center">
+  <img src="docs/media/menubar-light.png" width="30%" alt="TokenFlow menu bar popover — light">
+  &nbsp;
+  <img src="docs/media/menubar-dark.png" width="30%" alt="TokenFlow menu bar popover — dark">
+</p>
+<p align="center"><em>The native macOS menu bar popover — live cost, tokens, per-provider usage,
+capacity meters and forecast, in light and dark.</em></p>
+
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
 ### Install
@@ -144,7 +152,8 @@ node bin/tokenflow.js menubar --app   # builds & launches the native app
 
 A small native Swift app compiled on your machine (no Electron): status item shows spend today or
 limit pressure (`▲ 82%`, `✗ 105%`), with a dropdown covering today/week/month, per-provider rows,
-capacity meters with reset countdowns, forecast, and anomaly alerts. Declare caps yourself:
+capacity meters with reset countdowns, forecast, and anomaly alerts
+([light](docs/media/menubar-light.png) / [dark](docs/media/menubar-dark.png)). Declare caps yourself:
 
 ```yaml
 limits:
