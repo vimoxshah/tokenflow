@@ -1198,16 +1198,29 @@ enum PreviewRenderer {
         let model = StatusModel()
         model.status = status
         for (name, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
-            let view = MenuContentView(model: model, actions: AppActions())
-                .environment(\.colorScheme, scheme)
-            let renderer = ImageRenderer(content: view)
-            renderer.scale = 2
-            guard let ns = renderer.nsImage,
-                  let tiff = ns.tiffRepresentation,
-                  let rep = NSBitmapImageRep(data: tiff),
-                  let png = rep.representation(using: .png, properties: [:]) else { continue }
+            // ImageRenderer cannot draw ScrollView content off-screen (it renders
+            // fully transparent), so lay the view out in an off-screen hosting
+            // window and snapshot its layer instead.
+            let controller = NSHostingController(
+                rootView: MenuContentView(model: model, actions: AppActions())
+                    .environment(\.colorScheme, scheme))
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 360, height: 640),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = controller.view
+            controller.view.frame = NSRect(x: 0, y: 0, width: 360, height: 640)
+            controller.view.layoutSubtreeIfNeeded()
+            guard let bitmap = controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds) else {
+                FileHandle.standardError.write(Data("preview: failed to render \(name)\n".utf8))
+                continue
+            }
+            controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                FileHandle.standardError.write(Data("preview: failed to render \(name)\n".utf8))
+                continue
+            }
             try? png.write(to: URL(fileURLWithPath: "\(prefix)-\(name).png"))
-            print("wrote \(prefix)-\(name).png")
+            print("wrote \(prefix)-\(name).png (\(bitmap.pixelsWide)x\(bitmap.pixelsHigh))")
         }
     }
 }
