@@ -25,7 +25,18 @@ open in any browser without installing anything.
 
 **2. Install** — open the DMG and drag **TokenFlow.app** into Applications. Launch it from
 Launchpad. The build is unsigned (no Apple Developer account behind this free project), so macOS
-asks once: right-click the app → **Open** → **Open**. After that it opens normally forever.
+shows a security warning the first time. This is expected — TokenFlow is free, local-only, and
+not notarized. Approve it once:
+
+- **If you see "cannot be opened because Apple cannot check it":**
+  1. Open **System Settings → Privacy & Security**, scroll to the **Security** section.
+  2. Find the message *"TokenFlow was blocked…"* and click **Open Anyway**.
+  3. Confirm **Open** in the popup (Touch ID / password if asked). Done forever — macOS won't
+     ask again for this app.
+- **Alternative:** right-click `TokenFlow.app` in Applications → **Open** → **Open**.
+
+Nothing about this warning means the app is unsafe: it simply has no $99/yr Apple developer
+signature. You can verify it phones home to nobody — see [Privacy & security](#privacy--security).
 
 **3. Let it find your tools** — click the menu bar item and press **Run setup**, or run it in a
 terminal:

@@ -12,7 +12,16 @@
 **macOS, from a DMG:** download `TokenFlow-<version>.dmg` from the
 [latest release](https://github.com/vimoxshah/tokenflow/releases/latest), open it, drag
 **TokenFlow.app** to Applications, launch from Launchpad. The app builds and launches everything
-it needs — refresh, watcher, dashboard. It is unsigned: right-click → Open the first time.
+it needs — refresh, watcher, dashboard. It is unsigned and not notarized, so macOS shows a
+security warning on first launch:
+
+1. If launch is blocked with *"Apple cannot check it for malicious software"*:
+   open **System Settings → Privacy & Security**, scroll to **Security**, click
+   **Open Anyway** next to the blocked-app message, then confirm **Open**.
+2. Alternatively right-click `TokenFlow.app` → **Open** → **Open**.
+
+This one-time approval is needed because the project has no paid Apple Developer signature;
+the app runs entirely locally either way.
 
 The DMG is produced by [`scripts/build-dmg.sh`](../scripts/build-dmg.sh) and attached to releases
 automatically by [`.github/workflows/release.yml`](../.github/workflows/release.yml). Releases
