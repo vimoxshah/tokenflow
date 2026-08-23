@@ -1,51 +1,53 @@
-/* Animated SVG hero: mini dashboard. Layout rules to prevent overlap:
-   - header zone (title + value) occupies y 0..44, nothing else drawn there
-   - plot zone y 56..150: bars grow from baseline y=148, max height 84
-   - sparkline confined to y<=52 so it can never touch bar tops
-   - legend row y 176..200, clear of both zones */
+/* Animated SVG hero: mini dashboard.
+   Layout contract — four horizontal bands, no element crosses a band edge:
+     band 1  header    y 0..44    title left, value below it
+     band 2  trend     y 56..96   the line only
+     band 3  bars      y 100..170 baseline at 168, max height 62
+     band 4  legend    y 186..204 three short labels, measured to fit 320w */
 (function () {
   const el = document.getElementById('hero-visual');
   if (!el) return;
 
-  // bar heights scaled to fit 84px max within the plot zone
+  const BASE = 168;
   const bars = [
-    [0, 30], [1, 20], [2, 40], [3, 27], [4, 52],
-    [5, 36], [6, 65], [7, 47], [8, 76], [9, 58],
+    [0, 24], [1, 16], [2, 32], [3, 22], [4, 42],
+    [5, 29], [6, 52], [7, 38], [8, 60], [9, 46],
   ];
-  const BASE = 148;
   const barSvg = bars.map(([i, h], k) =>
     `<rect class="bar-pop" x="${16 + i * 29}" y="${BASE - h}" width="17" height="${h}"
-       rx="3" fill="${i === 8 ? '#8f9dff' : '#313131'}"
-       style="animation-delay:${.9 + k * .06}s" opacity=".9"/>`).join('');
+       rx="3" fill="${i === 8 ? '#8f9dff' : '#2a3040'}"
+       style="animation-delay:${.9 + k * .06}s"/>`).join('');
 
+  // trend sits fully inside band 2 (y 58..94), never enters band 3 (top of
+  // tallest bar is y=108) and never enters band 1 (bottom is y=44)
   el.innerHTML = `
   <svg viewBox="0 0 320 210" width="100%" role="img"
        aria-label="Stylised TokenFlow dashboard: daily token usage bars with a rising trend line">
-    <!-- header zone: title + value grouped on the LEFT so the trend line
-         owns the full right edge and can never collide with the number -->
-    <text x="24" y="22" font-family="-apple-system,sans-serif" font-size="11"
+    <!-- band 1: header -->
+    <text x="20" y="20" font-family="-apple-system,sans-serif" font-size="11"
           fill="#9ba3b5">tokens per day</text>
-    <text x="24" y="40" font-family="ui-monospace,monospace" font-size="14"
+    <text x="20" y="40" font-family="ui-monospace,monospace" font-size="15"
           font-weight="700" fill="#f2f4f8">4.83B</text>
-    <circle cx="118" cy="35" r="4" fill="#8f9dff"/>
 
-    <!-- trend band: starts below the header block (y>=56), ends at the right
-         edge with its pulse dot — clear of all text by construction -->
-    <path class="hero-line" d="M20 96 C 60 90, 90 80, 130 84 S 200 66, 240 60 S 285 52, 300 48"
+    <!-- band 2: trend -->
+    <path class="hero-line" d="M20 92 C 55 88, 85 78, 120 82 S 190 66, 235 62 S 285 56, 300 54"
           stroke="#8f9dff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-    <circle cx="300" cy="48" r="4" fill="#8f9dff">
+    <circle cx="300" cy="54" r="4" fill="#8f9dff">
       <animate attributeName="r" values="3;5;3" dur="2.4s" repeatCount="indefinite"/>
     </circle>
 
-    <!-- plot zone -->
+    <!-- band 3: bars -->
     ${barSvg}
-    <line x1="16" y1="${BASE + 6}" x2="304" y2="${BASE + 6}" stroke="#313131"/>
+    <line x1="16" y1="${BASE + 4}" x2="304" y2="${BASE + 4}" stroke="#232a38"/>
 
-    <!-- legend zone -->
-    <g font-family="ui-monospace,monospace" font-size="10" fill="#9ba3b5">
-      <rect x="24" y="180" width="10" height="10" rx="2" fill="#8f9dff"/><text x="40" y="189">peak day</text>
-      <rect x="124" y="180" width="10" height="10" rx="2" fill="#4ade80"/><text x="140" y="189">cache hit rate 91%</text>
-      <rect x="256" y="180" width="10" height="10" rx="2" fill="#fb923c"/><text x="272" y="189">limit pace</text>
+    <!-- band 4: legend (labels sized so none clips at 320px width) -->
+    <g font-family="-apple-system,sans-serif" font-size="10" fill="#9ba3b5">
+      <rect x="20" y="188" width="9" height="9" rx="2" fill="#8f9dff"/>
+      <text x="34" y="196">peak day</text>
+      <rect x="112" y="188" width="9" height="9" rx="2" fill="#4ade80"/>
+      <text x="126" y="196">cache hit</text>
+      <rect x="204" y="188" width="9" height="9" rx="2" fill="#fb923c"/>
+      <text x="218" y="196">limit pace</text>
     </g>
   </svg>`;
 })();

@@ -15,20 +15,30 @@
 
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
-### Download (macOS menu bar app)
+### Download & set up on your machine (macOS)
 
-No clone needed — grab the latest **TokenFlow-*.dmg** from
-[**Releases**](https://github.com/vimoxshah/tokenflow/releases/latest), open it, drag
-**TokenFlow.app** to Applications, and launch it from Launchpad. It lives in your menu bar:
-today's spend at a glance, live provider windows, 5-hour session-block countdowns, capacity
-meters, forecasts — with **Refresh now / Open Dashboard / Start watcher** actions one click away.
+**1. Download** — grab `TokenFlow-*.dmg` from the
+[**latest release**](https://github.com/vimoxshah/tokenflow/releases/latest)
+(all releases: [github.com/vimoxshah/tokenflow/releases](https://github.com/vimoxshah/tokenflow/releases)).
+Each release also carries `tokenflow-dashboard-demo.html`, a fully offline demo dashboard you can
+open in any browser without installing anything.
 
-The DMG is unsigned (no Apple Developer account behind this project). On first launch macOS will
-warn: **right-click TokenFlow.app → Open → Open**, once. After that it opens normally.
+**2. Install** — open the DMG and drag **TokenFlow.app** into Applications. Launch it from
+Launchpad. The build is unsigned (no Apple Developer account behind this free project), so macOS
+asks once: right-click the app → **Open** → **Open**. After that it opens normally forever.
 
-> The app is a front seat, not the engine. It drives the same CLI you'd run by hand, so the
-> [clone + three commands](#3-quick-install) below still apply for the full dashboard, imports,
-> and every other feature.
+**3. Let it find your tools** — click the menu bar item and press **Run setup**, or run it in a
+terminal:
+
+```bash
+npx tokenflow@latest setup     # detects Claude Code, Codex, OpenCode, Cursor, Cline…
+```
+
+Setup writes `~/.tokenflow/config.yaml` and reads nothing else. Then just keep the app running —
+its watcher refreshes data every two minutes, and the popover shows today's cost, tokens,
+per-provider usage, session blocks and capacity at a glance.
+
+Prefer the terminal end-to-end? The same three commands work from a clone:
 
 ```bash
 git clone https://github.com/vimoxshah/tokenflow.git && cd tokenflow
