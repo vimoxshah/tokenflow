@@ -176,7 +176,6 @@ export function timeSeries(o) {
   const H = o.height || 300;
   const W = o.width || 1000;
   const M = { t: 14, r: 16, b: 26, l: 58 };
-  const iw = W - M.l - M.r;
   const ih = H - M.t - M.b;
   const data = o.data;
   const keys = o.keys.filter((k) => !k.hidden);
@@ -200,6 +199,11 @@ export function timeSeries(o) {
   const { ticks, max: yMax } = niceTicks(0, maxV || 1, 5);
   const x = (i) => (n <= 1 ? M.l + iw / 2 : M.l + (i / (n - 1)) * iw);
   const y = (v) => M.t + ih - (Math.max(0, v) / (yMax || 1)) * ih;
+  // Left margin adapts to the widest y label so long formatters (int's
+  // "3,500,000") never clip off-canvas or collide with the rotated axis title.
+  const widestY = Math.max(0, ...ticks.map((t) => String((o.fmtY || compact)(t)).length)) * 6.6;
+  M.l = Math.max(M.l, Math.ceil(widestY) + 18);
+  const iw = W - M.l - M.r;
 
   const root = svg('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': o.ariaLabel || 'time series' });
   root.style.height = H + 'px';
