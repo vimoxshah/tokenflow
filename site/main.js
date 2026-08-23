@@ -1,7 +1,20 @@
-/* GSAP: hero entrance, scroll reveals, tagline word activation, chart draw-on-scroll */
+/* GSAP choreography with a fail-safe guarantee:
+   every animated-from-invisible element MUST end visible even if GSAP,
+   ScrollTrigger, or any animation errors. Sections must never be blank. */
 (function () {
-  if (!window.gsap) return;
-  gsap.registerPlugin(window.ScrollTrigger);
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function revealAll() {
+    document.querySelectorAll('.reveal').forEach(n => { n.style.opacity = '1'; n.style.transform = 'none'; });
+  }
+
+  if (!window.gsap || !window.ScrollTrigger || reduceMotion) { revealAll(); return; }
+  try {
+    gsap.registerPlugin(ScrollTrigger);
+  } catch (e) { revealAll(); return; }
+
+  // Safety net: whatever happens below, after 3s force everything on-screen.
+  setTimeout(revealAll, 3000);
 
   // hero entrance choreography
   gsap.from('nav', { y: -64, opacity: 0, duration: .8, ease: 'power3.out' });
@@ -21,11 +34,13 @@
     gsap.to('#hero-visual', { y: -12, duration: 3, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 1.6 });
   }
 
-  // section reveals
-  document.querySelectorAll('.reveal').forEach(el => {
-    gsap.from(el, { opacity: 0, y: 32, duration: .8, ease: 'power2.out',
-      scrollTrigger: { trigger: el, start: 'top 85%' } });
-  });
+  // section reveals — wrapped so one failure can't skip the safety net
+  try {
+    document.querySelectorAll('.reveal').forEach(el => {
+      gsap.from(el, { opacity: 0, y: 32, duration: .8, ease: 'power2.out',
+        scrollTrigger: { trigger: el, start: 'top 85%' } });
+    });
+  } catch (e) { revealAll(); }
 
   // tagline words activate one at a time on scroll
   const tag = document.querySelector('.tagline');

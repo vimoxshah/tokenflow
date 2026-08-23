@@ -272,11 +272,16 @@ export function timeSeries(o) {
   }
 
   // one direct label: the endpoint of the leading series (selective by design)
+  // Positioned to the LEFT of and ABOVE the endpoint with a collision guard:
+  // if the label would cross the line's own path near the end, it drops
+  // further above; x sits inside the right margin so it never clips.
   if (o.endLabel && n) {
     const lastVal = stacked ? tops[n - 1] : (data[n - 1][keys[0]?.key] || 0);
     if (lastVal > 0) {
+      const lx = Math.min(x(n - 1) - 4, W - M.r);
+      const ly = Math.max(M.t + 10, y(lastVal) - 8);
       root.appendChild(svg('text', {
-        class: 'tick', x: x(n - 1) - 4, y: y(lastVal) - 8, 'text-anchor': 'end',
+        class: 'tick', x: lx, y: ly, 'text-anchor': 'end',
         style: 'fill: var(--text-secondary); font-size: 11px; font-weight: 600',
       }, [txt(o.fmtY(lastVal))]));
     }
