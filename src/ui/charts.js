@@ -794,14 +794,20 @@ export function scatter(points, o) {
     if (o.onClick) { h.style.cursor = 'pointer'; h.addEventListener('click', (ev) => o.onClick(p, ev)); }
     root.appendChild(h);
   }
-  // label only the extremes, never every point
+  // label only the extremes, never every point. Labels are center-anchored,
+  // so points near the left edge spill into the y-axis gutter and collide with
+  // the rotated axis title — clamp them inside the plot instead.
   const extremes = [...sorted].slice(0, 3);
   for (const p of extremes) {
     if (p.x === null || p.y === null) continue;
+    const label = p.short || p.label;
+    // ~5.9px per character at 10.5px; keep half the label inside the plot
+    const halfW = label.length * 2.95;
+    const lx = Math.min(W - M.r - halfW, Math.max(M.l + halfW, X(p.x)));
     root.appendChild(svg('text', {
-      class: 'tick', x: X(p.x), y: Y(p.y) - R(p.r) - 5, 'text-anchor': 'middle',
+      class: 'tick', x: lx, y: Y(p.y) - R(p.r) - 5, 'text-anchor': 'middle',
       style: 'fill: var(--text-secondary); font-size: 10.5px',
-    }, [txt(p.short || p.label)]));
+    }, [txt(label)]));
   }
   return root;
 }
