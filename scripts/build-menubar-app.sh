@@ -28,6 +28,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
+cp "$REPO/menubar/TokenFlow/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,6 +42,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>   <string>1.0</string>
     <key>CFBundlePackageType</key>          <string>APPL</string>
     <key>CFBundleExecutable</key>           <string>TokenFlow</string>
+    <key>CFBundleIconFile</key>             <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>       <string>13.0</string>
     <key>LSUIElement</key>                  <true/>
     <key>NSHighResolutionCapable</key>      <true/>
