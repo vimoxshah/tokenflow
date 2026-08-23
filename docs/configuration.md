@@ -194,6 +194,17 @@ per run.
 Default display mode for `tokenflow status --bar` and the menu-bar plugin:
 `auto` (most urgent signal), `tokens`, `cost`, or `limit`.
 
+### `map.showMyLocation`
+
+Off by default — and it is the only geography feature that touches the network.
+When set to `true`, the dashboard's Global activity map resolves THIS machine's
+public IP once via an HTTPS lookup (ipapi.co), caches the derived place
+(city/region/country/coordinates) in `$TOKENFLOW_HOME/data/geo-cache.json`,
+and re-resolves at most monthly. The IP itself is never stored, never logged,
+never displayed. Leave it unset (or `false`) and TokenFlow performs no lookup
+at all: the map then shows only vendor-published provider regions. There is
+no per-request IP capture anywhere in the product.
+
 ---
 
 ## Pricing is separate

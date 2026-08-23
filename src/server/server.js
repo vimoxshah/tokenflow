@@ -18,6 +18,7 @@ import { refresh } from '../core/ingest.js';
 import { loadProviders, listProviders } from '../core/registry.js';
 import { loadConfig, saveConfig, paths, savePrefs, loadPrefs, DEFAULT_CONFIG, merge } from '../core/config.js';
 import { currentStatus } from '../core/live-status.js';
+import { PROVIDER_REGIONS, resolveMyLocation } from '../core/geo.js';
 import { normalizeLimits } from '../analytics/capacity.js';
 import { streamRecordsCsv, exportFilename } from '../export/csv.js';
 import { writeJson, readJson } from '../core/store.js';
@@ -113,6 +114,22 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
       if (p === '/api/live') {
         const { status, fromWatch } = currentStatus({ maxAgeMs: 30000 });
         return json(res, { ...status, fromWatch });
+      }
+      /**
+       * Map geography, for the Global activity section. Two layers:
+       *  - providerRegions: static vendor datacenter regions per measured
+       *    provider (offline public knowledge — never per-request claims)
+       *  - myLocation: ONLY when `map.showMyLocation: true` is set in config
+       *    (one cached IP lookup of this machine; the IP itself is never
+       *    stored). Disabled ⇒ null, and nothing is sent anywhere.
+       */
+      if (p === '/api/geo') {
+        const cfg = loadConfig();
+        return json(res, {
+          providerRegions: PROVIDER_REGIONS,
+          myLocation: await resolveMyLocation({ config: cfg }),
+          note: 'regions are vendor-published possibilities, not per-request facts',
+        });
       }
       /**
        * Limited config editing from the dashboard: only the limits list and

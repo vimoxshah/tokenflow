@@ -107,9 +107,10 @@
   <div class="section-head reveal">
     <p class="kicker">Global activity</p>
     <h2>The shape of your AI activity.</h2>
-    <p class="subhead">TokenFlow measures every request's path from your machine to each
-    provider. Where a request physically lands is vendor infrastructure no local log exposes,
-    so the map shows measured flows and says plainly what is unknown.</p>
+    <p class="subhead">Local logs contain no request IPs, so TokenFlow never invents geography.
+    The map places each provider you actually used on its vendor-published datacenter regions —
+    and shows your own location only if you explicitly opt in with
+    <code>map.showMyLocation</code>. Nothing is captured per request; nothing is published.</p>
   </div>
   <div class="card reveal" id="worldmap" style="padding:8px;"></div>
 </div></section>

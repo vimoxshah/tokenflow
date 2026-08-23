@@ -210,8 +210,11 @@ Easiest contribution: an adapter (`src/providers/<id>/index.js`) plus a fixture 
 
 Local data → local normalization → local analytics → local dashboard. The server binds to
 `127.0.0.1`. No prompt text, code, or file content is ever stored — adapters read token counts and
-discard the rest. No telemetry, no network client anywhere in the codebase (verify:
-`grep -rn "fetch\|https\?://" src/`). Everything lives in `~/.tokenflow/`.
+discard the rest. No telemetry. The only outbound call the code can ever make
+is an IP geolocation lookup that runs solely when you set
+`map.showMyLocation: true` in config (see
+[docs/configuration.md](docs/configuration.md)); off by default, IP never
+stored. Everything lives in `~/.tokenflow/`.
 [SECURITY.md](SECURITY.md) covers the threat model and private vulnerability reporting.
 
 ## License
