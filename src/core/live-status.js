@@ -81,6 +81,13 @@ export function buildLiveStatus(opt = {}) {
   const modelsToday = rank(todayRows, ix, (r) => r[ix.d.m])
     .filter((g) => g.m.total > 0).slice(0, 5)
     .map((g) => ({ key: g.key, tokens: g.m.total, requests: g.m.req, ...costOf(g.m) }));
+  // By SOURCE (the tool that wrote the log: claude-code, opencode, hermes,
+  // git, …). Provider answers "who made the model"; source answers "which
+  // app did I use" — hermes traffic shows here even when its models belong
+  // to other vendors.
+  const sourcesToday = rank(todayRows, ix, (r) => r[ix.d.c])
+    .filter((g) => g.m.total > 0).slice(0, 6)
+    .map((g) => ({ key: g.key, tokens: g.m.total, requests: g.m.req, ...costOf(g.m) }));
 
   // ---- rolling windows (measured locally — CodexBar-style "current window") --
   // Hour-granular slices of the cube: the boundary is the top of an hour, so a
@@ -227,6 +234,7 @@ export function buildLiveStatus(opt = {}) {
     },
     providersToday,
     modelsToday,
+    sourcesToday,
     windows,
     providerWindows,
     velocity,

@@ -103,6 +103,8 @@ struct TFStatus: Decodable {
     var demo: Bool?
     var usage: [String: UsageSlice]?
     var providersToday: [ProviderRow]?
+    var modelsToday: [ProviderRow]?
+    var sourcesToday: [ProviderRow]?
     var capacity: Capacity?
     var forecast: Forecast?
     var anomalies: [Anomaly]?
@@ -271,6 +273,7 @@ struct AppActions {
     var openDashboard: () -> Void = {}
     var toggleWatcher: () -> Void = {}
     var runSetup: () -> Void = {}
+    var cycleTheme: () -> Void = {}
     var quit: () -> Void = {}
 }
 
@@ -295,9 +298,34 @@ struct AppActions {
         openDashboard: { [weak self] in self?.openDashboard() },
         toggleWatcher: { [weak self] in self?.toggleWatcherAction() },
         runSetup: { [weak self] in self?.runCLI(["setup"]) },
+        cycleTheme: { [weak self] in self?.cycleThemeAction() },
         quit: { NSApp.terminate(nil) })
 
+    // Appearance override, persisted in defaults. system → light → dark → …
+    // Applied by setting NSApp.appearance; nil = follow the system.
+    static let themeKey = "appearanceOverride" // "system" | "light" | "dark"
+
+    private func cycleThemeAction() {
+        let order = ["system", "light", "dark"]
+        let current = UserDefaults.standard.string(forKey: Self.themeKey) ?? "system"
+        let next = order[(order.firstIndex(of: current).map { $0 + 1 } ?? 0) % order.count]
+        UserDefaults.standard.set(next, forKey: Self.themeKey)
+        applyTheme(named: next)
+        // Repaint the popover content in the new scheme immediately.
+        model.load()
+    }
+
+    private func applyTheme(named name: String) {
+        switch name {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":  NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:      NSApp.appearance = nil
+        }
+    }
+
     func applicationDidFinishLaunching(_ note: Notification) {
+        // Restore persisted appearance override before any UI is built.
+        applyTheme(named: UserDefaults.standard.string(forKey: Self.themeKey) ?? "system")
         // Off-screen design verification: render light+dark previews, then quit.
         let argv = CommandLine.arguments
         if let i = argv.firstIndex(of: "--preview"), argv.count > i + 1 {
@@ -763,6 +791,59 @@ private struct ProviderRow: View {
     }
 }
 
+private struct SourceRow: View {
+    // Same grid as ProviderRow but with a square glyph: source is "which app",
+    // provider is "whose model" — the shape difference makes that legible.
+    let index: Int
+    let row: TFStatus.ProviderRow
+    let maxTokens: Double
+
+    private var costText: String {
+        (row.cost ?? row.costMeasured).map(money) ?? ""
+    }
+
+    var body: some View {
+        let color = TF.palette[index % TF.palette.count]
+        let tokens = row.tokens ?? 0
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2.5).fill(color).frame(width: 8, height: 8)
+            Text(row.key).font(TF.labelFont).lineLimit(1)
+            Spacer(minLength: 6)
+            TFMeter(fraction: maxTokens > 0 ? tokens / maxTokens : 0, color: color,
+                    height: 5).frame(width: 56)
+            Text(compactTokens(tokens)).font(TF.figure(11.5))
+            Text(costText).font(TF.figure(11, .regular))
+                .foregroundStyle(costText.isEmpty ? AnyShapeStyle(Color.clear) : AnyShapeStyle(Color.secondary))
+                .frame(width: 48, alignment: .trailing)
+        }
+        .frame(height: 20)
+    }
+}
+
+private struct ModelRow: View {
+    let row: TFStatus.ProviderRow
+    let maxTokens: Double
+
+    private var costText: String {
+        (row.cost ?? row.costMeasured).map(money) ?? ""
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "cpu").font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary).frame(width: 12)
+            Text(row.key).font(TF.labelFont).lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 6)
+            Text(compactTokens(row.tokens ?? 0)).font(TF.figure(11.5))
+            Text(costText).font(TF.figure(11, .regular))
+                .foregroundStyle(costText.isEmpty ? AnyShapeStyle(Color.clear) : AnyShapeStyle(Color.secondary))
+                .frame(width: 48, alignment: .trailing)
+        }
+        .frame(height: 20)
+    }
+}
+
 private struct CapacityRow: View {
     let st: TFStatus.LimitState
     @Environment(\.colorScheme) private var cs
@@ -947,6 +1028,15 @@ private struct ActionsBar: View {
             .buttonStyle(.plain)
             .help(live ? "Stop watcher" : "Start watcher")
 
+            // Theme: system → light → dark, persisted across launches.
+            Button(action: actions.cycleTheme) {
+                Image(systemName: "circle.lefthalf.filled")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Appearance: follow system / light / dark")
+
             Button(action: actions.quit) {
                 Image(systemName: "power")
                     .font(.system(size: 12, weight: .semibold))
@@ -1111,6 +1201,33 @@ struct MenuContentView: View {
                         ForEach(Array(provs.filter { ($0.tokens ?? 0) > 0 }.prefix(5).enumerated()),
                                 id: \.offset) { i, p in
                             ProviderRow(index: i, row: p, maxTokens: maxTokens)
+                        }
+                    }
+                }
+
+                // By SOURCE — the app that wrote the log (claude-code,
+                // opencode, hermes…). Answers "which tool did I use today",
+                // which provider attribution cannot: hermes traffic appears
+                // here under its own name even when its models are other
+                // vendors'.
+                if let srcs = s?.sourcesToday, !srcs.isEmpty {
+                    SectionHeader("Today by source")
+                    VStack(spacing: 7) {
+                        let maxTokens = srcs.compactMap(\.tokens).max() ?? 0
+                        ForEach(Array(srcs.filter { ($0.tokens ?? 0) > 0 }.prefix(6).enumerated()),
+                                id: \.offset) { i, p in
+                            SourceRow(index: i, row: p, maxTokens: maxTokens)
+                        }
+                    }
+                }
+
+                if let models = s?.modelsToday, !models.isEmpty {
+                    SectionHeader("Top models today")
+                    VStack(spacing: 7) {
+                        let maxTokens = models.compactMap(\.tokens).max() ?? 0
+                        ForEach(Array(models.filter { ($0.tokens ?? 0) > 0 }.prefix(5).enumerated()),
+                                id: \.offset) { i, mrow in
+                            ModelRow(row: mrow, maxTokens: maxTokens)
                         }
                     }
                 }

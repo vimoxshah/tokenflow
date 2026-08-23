@@ -152,7 +152,8 @@ node bin/tokenflow.js menubar --app   # builds & launches the native app
 
 A small native Swift app compiled on your machine (no Electron): status item shows spend today or
 limit pressure (`▲ 82%`, `✗ 105%`), with a dropdown covering today/week/month, per-provider rows,
-capacity meters with reset countdowns, forecast, and anomaly alerts
+per-source and per-model usage, capacity meters with reset countdowns, forecast, anomaly alerts,
+and an appearance toggle (system → light → dark, persisted)
 ([light](docs/media/menubar-light.png) / [dark](docs/media/menubar-dark.png)). Declare caps yourself:
 
 ```yaml

@@ -138,14 +138,22 @@ tokenflow menubar --app --login-item
 - header: live/watcher badge + data freshness ("live · data updated just now")
 - Today / Week / Month rows — tokens, requests, estimated cost
 - Today by provider — inline share bars (▰▱), tokens and cost per provider
+- Today by source — the app that wrote the log (claude-code, opencode,
+  hermes, git…). Provider attribution names the model's vendor, so Hermes
+  traffic appears under each model's vendor there; this section shows it as
+  "hermes"
+- Top models today — token and cost leaders per model
 - Capacity — a real meter per declared limit with %, exhaustion ETA and reset
   countdown; "first projected hit" callout when one will cross before reset
 - Forecast — tomorrow / 7-day projections, month-end spend, confidence
 - Alerts — high-severity anomalies with their arithmetic
 - Actions — `Refresh now` (⌘R, runs a watch cycle), `Open Dashboard`,
   `Start/Stop watcher`, `Quit`
+- Appearance button (◐) — cycles system → light → dark; persisted across
+  launches in `defaults` under `appearanceOverride`
 
-Dark/light follows the system appearance; all figures use monospaced digits.
+Dark/light follows the appearance override (◐ button, persisted) or the system
+appearance when set to follow; all figures use monospaced digits.
 
 ## Menu bar — other platforms (SwiftBar/xbar text protocol)
 
