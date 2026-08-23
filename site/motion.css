@@ -47,10 +47,15 @@ footer { padding: 48px 0 64px; border-top: 1px solid var(--line); color: var(--d
   font-size: 14px; line-height: 20px; display: flex; justify-content: space-between;
   gap: 16px; flex-wrap: wrap; }
 
-/* scroll reveal */
-.reveal { opacity: 0; transform: translateY(24px);
+/* scroll reveal — visible by default.
+   JS (main.js) adds .armed to <body> only after GSAP + ScrollTrigger are
+   confirmed working; only then do .reveal elements start hidden and animate
+   in. If anything fails, content simply shows — a blank page is worse than
+   no animation. */
+.reveal.in { opacity: 1 !important; transform: none !important; }
+body.js-anim .reveal { opacity: 0; transform: translateY(24px);
   transition: opacity .7s var(--ease), transform .7s var(--ease); }
-.reveal.in { opacity: 1; transform: none; }
+body.js-anim .reveal.in { opacity: 1; transform: none; }
 
 /* hero chart animation */
 @keyframes draw { to { stroke-dashoffset: 0; } }

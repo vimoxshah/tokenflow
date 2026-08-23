@@ -312,9 +312,12 @@ struct AppActions {
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         popover.behavior = .transient
-        // Belt-and-braces auto-dismiss: .transient handles most cases, but
-        // explicit monitors guarantee a click anywhere outside the popover
-        // closes it — including clicks inside this accessory app's own windows.
+        // Auto-dismiss, correct by construction rather than by event guessing:
+        // .transient handles clicks outside for a well-behaved key window; the
+        // global monitor covers other apps (which .transient can miss when the
+        // app is a non-activating accessory); and the local monitor covers
+        // clicks landing in this process's own non-popover windows. The status
+        // bar is excluded so the toggle action can run.
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             DispatchQueue.main.async {
@@ -322,7 +325,7 @@ struct AppActions {
             }
         }
         insideMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown]) { [weak self] ev in
+            matching: [.leftMouseDown, .rightMouseDown]) { [weak self] ev in
             guard let self, self.popover.isShown,
                   let hitWindow = ev.window,
                   let contentWindow = self.popover.contentViewController?.view.window,

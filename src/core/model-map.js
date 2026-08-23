@@ -52,6 +52,11 @@ export const BUILTIN_MODEL_RULES = [
   // are published by OpenCode itself, so attribution follows the publisher.
   { match: '(^|/)x-preview(-|$)', provider: 'opencode', label: 'OpenCode' },
   { match: '(^|/)muse-spark', provider: 'opencode', label: 'OpenCode' },
+  // Hermes-routed stealth/preview models ("stealth/<name>"): these arrive via
+  // the Nous/openrouter gateways and carry no vendor slug of their own, but
+  // "unknown" hides real usage from the provider breakdown. Attribute to the
+  // nous gateway family so the UI shows where the traffic actually ran.
+  { match: '(^|/)stealth/', provider: 'nous', label: 'Nous (stealth)' },
 ];
 
 const compiled = new WeakMap();

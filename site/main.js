@@ -13,8 +13,21 @@
     gsap.registerPlugin(ScrollTrigger);
   } catch (e) { revealAll(); return; }
 
+  // GSAP confirmed working: arm the hidden-initial-state CSS, then animate.
+  // Elements already in the viewport get .in immediately so nothing above the
+  // fold ever flashes or stays blank while scrolling.
+  document.body.classList.add('js-anim');
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }, { threshold: 0.05 });
+  document.querySelectorAll('.reveal').forEach(n => {
+    const r = n.getBoundingClientRect();
+    if (r.top < window.innerHeight) { n.classList.add('in'); }
+    else io.observe(n);
+  });
+
   // Safety net: whatever happens below, after 3s force everything on-screen.
-  setTimeout(revealAll, 3000);
+  setTimeout(() => { revealAll(); io.disconnect(); }, 3000);
 
   // hero entrance choreography
   gsap.from('nav', { y: -64, opacity: 0, duration: .8, ease: 'power3.out' });
@@ -34,11 +47,13 @@
     gsap.to('#hero-visual', { y: -12, duration: 3, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 1.6 });
   }
 
-  // section reveals — wrapped so one failure can't skip the safety net
+  // section reveals — GSAP tween only; CSS visibility is handled by the
+  // armed .in classes above, so a tween failure can never blank content
   try {
-    document.querySelectorAll('.reveal').forEach(el => {
-      gsap.from(el, { opacity: 0, y: 32, duration: .8, ease: 'power2.out',
-        scrollTrigger: { trigger: el, start: 'top 85%' } });
+    document.querySelectorAll('.reveal:not(.in)').forEach(el => {
+      gsap.fromTo(el, { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: .8, ease: 'power2.out',
+        scrollTrigger: { trigger: el, start: 'top 88%' },
+        onComplete: () => el.classList.add('in') });
     });
   } catch (e) { revealAll(); }
 
