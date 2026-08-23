@@ -321,6 +321,28 @@ struct AppActions {
         case "dark":  NSApp.appearance = NSAppearance(named: .darkAqua)
         default:      NSApp.appearance = nil
         }
+        // NSHostingView does not always re-resolve its environment when an
+        // already-shown popover window's appearance changes; rebuild the
+        // content view so the new scheme is guaranteed to take effect.
+        rebuildPopoverContent()
+    }
+
+    /** Swap in a fresh hosting controller with the persisted theme applied. */
+    private func rebuildPopoverContent() {
+        let theme = UserDefaults.standard.string(forKey: Self.themeKey) ?? "system"
+        let content = MenuContentView(model: model, actions: actions)
+        let themed: any View
+        switch theme {
+        case "light": themed = content.environment(\.colorScheme, .light)
+        case "dark":  themed = content.environment(\.colorScheme, .dark)
+        default:      themed = content
+        }
+        let host = NSHostingController(rootView: AnyView(themed))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        if popover.isShown, let button = item.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -336,9 +358,7 @@ struct AppActions {
         item.button?.target = self
         item.button?.action = #selector(togglePopover(_:))
         item.button?.toolTip = "TokenFlow — AI usage & capacity"
-        let host = NSHostingController(rootView: MenuContentView(model: model, actions: actions))
-        host.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = host
+        rebuildPopoverContent()
         popover.behavior = .transient
         // Auto-dismiss, correct by construction rather than by event guessing:
         // .transient handles clicks outside for a well-behaved key window; the
@@ -496,9 +516,20 @@ struct AppActions {
     private func startWatcherDetached() {
         guard let proc = makeProcess(["watch"], detached: true) else { return }
         try? proc.run()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            self?.model.load(); self?.renderTitle()
+        // The freshly started watcher needs its first cycle (~seconds) before
+        // status.json names it; poll briefly so the button flips to "stop"
+        // as soon as the pidfile exists instead of appearing dead.
+        func refreshUntilSeen(_ attempts: Int) {
+            guard attempts > 0 else { model.load(); renderTitle(); return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self else { return }
+                self.model.load()
+                self.renderTitle()
+                if self.watcherRunning { return }
+                refreshUntilSeen(attempts - 1)
+            }
         }
+        refreshUntilSeen(6)
     }
 
     private func toggleWatcherAction() {
