@@ -25,7 +25,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          # site plus docs/media (menu bar popover + dashboard screenshots)
+          path: |
+            site
+            docs/media
       - id: deployment
         uses: actions/deploy-pages@v4
 

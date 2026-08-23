@@ -11,3 +11,16 @@ body > nav, body > .wrap { position: relative; z-index: 1; }
   html { scroll-behavior: auto; }
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* menu bar popover screenshots inside the Session blocks card */
+.menubar-shots { margin: 12px 0 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.menubar-shots img {
+  width: 100%; height: auto; display: block;
+  border-radius: 10px;
+  border: 1px solid rgba(128,128,128,0.25);
+}
+.menubar-shots figcaption {
+  grid-column: 1 / -1;
+  font-size: 12px; opacity: 0.7; line-height: 1.45;
+}
+@media (max-width: 640px) { .menubar-shots { grid-template-columns: 1fr; } }
