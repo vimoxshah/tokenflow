@@ -44,7 +44,9 @@ tokenflow --help
 ```
 
 Everything below works either way; `npm run <script>` wrappers exist for `setup`, `refresh`,
-`status`, `dashboard`, and `demo`.
+`status`, `dashboard`, and `demo`. The bare `tokenflow <command>` examples throughout this doc
+assume the global command from `npm link`; otherwise substitute
+`node bin/tokenflow.js <command>` or the matching `npm run` script.
 
 ## 1. Look around first (optional)
 

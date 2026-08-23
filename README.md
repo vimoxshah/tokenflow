@@ -38,18 +38,19 @@ not notarized. Approve it once:
 Nothing about this warning means the app is unsafe: it simply has no $99/yr Apple developer
 signature. You can verify it phones home to nobody — see [Privacy & security](#privacy--security).
 
-**3. Let it find your tools** — click the menu bar item and press **Run setup**, or run it in a
-terminal:
+**3. Let it find your tools** — click the menu bar item and press **Run setup**, or run setup
+from a clone of the repo:
 
 ```bash
-npx tokenflow@latest setup     # detects Claude Code, Codex, OpenCode, Cursor, Cline…
+git clone https://github.com/vimoxshah/tokenflow.git && cd tokenflow
+npm run setup        # detects Claude Code, Codex, OpenCode, Cursor, Cline…
 ```
 
 Setup writes `~/.tokenflow/config.yaml` and reads nothing else. Then just keep the app running —
 its watcher refreshes data every two minutes, and the popover shows today's cost, tokens,
 per-provider usage, session blocks and capacity at a glance.
 
-Prefer the terminal end-to-end? The same three commands work from a clone:
+Prefer the terminal end-to-end? The same commands work from a clone:
 
 ```bash
 git clone https://github.com/vimoxshah/tokenflow.git && cd tokenflow
@@ -58,7 +59,7 @@ npm start            # ingest what's new, then open the dashboard
 ```
 
 Three commands, no configuration, no keys. If nothing is detected that is a real answer, not a
-failure — `tokenflow providers` tells you what it looked for and where.
+failure — `node bin/tokenflow.js providers` tells you what it looked for and where.
 
 There is no `npm install` step, because there is nothing to install. Node 22.5+ and nothing else.
 
@@ -276,6 +277,10 @@ core changes, no rebuild. Full contract: **[docs/creating-provider.md](docs/crea
 
 ## 8. Import anything else
 
+> These examples use the global `tokenflow` command — available after `npm link`
+> (see [Quick install](#3-quick-install)). Without it, run
+> `node bin/tokenflow.js <command>` instead.
+
 ```bash
 tokenflow import ~/Downloads/openrouter-export.csv        # infers a mapping and previews it
 tokenflow import usage.jsonl --field timestamp=ts --field input_tokens=prompt_tokens
@@ -288,8 +293,8 @@ Unmapped token fields stay `null`.
 ## 9. Run the dashboard
 
 ```bash
-tokenflow dashboard                 # http://127.0.0.1:7799, loopback only
-tokenflow dashboard --port 8080 --no-open
+node bin/tokenflow.js dashboard      # http://127.0.0.1:7799, loopback only (or: npm run dashboard)
+node bin/tokenflow.js dashboard --port 8080 --no-open
 ```
 
 The browser loads one pre-aggregated bundle and then filters **entirely locally** by calling the
