@@ -4,167 +4,163 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TokenFlow — see where your AI tokens actually go</title>
-<meta name="description" content="Local-first, provider-agnostic analytics for the AI tokens you spend across Claude Code, Codex, Cline, Cursor and gateways. Zero dependencies. Nothing leaves your machine.">
-<style>
-  :root {
-    --bg: #0d1017; --bg2: #12161f; --card: #171c27; --line: #232a38;
-    --text: #e8ebf2; --dim: #8b93a7; --accent: #8f9dff; --good: #4ade80;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text);
-    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
-  header { padding: 72px 0 40px; }
-  h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: 1.1; letter-spacing: -0.02em; }
-  h1 .accent { color: var(--accent); }
-  .tagline { font-size: 1.25rem; color: var(--dim); margin: 20px 0 32px; max-width: 46rem; }
-  .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 36px; }
-  .badge { background: var(--card); border: 1px solid var(--line); color: var(--dim);
-    font-size: .78rem; padding: 4px 12px; border-radius: 999px; }
-  .cta { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
-  .btn { display: inline-block; padding: 13px 26px; border-radius: 10px;
-    font-weight: 600; font-size: 1rem; transition: transform .12s ease, opacity .12s ease; }
-  .btn:hover { transform: translateY(-1px); text-decoration: none; opacity: .92; }
-  .btn-primary { background: var(--accent); color: #0d1017; }
-  .btn-ghost { border: 1px solid var(--line); color: var(--text); background: var(--bg2); }
-  .note { font-size: .82rem; color: var(--dim); margin-top: 14px; }
-  section { padding: 44px 0; border-top: 1px solid var(--line); }
-  h2 { font-size: 1.5rem; letter-spacing: -0.01em; margin-bottom: 8px; }
-  .sub { color: var(--dim); margin-bottom: 26px; max-width: 42rem; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
-  .card h3 { font-size: 1rem; margin-bottom: 8px; }
-  .card p { color: var(--dim); font-size: .92rem; }
-  pre { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px;
-    padding: 20px 24px; overflow-x: auto; font-size: .88rem; line-height: 1.8;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  pre .c { color: var(--dim); } pre .k { color: var(--accent); }
-  ol { color: var(--dim); padding-left: 22px; }
-  ol li { margin-bottom: 10px; }
-  ol strong { color: var(--text); }
-  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
-  td, th { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  th { color: var(--dim); font-weight: 500; font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; }
-  code { background: var(--bg2); border: 1px solid var(--line); border-radius: 5px;
-    padding: 1px 7px; font-size: .85em; font-family: ui-monospace, Menlo, monospace; }
-  footer { padding: 48px 0 64px; border-top: 1px solid var(--line); color: var(--dim);
-    font-size: .88rem; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  @media (max-width: 640px) { header { padding-top: 48px; } }
-</style>
+<meta name="description" content="Local-first, provider-agnostic analytics for the AI tokens you spend across Claude Code, Codex, OpenCode, Cline and Cursor. Zero dependencies. Nothing leaves your machine.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1017'/%3E%3Cpath d='M6 22 L12 14 L17 18 L26 8' stroke='%238f9dff' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="motion.css">
 </head>
 <body>
+<nav><div class="wrap">
+  <a class="brand" href="#">
+    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#171c27"/><path d="M6 22 L12 14 L17 18 L26 8" stroke="#8f9dff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    TokenFlow
+  </a>
+  <div class="navlinks">
+    <a href="#why">Why</a><a href="#how">How it works</a><a href="#sources">Sources</a>
+    <a href="https://github.com/vimoxshah/tokenflow">GitHub</a>
+  </div>
+</div></nav>
 
 <div class="wrap">
 <header>
-  <h1>See where your<br>AI tokens <span class="accent">actually</span> go.</h1>
-  <p class="tagline">TokenFlow is local-first, provider-agnostic analytics for the tokens you spend
-  across Claude&nbsp;Code, Codex, OpenCode, Cline, Cursor, gateways — anything that writes logs on
-  your machine.</p>
-  <div class="badges">
-    <span class="badge">zero dependencies</span>
-    <span class="badge">nothing leaves your machine</span>
-    <span class="badge">no API keys · no telemetry</span>
-    <span class="badge">MIT</span>
+  <div class="hero-grid">
+    <div>
+      <span class="eyebrow"><span class="dot"></span>v1.0 · local-first · MIT</span>
+      <h1>Know where every AI token goes.</h1>
+      <p class="sub">TokenFlow reads the logs your tools already write and turns them into honest
+      analytics across Claude Code, Codex, OpenCode, Cursor and more. Zero dependencies.
+      Nothing leaves your machine.</p>
+      <div class="cta">
+        <a class="btn btn-primary" id="download-btn" href="https://github.com/vimoxshah/tokenflow/releases/latest">
+          <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Z"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn btn-ghost" href="#how">See how it works</a>
+      </div>
+      <p class="proof-line">145 tests on every push · macOS, Linux, Windows · no API keys, no telemetry</p>
+    </div>
+    <div id="hero-visual"><!-- SVG injected by script below --></div>
   </div>
-  <div class="cta">
-    <a class="btn btn-primary" href="https://github.com/vimoxshah/tokenflow/releases/latest" id="download-btn">Download for macOS</a>
-    <a class="btn btn-ghost" href="https://github.com/vimoxshah/tokenflow">View on GitHub</a>
-  </div>
-  <p class="note">Unsigned build — right-click the app → Open on first launch.
-  Linux &amp; Windows: clone and run from source.</p>
 </header>
+</div>
+<script src="hero.js"></script>
+</div>
 
-<section id="why">
-  <h2>The questions billing pages can't answer</h2>
-  <p class="sub">Vendor consoles show one vendor, one account, at their granularity. TokenFlow reads
-  every tool's local logs on your machine and answers across all of them, at request granularity,
-  with the raw records still on disk so you can check the arithmetic.</p>
-  <div class="grid">
-    <div class="card"><h3>What am I actually spending?</h3><p>Tokens by day, provider, model and
-      interface — plus estimated cost from a versioned price table with its sources printed, and
-      measured cost when a gateway records it.</p></div>
-    <div class="card"><h3>Where did the tokens go?</h3><p>Four mutually exclusive buckets that sum
-      to the total: fresh input, cache read, cache write, output. Streaming re-reports collapsed
-      to run-maxima, never summed — the difference is up to 45× on real data.</p></div>
-    <div class="card"><h3>Is my usage trending up?</h3><p>Daily series, moving averages, period
-      comparison, forecasts with stated confidence, anomaly alerts — and correlations with git
-      activity labelled as correlations, never as productivity.</p></div>
-    <div class="card"><h3>Live, in the menu bar</h3><p>A native macOS app (no Electron) shows
-      today's spend at a glance, per-provider rolling windows, 5-hour session-block countdowns,
-      capacity meters against limits you declare, and exhaustion ETAs.</p></div>
+<section id="why"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Why TokenFlow</p>
+    <h2>The questions billing pages cannot answer.</h2>
+    <p class="subhead">Vendor consoles show one vendor, one account, at their granularity.
+    TokenFlow answers across every tool on your machine, at request granularity, with the raw
+    records still on disk so you can check the arithmetic.</p>
   </div>
-</section>
+  <div class="grid grid-4">
+    <div class="card reveal"><p class="metric">4 buckets</p>
+      <h3>Tokens that add up</h3><p>Fresh input, cache read, cache write and output are mutually
+      exclusive and always sum to the total. Cache is never counted twice.</p></div>
+    <div class="card reveal"><p class="metric">45×</p>
+      <h3>Streaming done right</h3><p>Re-reported usage in streaming logs is collapsed to
+      run-maxima, never summed. The naive reading of real data was off by forty five times.</p></div>
+    <div class="card reveal"><p class="metric">$ honest</p>
+      <h3>Prices with receipts</h3><p>Every rate names the vendor page it came from. Unknown models
+      stay blank with an explanation, never a confident zero.</p></div>
+    <div class="card reveal"><p class="metric">0 bytes</p>
+      <h3>Local by construction</h3><p>There is no network client in this codebase. The server
+      binds to loopback. Verify it yourself with one grep.</p></div>
+  </div>
+</div></section>
 
-<section id="start">
-  <h2>Three commands</h2>
-  <p class="sub">No configuration, no keys, no <code>npm install</code> — there is nothing to install.
-  Node 22.5+ is the only requirement.</p>
-<pre><span class="c"># detect what you already have, ingest, open the dashboard</span>
-git clone https://github.com/vimoxshah/tokenflow.git <span class="k">&amp;&amp;</span> cd tokenflow
-npm run setup        <span class="c"># finds ~/.claude*, ~/.codex, ~/.cursor, …</span>
-npm start            <span class="c"># refresh → offline file → dashboard at :7799</span></pre>
-  <p class="sub" style="margin-top:18px;">Just looking? <code>npm run demo</code> generates clearly-labelled
-  synthetic data so you can explore before pointing it at anything real.</p>
-</section>
+<section id="tagline" class="tagline-sec"><div class="wrap">
+  <p class="tagline">Your AI usage tells a story. TokenFlow reads it honestly.</p>
+</div></section>
 
-<section id="sources">
-  <h2>It speaks to what you already use</h2>
+<section id="how"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">How it works</p>
+    <h2>Three commands, no configuration.</h2>
+  </div>
+  <div class="steps reveal">
+    <div class="step"><span class="step-num">1</span><div>
+      <h3>Detect what you already have</h3>
+      <p><code>npm run setup</code> asks each adapter to find its own logs in conventional
+      locations. Nothing is discovered by scanning your disk.</p></div></div>
+    <div class="step"><span class="step-num">2</span><div>
+      <h3>Ingest incrementally</h3>
+      <p><code>tokenflow refresh</code> resumes each file at a byte offset. Unchanged files are
+      skipped entirely, so the second run takes seconds.</p></div></div>
+    <div class="step"><span class="step-num">3</span><div>
+      <h3>Open the dashboard</h3>
+      <p><code>npm start</code> serves everything at loopback:7799, or exports one self-contained
+      HTML file that opens anywhere, offline forever.</p></div></div>
+  </div>
+</div></section>
+
+<section id="sources"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Sources</p>
+    <h2>It speaks to what you already use.</h2>
+  </div>
+  <div class="tablewrap card reveal" style="padding:8px 16px;">
   <table>
-    <tr><th>Source</th><th>Reads</th><th>Gives</th></tr>
-    <tr><td>Claude Code / Agent SDK</td><td><code>~/.claude*/projects/**</code></td><td>full per-request tokens incl. long-TTL cache writes</td></tr>
-    <tr><td>Codex CLI / IDE / Desktop</td><td><code>~/.codex/sessions/**</code></td><td>per-turn tokens, OpenAI-inclusive input handled correctly</td></tr>
-    <tr><td>OpenCode</td><td><code>opencode.db</code></td><td>per-request tokens + gateway routing</td></tr>
-    <tr><td>Hermes</td><td><code>~/.hermes/state.db</code></td><td>per-session-per-model tokens, measured cost</td></tr>
-    <tr><td>Cline</td><td>sessions dir</td><td>activity only — no token counts exist, and it never pretends otherwise</td></tr>
-    <tr><td>Cursor</td><td><code>ai-code-tracking.db</code></td><td>AI-authored edits, per-commit attribution</td></tr>
-    <tr><td>Gateways</td><td>e.g. Headroom JSONL</td><td>overlay records: measured cost, excluded from token totals</td></tr>
-    <tr><td>Git</td><td>any repository</td><td>the independent work signal for correlation</td></tr>
-    <tr><td>Anything else</td><td>CSV/JSON/JSONL/SQLite</td><td>a saved field mapping — no adapter needed</td></tr>
+    <tr><td>Claude Code / Agent SDK</td><td class="src">~/.claude*/projects/**</td>
+        <td class="gives">full per-request tokens including long TTL cache writes</td></tr>
+    <tr><td>Codex CLI / IDE / Desktop</td><td class="src">~/.codex/sessions/**</td>
+        <td class="gives">per-turn tokens, OpenAI inclusive input handled correctly</td></tr>
+    <tr><td>OpenCode</td><td class="src">opencode.db</td>
+        <td class="gives">per-request tokens plus gateway routing</td></tr>
+    <tr><td>Hermes</td><td class="src">~/.hermes/state.db</td>
+        <td class="gives">per session per model tokens and measured cost</td></tr>
+    <tr><td>Cline</td><td class="src">sessions dir</td>
+        <td class="gives">activity only; missing token counts stay missing, never zero</td></tr>
+    <tr><td>Cursor</td><td class="src">ai-code-tracking.db</td>
+        <td class="gives">AI authored edits with per commit attribution</td></tr>
+    <tr><td>Gateways</td><td class="src">e.g. Headroom JSONL</td>
+        <td class="gives">measured cost as overlay records, excluded from token totals</td></tr>
+    <tr><td>Anything else</td><td class="src">CSV · JSONL · SQLite</td>
+        <td class="gives">a saved field mapping, no adapter needed</td></tr>
   </table>
-</section>
+  </div>
+</div></section>
 
-<section id="privacy">
-  <h2>Local by construction, not by policy</h2>
-  <p class="sub">There is no HTTP client in this codebase at all. The server binds to
-  <code>127.0.0.1</code>. Adapters read token counts and metadata and discard prompt text, source
-  code, and file content. Everything lives in <code>~/.tokenflow/</code>, which you can back up or
-  delete. Verify it yourself: <code>grep -rn "fetch\|https\?://" src/</code>.</p>
-</section>
+<section id="faq"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Questions</p>
+    <h2>Fair questions, straight answers.</h2>
+  </div>
+  <details class="faq-item reveal"><summary>Is my data sent anywhere?</summary>
+    <p>No. There is no HTTP client in the codebase at all. Adapters read token counts and
+    metadata and discard prompt text, source code and file contents. Everything lives in
+    ~/.tokenflow which you can back up or delete.</p></details>
+  <details class="faq-item reveal"><summary>Why does macOS warn on first launch?</summary>
+    <p>The app is unsigned because there is no Apple Developer account behind this free project.
+    Right click the app, choose Open, then Open again. That gate appears once only.</p></details>
+  <details class="faq-item reveal"><summary>Does the menu bar app need the terminal?</summary>
+    <p>No. The DMG build embeds everything it needs and can drive refresh, watcher and dashboard
+    itself. The CLI path exists for people who prefer it and for Linux and Windows.</p></details>
+  <details class="faq-item reveal"><summary>What about tools that report no tokens?</summary>
+    <p>Sources like Cline get activity metrics only. Missing token fields stay null rather than
+    zero, so averages are never dragged toward zero by data that does not exist.</p></details>
+  <details class="faq-item reveal"><summary>Can I trust the cost estimates?</summary>
+    <p>Every built-in rate records its source URL and fetch date. Service tiers are applied as
+    multipliers per request. Models without a published rate show blank with a reason.</p></details>
+</div></section>
 
-<section id="download-help">
-  <h2>Installing the macOS app</h2>
-  <ol>
-    <li><strong>Download</strong> the latest <code>TokenFlow-*.dmg</code> from
-      <a href="https://github.com/vimoxshah/tokenflow/releases/latest">Releases</a>.</li>
-    <li><strong>Open the DMG</strong> and drag TokenFlow.app into Applications.</li>
-    <li><strong>Launch from Launchpad.</strong> First launch only: right-click → Open → Open
-      (the build is unsigned).</li>
-    <li>The menu bar item appears. Click it for the full panel; use
-      <strong>Start watcher</strong> there to keep data current every two minutes.</li>
-  </ol>
-  <p class="sub" style="margin-top:16px;">Prefer terminal-only? The clone-and-run path above gives you
-  everything including the same menu bar app (<code>node bin/tokenflow.js menubar --app</code>).</p>
-</section>
+<section class="final"><div class="wrap reveal">
+  <h2>Point it at your logs. Know your numbers.</h2>
+  <p>Free and open source under MIT. Your tokens never leave your machine.</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/vimoxshah/tokenflow/releases/latest">Download for macOS</a>
+    <a class="btn btn-ghost" href="https://github.com/vimoxshah/tokenflow#readme">Read the docs</a>
+  </div>
+</div></section>
 
-<footer>
+<footer><div class="wrap" style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <span>TokenFlow — MIT licensed, built in the open.</span>
   <span><a href="https://github.com/vimoxshah/tokenflow">GitHub</a> ·
         <a href="https://github.com/vimoxshah/tokenflow/releases">Releases</a> ·
         <a href="https://github.com/vimoxshah/tokenflow/blob/main/docs/getting-started.md">Docs</a></span>
-</footer>
-</div>
+</div></footer>
 
-<script>
-// Point the download button at whatever the newest release asset actually is.
-fetch('https://api.github.com/repos/vimoxshah/tokenflow/releases/latest')
-  .then(r => r.json())
-  .then(rel => {
-    const dmg = (rel.assets || []).find(a => a.name.endsWith('.dmg'));
-    if (dmg) document.getElementById('download-btn').href = dmg.browser_download_url;
-  })
-  .catch(() => {}); // falls back to the releases page
-</script>
+<script src="main.js"></script>
 </body>
 </html>

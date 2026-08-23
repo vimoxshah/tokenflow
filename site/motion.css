@@ -1,0 +1,61 @@
+/* tagline reveal, steps, table, faq, final cta, footer, animations */
+
+.tagline-sec { padding: 96px 0; }
+.tagline { font-size: 48px; line-height: 1.1; font-weight: 700;
+  max-width: 680px; letter-spacing: -0.01em; }
+@media (max-width: 640px) { .tagline { font-size: 36px; line-height: 40px; } }
+.tagline .w { color: rgba(242,244,248,.28); transition: color .7s var(--ease); }
+.tagline .w.on { color: var(--text); }
+.tagline .accent.on { color: var(--accent); }
+
+.steps { counter-reset: step; }
+.step { display: grid; grid-template-columns: 48px 1fr; gap: 16px; padding: 24px 0;
+  border-bottom: 1px solid var(--line); }
+.step:last-child { border-bottom: none; }
+.step-num { width: 32px; height: 32px; border-radius: 999px; background: var(--card);
+  border: 1px solid var(--line); display: flex; align-items: center; justify-content: center;
+  font-size: 14px; line-height: 20px; font-weight: 600; color: var(--accent);
+  font-variant-numeric: tabular-nums; }
+.step h3 { font-size: 18px; line-height: 28px; font-weight: 600; margin-bottom: 4px; }
+.step p { color: var(--dim); font-size: 14px; line-height: 20px; max-width: 560px; }
+.step code { background: var(--bg2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 2px 8px; font-size: 13px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 20px; }
+td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td:first-child { font-weight: 600; white-space: nowrap; }
+td.src { color: var(--dim); font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+td.gives { color: var(--dim); }
+
+.faq-item { border-bottom: 1px solid var(--line); }
+.faq-item summary { cursor: pointer; list-style: none; display: flex;
+  justify-content: space-between; align-items: center; gap: 16px;
+  padding: 16px 0; font-weight: 600; font-size: 16px; line-height: 24px; }
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item summary::after { content: "+"; color: var(--dim); font-size: 20px;
+  transition: transform .7s var(--ease); }
+.faq-item[open] summary::after { transform: rotate(45deg); }
+.faq-item p { color: var(--dim); padding-bottom: 16px; max-width: 640px; }
+
+.final { text-align: center; padding: 96px 0; }
+.final h2 { margin-bottom: 12px; }
+.final p { color: var(--dim); max-width: 480px; margin: 0 auto 32px; }
+.final .cta { justify-content: center; }
+
+footer { padding: 48px 0 64px; border-top: 1px solid var(--line); color: var(--dim);
+  font-size: 14px; line-height: 20px; display: flex; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; }
+
+/* scroll reveal */
+.reveal { opacity: 0; transform: translateY(24px);
+  transition: opacity .7s var(--ease), transform .7s var(--ease); }
+.reveal.in { opacity: 1; transform: none; }
+
+/* hero chart animation */
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.hero-line { stroke-dasharray: 600; stroke-dashoffset: 600;
+  animation: draw 1.4s var(--ease) .3s forwards; }
+.hero-line.late { animation-delay: .7s; }
+@keyframes pop { from { opacity: 0; transform: scale(.6); } }
+.bar-pop { animation: pop .7s var(--ease) backwards; }
