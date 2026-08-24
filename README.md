@@ -25,6 +25,14 @@
 <p align="center"><em>The native macOS menu bar popover — live cost, tokens, per-provider,
 per-source and per-model usage, capacity meters and forecast, in light and dark.</em></p>
 
+<p align="center">
+  🌐 <a href="https://vimoxshah.github.io/tokenflow/"><strong>Landing page</strong></a>
+  &nbsp;·&nbsp;
+  📦 <a href="https://www.npmjs.com/package/@vimoxshah/tokenflow"><code>@vimoxshah/tokenflow</code> on npm</a>
+  &nbsp;·&nbsp;
+  🍺 <code>brew install --cask tokenflow</code> (via <a href="https://github.com/vimoxshah/tokenflow">this tap</a>)
+</p>
+
 **How deep it goes**
 
 | Layer | What's inside |
