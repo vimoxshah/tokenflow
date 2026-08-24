@@ -1377,6 +1377,12 @@ enum PreviewRenderer {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+// Opt out of macOS Automatic Termination: with no windows open (menu-bar-only
+// app), AppKit marks the process eligible for silent termination under memory
+// pressure or after idle. TokenFlow must stay resident — it is the user's
+// live usage indicator — so disable both mechanisms explicitly.
+ProcessInfo.processInfo.disableAutomaticTermination("TokenFlow is a menu-bar status app that must stay resident")
+ProcessInfo.processInfo.disableSuddenTermination()
 
 let argv = CommandLine.arguments
 if let i = argv.firstIndex(of: "--preview"), argv.count > i + 1 {
