@@ -157,8 +157,8 @@ jobs:
     needs: [validate, npm-package]
     runs-on: ubuntu-latest
     # Publishes only when NPM_TOKEN secret is configured. Skipped otherwise so
-    # forks can run the release pipeline without npm credentials.
-    if: ${{ secrets.NPM_TOKEN != '' }}
+    # forks can run the release pipeline without npm credentials. (secrets
+    # context is not allowed in job-level `if`, so the check lives in a step.)
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -167,7 +167,18 @@ jobs:
         with:
           node-version: '24.x'
           registry-url: 'https://registry.npmjs.org/'
+      - id: has_token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::NPM_TOKEN not set — skipping npm publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish scoped public package
+        if: steps.has_token.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public vimoxshah-tokenflow-*.tgz
