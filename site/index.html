@@ -22,7 +22,7 @@
     TokenFlow
   </a>
   <div class="navlinks">
-    <a href="#features">Features</a><a href="#depth">Under the hood</a><a href="#usp">Why</a><a href="#map">Global</a>
+    <a href="#features">Features</a><a href="#intelligence">Intelligence</a><a href="#install">Install</a><a href="#depth">Under the hood</a><a href="#usp">Why</a><a href="#map">Global</a>
     <a href="#how">How it works</a>
     <a href="#sources">Sources</a><a href="https://github.com/vimoxshah/tokenflow" target="_blank" rel="noopener noreferrer">GitHub</a>
   </div>
@@ -158,6 +158,55 @@
   </div>
 </div></section>
 
+<section id="install"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Install</p>
+    <h2>Up and running in under a minute.</h2>
+  </div>
+  <div class="steps reveal" style="grid-template-columns:1fr;">
+    <div class="step"><span class="step-num">⌘</span><div>
+      <h3>macOS menu-bar app (Homebrew)</h3>
+      <p><code>brew tap vimoxshah/tap https://github.com/vimoxshah/tokenflow</code><br>
+      <code>brew install --cask tokenflow</code></p></div></div>
+    <div class="step"><span class="step-num">›_</span><div>
+      <h3>CLI + dashboard, any platform (npm)</h3>
+      <p><code>npx @vimoxshah/tokenflow@latest setup</code></p></div></div>
+    <div class="step"><span class="step-num">↓</span><div>
+      <h3>Or grab the DMG</h3>
+      <p>Download from the
+      <a href="https://github.com/vimoxshah/tokenflow/releases/latest">latest release</a>.</p></div></div>
+  </div>
+</div></section>
+
+<section id="intelligence"><div class="wrap">
+  <div class="section-head reveal">
+    <p class="kicker">Intelligence</p>
+    <h2>It doesn't just count. It tells you things.</h2>
+  </div>
+  <div class="cards reveal">
+    <div class="card"><h3>Weekly digest</h3>
+      <p>Your AI week — requests, tokens, cost, peak day, week-over-week spikes — generated on a
+      launchd schedule and delivered to your Telegram, inbox, or webhook. Opt-in per channel;
+      always archived locally.</p></div>
+    <div class="card"><h3>Budget alerts</h3>
+      <p>Set a monthly cap once. TokenFlow projects month-end spend from your real velocity and
+      warns you <em>before</em> you cross it — approaching, projected-over, and actual-over states,
+      each alerting exactly once.</p></div>
+    <div class="card"><h3>Model comparison</h3>
+      <p>Which model actually costs you what? Cost per request, tokens per request, cache-hit
+      rate — computed from your own transcripts, never vendor marketing.</p></div>
+    <div class="card"><h3>Prompt analytics</h3>
+      <p>Strictly opt-in. Prompts become one-way hashes grouped into categories — code review,
+      debugging, docs — so you see where the money goes without ever storing what you typed.</p></div>
+    <div class="card"><h3>Multi-machine sync</h3>
+      <p>Laptop plus desktop? Sync daily totals through any folder you already share
+      (iCloud, Dropbox, Syncthing). Daily numbers only — never prompts or code. Off by default.</p></div>
+    <div class="card"><h3>Diagnostics</h3>
+      <p><code>tokenflow diagnostics</code> shows version, providers, data freshness, and every
+      feature state locally. Nothing is transmitted; sharing an export is always your call.</p></div>
+  </div>
+</div></section>
+
 <section id="sources"><div class="wrap">
   <div class="section-head reveal">
     <p class="kicker">Sources</p>
@@ -228,3 +277,5 @@
 <script src="worldmap.js"></script>
 <script src="three-bg.js"></script>
 <script src="main.js"></script>
+</body>
+</html>
