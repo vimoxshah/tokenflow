@@ -38,9 +38,44 @@ per-source and per-model usage, capacity meters and forecast, in light and dark.
 
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
+## Uninstall
+
+```bash
+# macOS app
+brew uninstall --cask tokenflow        # if installed via the tap
+# otherwise: quit TokenFlow, drag /Applications/TokenFlow.app to Trash
+
+# CLI / npm
+npm uninstall -g @vimoxshah/tokenflow  # if installed globally
+
+# data (everything local: config, records, digests, state)
+rm -rf ~/.tokenflow
+
+# optional extras you may have installed
+launchctl unload ~/Library/LaunchAgents/app.tokenflow.digest.plist 2>/dev/null
+rm -f ~/Library/LaunchAgents/app.tokenflow.digest.plist
+launchctl unload ~/Library/LaunchAgents/app.tokenflow.bar.plist 2>/dev/null
+rm -f ~/Library/LaunchAgents/app.tokenflow.bar.plist
+```
+
+Nothing is stored anywhere else. Deleting `~/.tokenflow` and the app removes every trace.
+
 ### Install
 
-**macOS app** — download `TokenFlow-*.dmg` from the
+**Homebrew (macOS)** — the one-liner:
+
+```bash
+brew tap vimoxshah/tap https://github.com/vimoxshah/tokenflow
+brew install --cask tokenflow
+```
+
+**npm (macOS, Linux, Windows)** — CLI + dashboard, no app bundle:
+
+```bash
+npx @vimoxshah/tokenflow@latest setup
+```
+
+**macOS app (manual)** — download `TokenFlow-*.dmg` from the
 [**latest release**](https://github.com/vimoxshah/tokenflow/releases/latest) (each release also
 carries `tokenflow-dashboard-demo.html`, an offline demo dashboard that opens in any browser).
 Open the DMG, drag **TokenFlow.app** to Applications, launch from Launchpad.
