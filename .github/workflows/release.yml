@@ -90,8 +90,8 @@ jobs:
         run: |
           V="${{ needs.validate.outputs.version }}"
           cd dist
-          shasum -a 256 "TokenFlow-$V.dmg" > "TokenFlow-$V.dmg.sha256"
-          mv "TokenFlow-$V.dmg.sha256" ..
+          shasum -a 256 "TokenFlow-$V.dmg" > "../TokenFlow-$V.dmg.sha256"
+          mv "TokenFlow-$V.dmg" ..
       - uses: actions/upload-artifact@v4
         with:
           name: TokenFlow-dmg
