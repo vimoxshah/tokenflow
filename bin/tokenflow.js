@@ -80,6 +80,11 @@ async function main() {
     case 'forecast': return cmdForecast();
     case 'menubar': return cmdMenubar();
     case 'digest': return cmdDigest();
+    case 'schedule': return cmdSchedule();
+    case 'budget': return cmdBudget();
+    case 'sync': return cmdSync();
+    case 'models-compare': return cmdModelsCompare();
+    case 'diagnostics': return cmdDiagnostics();
     default:
       console.error(`${C.red}Unknown command "${cmd}".${C.r}\n`);
       return help(1);
@@ -959,7 +964,7 @@ async function cmdForecast() {
   console.log(`\n  ${C.dim}Projections are trends, not promises — they assume the recent pattern continues.${C.r}\n`);
 }
 
-/** `tokenflow menubar` — native app / render / install menu-bar integrations. */
+/** `tokenflow digest` — build (and optionally deliver) the shareable summary. */
 async function cmdDigest() {
   const { run: runDigest } = await import('../src/commands/digest.js');
   const f = {};
@@ -968,11 +973,176 @@ async function cmdDigest() {
     from: f.from, to: f.to,
     format: f.format === 'text' ? 'text' : 'markdown',
   });
-  if (typeof f.out === 'string') {
+
+  // Always persist to $TOKENFLOW_HOME/digests/ when delivering or asked to,
+  // so there is a local record even if every delivery channel fails.
+  if (f.deliver || f.save) {
+    const { paths } = await import('../src/core/config.js');
+    const dir = `${paths().root}/digests`;
+    fs.mkdirSync(dir, { recursive: true });
+    const file = `${dir}/${f.to || new Date().toISOString().slice(0, 10)}.md`;
+    fs.writeFileSync(file, out + '\n');
+    console.log(`${C.dim}saved ${file}${C.r}`);
+  }
+
+  if (f.deliver) {
+    const { loadConfig } = await import('../src/core/config.js');
+    const { deliverAll } = await import('../src/core/delivery.js');
+    const results = await deliverAll(loadConfig(), out, { subject: `TokenFlow digest ${f.to || ''}`.trim() });
+    for (const r of results) {
+      if (r.skipped) console.log(`${C.dim}  ${r.channel}: not configured${C.r}`);
+      else if (r.ok) console.log(`${C.g}✓${C.r} delivered via ${r.channel}`);
+      else console.log(`${C.red}✗${C.r} ${r.channel}: ${r.error}`);
+    }
+  } else if (typeof f.out === 'string') {
     fs.writeFileSync(f.out, out + '\n');
     console.log(`${C.g}✓${C.r} wrote ${f.out}`);
   } else {
     console.log(out);
+  }
+}
+
+/** `tokenflow schedule` — install/remove the weekly digest LaunchAgent. */
+async function cmdSchedule() {
+  const sched = await import('../src/core/schedule.js');
+  if (flags.uninstall) { console.log(sched.uninstall()); return; }
+  if (flags.status !== undefined && Object.prototype.hasOwnProperty.call(flags, 'status')) {
+    const s = sched.status();
+    console.log(`installed: ${s.installed ? 'yes' : 'no'}   loaded: ${s.loaded ? 'yes' : 'no'}`);
+    console.log(`latest digest: ${s.latestDigest || 'none yet'}`);
+    return;
+  }
+  // --install (default when neither flag given? no — require explicit intent)
+  console.log(sched.install({ when: flags.at }));
+}
+
+/** `tokenflow budget` — monthly budget status + forecast alerts with dedup. */
+async function cmdBudget() {
+  const cfg = loadConfig();
+  const budget = { ...cfg.budget };
+  if (flags.set) {
+    const v = Number(flags.set);
+    if (!(v > 0)) throw new Error('--set expects a positive number, e.g. budget --set 200');
+    budget.monthly = v;
+    saveConfig(merge(cfg, { budget }));
+    console.log(`${C.g}✓${C.r} monthly budget set to $${v.toLocaleString('en-US')}`);
+  }
+  if (!budget.monthly) {
+    console.log('No monthly budget configured. Set one:');
+    console.log(`  ${C.b}tokenflow budget --set 200${C.r}   # $200/month, warn at 80% projected`);
+    return;
+  }
+
+  const { currentStatus } = await import('../src/core/live-status.js');
+  const { computeBudgetState, shouldAlert } = await import('../src/core/budget.js');
+  const { notify } = await import('../src/core/notify.js');
+  const { status } = currentStatus();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const st = computeBudgetState(status, { monthly: budget.monthly, warnAtPct: budget.warnAtPct }, today);
+  if (!st) { console.log('No usage data yet.'); return; }
+
+  const { fire } = shouldAlert(st, { force: !!flags.force });
+
+  console.log(`${C.b}Budget — ${today.slice(0, 7)}${C.r}`);
+  console.log(`  Monthly cap:      $${budget.monthly.toLocaleString('en-US')} (warn at ${budget.warnAtPct ?? 80}%)`);
+  if (st.spent != null) console.log(`  Spent (est. MTD): $${st.spent.toLocaleString('en-US', { maximumFractionDigits: 2 })}`);
+  if (st.projected != null) console.log(`  Projected EOM:    $${st.projected.toLocaleString('en-US', { maximumFractionDigits: 2 })}  ${C.dim}(projection)${C.r}`);
+
+  const color = st.state === 'safe' ? C.g : st.state === 'unknown' ? C.dim : C.red;
+  console.log(`\n  State: ${color}${st.state.toUpperCase()}${C.r}`);
+  if (st.message || st.reason) console.log(`  ${(st.message || st.reason)}`);
+
+  if (fire && (budget.notify || flags.notify)) {
+    try { notify({ title: `TokenFlow budget: ${st.state.replace(/_/g, ' ')}`, body: st.message || '' }); console.log(`${C.g}✓${C.r} OS notification sent`); }
+    catch { /* notification is best-effort */ }
+    if (cfg.delivery && Object.values(cfg.delivery).some((ch) => ch && Object.values(ch).some(Boolean))) {
+      const { deliverAll } = await import('../src/core/delivery.js');
+      const results = await deliverAll(cfg, `**TokenFlow budget alert** — ${st.state}\n\n${st.message || ''}`, { subject: `TokenFlow budget: ${st.state}` });
+      for (const r of results) if (!r.skipped) console.log(r.ok ? `${C.g}✓${C.r} delivered via ${r.channel}` : `${C.red}✗${C.r} ${r.channel}: ${r.error}`);
+    }
+  } else if (st.state !== 'safe' && st.state !== 'unknown') {
+    console.log(C.dim + '  (already alerted for this state this month — no spam)');
+  }
+}
+
+/** `tokenflow sync` — optional multi-machine aggregation via a shared folder. */
+async function cmdSync() {
+  const { isEnabled, push, pull, machineId } = await import('../src/core/sync.js');
+  const cfg = loadConfig();
+
+  if (flags.off) {
+    saveConfig(merge(cfg, { sync: { ...cfg.sync, enabled: false } }));
+    console.log(`${C.g}✓${C.r} sync disabled — nothing leaves this machine`);
+    return;
+  }
+
+  if (!isEnabled(cfg)) {
+    console.log(`Multi-machine sync is ${C.b}OFF${C.r} by default. To enable it:
+
+  1. Pick a folder that syncs between your machines
+     (iCloud Drive, Dropbox, Syncthing mount…)
+  2. Add to ~/.tokenflow/config.yaml:
+
+       sync:
+         enabled: true
+         dir: ~/Sync/TokenFlow        # that shared folder
+         machineName: MacBook Pro     # label shown in aggregated views
+
+  3. Run ${C.b}tokenflow sync --push${C.r} on each machine.
+
+What is shared: daily totals only (date, tokens, requests, est. cost).
+What is never shared: prompts, code, file paths, credentials.`);
+    return;
+  }
+
+  const id = machineId();
+  if (flags.push || flags.pull === undefined) {
+    // default action with no sub-flag = push + pull
+  }
+  try {
+    if (!flags.pull) {
+      const r = push({ config: cfg });
+      console.log(r.days
+        ? `${C.g}✓${C.r} pushed ${r.days} days → ${path.basename(r.file)}`
+        : `${C.dim}nothing to push yet${C.r}`);
+    }
+    const merged = pull({ config: cfg });
+    const totalReq = merged.days.reduce((a, d) => a + d.requests, 0);
+    const totalCost = merged.days.reduce((a, d) => a + d.estCost, 0);
+    console.log(`\n${C.b}Aggregated (${merged.machines.length} machine${merged.machines.length === 1 ? '' : 's'})${C.r}`);
+    for (const d of merged.days.slice(-14)) {
+      console.log(`  ${d.date}  ${d.machineCount} mach  ${String(d.requests).padStart(6)} req`);
+    }
+    if (merged.days.length) {
+      console.log(`\n  Totals across all machines: ${totalReq.toLocaleString('en-US')} requests · $${totalCost.toFixed(2)} est.`);
+    }
+    console.log(C.dim + `  this machine's id: ${id}${C.r}`);
+  } catch (e) {
+    throw Object.assign(new Error(e.message), { exitCode: 1 });
+  }
+}
+
+/** `tokenflow models-compare` — cost/usage efficiency per model, own data. */
+async function cmdModelsCompare() {
+  const { compare, renderText } = await import('../src/commands/models-compare.js');
+  const f = {};
+  for (const [k, v] of Object.entries(flags)) if (v != null) f[k] = v;
+  const cmp = compare({ from: f.from, to: f.to });
+  console.log(renderText(cmp));
+}
+
+/** `tokenflow diagnostics` — local observability, nothing transmitted. */
+async function cmdDiagnostics() {
+  const { collect, renderText } = await import('../src/commands/diagnostics.js');
+  const d = collect({ includePaths: !!flags.paths });
+  if (typeof flags.out === 'string') {
+    fs.writeFileSync(flags.out, JSON.stringify(d, null, 2) + '\n');
+    console.log(`${C.g}✓${C.r} wrote ${flags.out} — review it before sharing (paths included: ${!!flags.paths})`);
+  } else if (flags.json) {
+    console.log(JSON.stringify(d, null, 2));
+  } else {
+    console.log(renderText(d));
   }
 }
 

@@ -80,6 +80,38 @@ export const DEFAULT_CONFIG = {
   // TokenFlow never invents vendor quota data; a limit exists only if you
   // declared it here (or via the dashboard's Live tab).
   limits: [],
+  // Monthly spend budget with forecast alerts. OFF until `monthly` is set.
+  //   budget: { monthly: 200, warnAtPct: 80 }
+  // Alerts fire once per state per month (approaching / over-projected /
+  // over-actual), persisted in data/budget-state.json to avoid spam.
+  budget: {
+    monthly: null,
+    warnAtPct: 80,
+    notify: false, // opt-in OS/delivery notification; state tracking always on
+  },
+  // Digest delivery channels. Each is OFF until configured. Credentials live
+  // only in this local file and are never logged or transmitted elsewhere.
+  delivery: {
+    telegram: { botToken: null, chatId: null },
+    email: { smtpUrl: null, to: null },
+    webhook: { url: null },
+  },
+  // Optional multi-machine aggregation. OFF by default: nothing leaves this
+  // machine until you point sync.dir at a folder shared between your machines
+  // (iCloud/Dropbox/Syncthing) and set enabled: true. Only daily totals are
+  // exchanged — never prompts, code, or credentials. See src/core/sync.js.
+  sync: {
+    enabled: false,
+    dir: null,            // e.g. ~/Sync/TokenFlow
+    machineName: null,    // friendly label; defaults to hostname
+  },
+  // Prompt-level analytics. STRICTLY opt-in and OFF by default. Even when
+  // enabled, only one-way hashes + categories are stored — raw prompt text is
+  // captured only if storeRaw is separately set to true.
+  promptAnalytics: {
+    enabled: false,
+    storeRaw: false,
+  },
   // The background refresher (`tokenflow watch`). It runs only while you
   // explicitly started it; nothing is installed or auto-started.
   watch: {
