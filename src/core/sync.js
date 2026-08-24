@@ -12,9 +12,12 @@
  *     enabled: false            # ← default; nothing leaves the machine
  *     dir: ~/Sync/TokenFlow     # shared folder both machines can see
  *     machineName: MacBook Pro  # friendly label shown in aggregated views
+ *     developerName: Vimox      # OPTIONAL — only when the team explicitly
+ *                               # opts into per-developer visibility (P4-B)
  *
  * What is transmitted (per day, per provider/model):
  *   date, tokens in/out/cache, requests, estimated cost, machineId
+ *   + developerName ONLY if you set it yourself (team mode, opt-in)
  * What is NEVER transmitted: prompts, code, file paths beyond the machine
  * label you chose, credentials.
  *
@@ -90,10 +93,15 @@ export function push(opt = {}) {
 
   const id = machineId();
   const name = sanitizeName(cfg.sync.machineName || os.hostname().split('.')[0]);
+  // Developer identity is included ONLY when the user explicitly set
+  // sync.developerName in their own config. Absent field = anonymous machine.
+  const dev = cfg.sync.developerName ? sanitizeName(cfg.sync.developerName) : null;
   const lines = [...byDay.values()]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((d) => JSON.stringify({
-      machineId: id, machineName: name, date: d.date,
+      machineId: id, machineName: name,
+      ...(dev ? { developer: dev } : {}),
+      date: d.date,
       inputTokens: d.input, outputTokens: d.output,
       requests: d.requests, estCostUsd: Math.round(d.estCost * 10000) / 10000,
       exportedAt: new Date().toISOString(),

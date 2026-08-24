@@ -85,6 +85,7 @@ async function main() {
     case 'sync': return cmdSync();
     case 'models-compare': return cmdModelsCompare();
     case 'diagnostics': return cmdDiagnostics();
+    case 'team': return cmdTeam();
     default:
       console.error(`${C.red}Unknown command "${cmd}".${C.r}\n`);
       return help(1);
@@ -1144,6 +1145,33 @@ async function cmdDiagnostics() {
   } else {
     console.log(renderText(d));
   }
+}
+
+/** `tokenflow team` — per-developer usage from the shared sync folder (P4-B). */
+async function cmdTeam() {
+  const cfg = loadConfig();
+  if (!cfg.sync?.enabled || !cfg.sync?.dir) {
+    console.error(`${C.red}Team view reads the shared sync folder.${C.r}
+Enable multi-machine sync first — every team member points at the SAME folder:
+
+  sync:
+    enabled: true
+    dir: /path/to/shared/TokenFlow      # same folder for everyone
+    machineName: MacBook Pro            # this machine's label
+    developerName: Your Name            # ← opt-in per person; omit to stay anonymous
+
+Then run \`tokenflow sync\` on each machine and \`tokenflow team\` here.`);
+    return;
+  }
+  const { aggregate, renderText } = await import('../src/core/team.js');
+  const dir = cfg.sync.dir.replace(/^~(?=$|\/)/, os.homedir());
+  const t = aggregate(dir, {
+    from: typeof flags.from === 'string' ? flags.from : null,
+    to: typeof flags.to === 'string' ? flags.to : null,
+    includeAnonymous: !!flags['include-anonymous'],
+  });
+  if (flags.json) { console.log(JSON.stringify(t, null, 2)); return; }
+  console.log(renderText(t));
 }
 
 async function cmdMenubar() {
