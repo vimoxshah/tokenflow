@@ -191,6 +191,7 @@ node bin/tokenflow.js models-compare # cost/usage efficiency per model — your 
 node bin/tokenflow.js budget --set 200   # monthly cap + forecast alerts (fires once per state/month)
 node bin/tokenflow.js schedule --install --at "Monday 09:00"  # weekly digest via launchd
 node bin/tokenflow.js diagnostics    # local observability — nothing transmitted
+node bin/tokenflow.js team           # per-developer team view (needs sync + opt-in names)
 node bin/tokenflow.js up             # refresh → rebuild offline HTML → serve + open
 
 npm link                             # optional: global `tokenflow` command
@@ -272,6 +273,9 @@ discard the rest. No telemetry. Two features can touch the network, both strictl
 - **Multi-machine sync** (`sync:` in config) — exchanges daily totals (date, tokens, requests,
   est. cost) with a folder you own (iCloud/Dropbox/Syncthing). Never prompts, code, credentials.
   Default is OFF; nothing leaves this machine until you set `sync.enabled: true`.
+- **Team view** (`tokenflow team`) — per-developer usage from that same shared folder. A name
+  appears next to a machine only if its owner set `sync.developerName` themselves; machines
+  without it stay anonymous and are excluded from per-person rows.
 - **Prompt analytics** (`promptAnalytics:` in config) — OFF by default; even when enabled, only
   one-way prompt hashes and keyword categories are stored. Raw text requires a separate opt-in.
 - **Map location** (`map.showMyLocation: true`) — one cached IP geolocation of this machine to
