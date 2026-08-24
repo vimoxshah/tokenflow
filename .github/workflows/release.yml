@@ -89,9 +89,9 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           V="${{ needs.validate.outputs.version }}"
-          shasum -a 256 "dist/TokenFlow-$V.dmg" > "TokenFlow-$V.dmg.sha256"
-          mv "dist/TokenFlow-$V.dmg" .
-          cat "TokenFlow-$V.dmg.sha256"
+          cd dist
+          shasum -a 256 "TokenFlow-$V.dmg" > "TokenFlow-$V.dmg.sha256"
+          mv "TokenFlow-$V.dmg.sha256" ..
       - uses: actions/upload-artifact@v4
         with:
           name: TokenFlow-dmg
