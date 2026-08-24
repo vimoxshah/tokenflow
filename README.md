@@ -152,6 +152,10 @@ node bin/tokenflow.js watch          # auto-refresh every N seconds (default 120
 node bin/tokenflow.js import f.csv   # CSV/JSONL/SQLite via saved field mapping
 node bin/tokenflow.js export --csv   # --all for everything; --html for offline snapshot
 node bin/tokenflow.js digest         # shareable markdown summary (--format text, --from/--to, --out f.md)
+node bin/tokenflow.js models-compare # cost/usage efficiency per model — your data
+node bin/tokenflow.js budget --set 200   # monthly cap + forecast alerts (fires once per state/month)
+node bin/tokenflow.js schedule --install --at "Monday 09:00"  # weekly digest via launchd
+node bin/tokenflow.js diagnostics    # local observability — nothing transmitted
 node bin/tokenflow.js up             # refresh → rebuild offline HTML → serve + open
 
 npm link                             # optional: global `tokenflow` command
@@ -226,11 +230,19 @@ Easiest contribution: an adapter (`src/providers/<id>/index.js`) plus a fixture 
 
 Local data → local normalization → local analytics → local dashboard. The server binds to
 `127.0.0.1`. No prompt text, code, or file content is ever stored — adapters read token counts and
-discard the rest. No telemetry. The only outbound call the code can ever make
-is an IP geolocation lookup that runs solely when you set
-`map.showMyLocation: true` in config (see
-[docs/configuration.md](docs/configuration.md)); off by default, IP never
-stored. Everything lives in `~/.tokenflow/`.
+discard the rest. No telemetry. Two features can touch the network, both strictly opt-in:
+
+- **Digest delivery** (`delivery:` in config) — sends the digest you generate to your own
+  Telegram chat, email, or webhook. Credentials live only in `~/.tokenflow/config.yaml`.
+- **Multi-machine sync** (`sync:` in config) — exchanges daily totals (date, tokens, requests,
+  est. cost) with a folder you own (iCloud/Dropbox/Syncthing). Never prompts, code, credentials.
+  Default is OFF; nothing leaves this machine until you set `sync.enabled: true`.
+- **Prompt analytics** (`promptAnalytics:` in config) — OFF by default; even when enabled, only
+  one-way prompt hashes and keyword categories are stored. Raw text requires a separate opt-in.
+- **Map location** (`map.showMyLocation: true`) — one cached IP geolocation of this machine to
+  place "you" on the Global activity map. The IP itself is never stored.
+
+Everything lives in `~/.tokenflow/`.
 [SECURITY.md](SECURITY.md) covers the threat model and private vulnerability reporting.
 
 ## License
