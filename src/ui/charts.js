@@ -201,7 +201,8 @@ export function timeSeries(o) {
   const y = (v) => M.t + ih - (Math.max(0, v) / (yMax || 1)) * ih;
   // Left margin adapts to the widest y label so long formatters (int's
   // "3,500,000") never clip off-canvas or collide with the rotated axis title.
-  const widestY = Math.max(0, ...ticks.map((t) => String((o.fmtY || compact)(t)).length)) * 6.6;
+  const fmtY = o.fmtY || ((v) => String(v));
+  const widestY = Math.max(0, ...ticks.map((t) => String(fmtY(t)).length)) * 6.6;
   M.l = Math.max(M.l, Math.ceil(widestY) + 18);
   const iw = W - M.l - M.r;
 
