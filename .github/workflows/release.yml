@@ -190,24 +190,25 @@ jobs:
     needs: [validate, dmg, demo-dashboard]
     runs-on: ubuntu-latest
     steps:
+      # v4 downloads each named artifact into its own subdirectory; merge them
       - uses: actions/download-artifact@v4
         with:
-          name: TokenFlow-dmg
-      - uses: actions/download-artifact@v4
-        with:
-          name: demo-dashboard
+          pattern: '{TokenFlow-dmg,demo-dashboard}'
+          merge-multiple: true
+          path: assets
       - name: Verify all expected assets exist (fail loudly otherwise)
         run: |
           V="${{ needs.validate.outputs.version }}"
+          cd assets
           for f in "TokenFlow-$V.dmg" "TokenFlow-$V.dmg.sha256" "tokenflow-dashboard-demo.html"; do
-            [ -f "$f" ] || { echo "::error::$f missing"; exit 1; }
+            [ -f "$f" ] || { echo "::error::$f missing"; ls -la; exit 1; }
           done
-          # checksum round-trip
           shasum -a 256 -c "TokenFlow-$V.dmg.sha256"
       - name: Create or update the release with the assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          cd assets
           gh release create "$GITHUB_REF_NAME" \
             --title "TokenFlow ${GITHUB_REF_NAME#v}" \
             --generate-notes \
