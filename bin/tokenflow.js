@@ -1291,6 +1291,21 @@ function help(code = 0) {
     tokenflow export --csv --all    every normalized record
     tokenflow export --html         one self-contained offline dashboard file
 
+  ${C.b}Intelligence${C.r}
+    tokenflow models-compare        cost/request, tokens/request, cache-hit% per model
+                                   (--from/--to <date> to pick the window)
+    tokenflow budget --set 200      monthly cap → projected-overrun alerts (dedup'd)
+    tokenflow budget                current state: safe / approaching / over
+    tokenflow digest --deliver      build "Your AI Week" and send via configured channels
+    tokenflow schedule --install --at "Monday 09:00"   weekly digest via launchd
+    tokenflow schedule --status     is the digest schedule installed?
+    tokenflow team                  per-developer usage from the shared sync folder
+    tokenflow diagnostics           version, providers, store freshness, feature states
+
+  ${C.b}Sync (optional, off by default)${C.r}
+    tokenflow sync                  push this machine's daily rollups + show merged view
+    tokenflow sync --off            disable sync entirely
+
   ${C.b}Configure${C.r}
     tokenflow pricing               show which models have a price, and from where
     tokenflow pricing --sources     provenance of every built-in rate + tier multipliers
