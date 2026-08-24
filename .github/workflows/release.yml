@@ -1,17 +1,23 @@
 name: Release
 
-# Tag a release and everything is built and attached automatically:
+# Tag a release and everything is built, validated and attached automatically:
 #
-#   git tag v1.0.1 && git push origin v1.0.1
+#   git tag v1.1.0 && git push origin v1.1.0
 #
 # Assets produced:
-#   TokenFlow-<version>.dmg          macOS menu bar app, drag-to-Applications
-#   tokenflow-dashboard-demo.html    self-contained offline demo dashboard
-#   Source code (zip/tar.gz)         added by GitHub automatically
+#   TokenFlow-<version>.dmg              macOS menu bar app, drag-to-Applications
+#   TokenFlow-<version>.dmg.sha256       checksum for verification
+#   tokenflow-<version>.tgz + .sha256    npm package (published by the npm job)
+#   tokenflow-dashboard-demo.html        self-contained offline demo dashboard
+#   Source code (zip/tar.gz)             added by GitHub automatically
 #
-# The DMG job runs on macOS because the app is compiled with swiftc on the
-# target platform. The demo dashboard is built from synthetic data only —
-# no real usage ever leaves anyone's machine.
+# Fail-loud guarantees (the reason stale/missing artifacts are impossible):
+#   - version consistency: package.json version must equal the tag
+#   - DMG filename must embed the tag version
+#   - app bundle Info.plist must report the tag version
+#   - checksums are generated after build and verified before attach
+#   - every upload step uses if-no-files-found: error / explicit existence checks
+#   - the release job fails if any expected asset is missing
 
 on:
   push:
@@ -22,24 +28,79 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    name: Validate version/tag consistency
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          echo "tag=$TAG package=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG does not match package.json version $PKG"
+            exit 1
+          fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Tests before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - run: npm run lint
+      - run: node --test "test/**/*.test.js"
+
   dmg:
     name: macOS menu bar app (.dmg)
+    needs: [validate, test]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
-      - name: Build DMG
-        run: ./scripts/build-dmg.sh "${GITHUB_REF_NAME#v}"
+      - name: Build DMG for tag version
+        run: ./scripts/build-dmg.sh "${{ needs.validate.outputs.version }}"
+      - name: Verify DMG filename matches version (fail on stale artifact)
+        run: |
+          V="${{ needs.validate.outputs.version }}"
+          if [ ! -f "TokenFlow-$V.dmg" ]; then
+            ls -la dist/ || true
+            echo "::error::expected TokenFlow-$V.dmg not found — refusing to ship a stale artifact"
+            exit 1
+          fi
+          # The app bundle inside must also report the same version
+          hdiutil attach -nobrowse -mountpoint /tmp/tfverify "TokenFlow-$V.dmg"
+          BUNDLED=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            "/tmp/tfverify/TokenFlow.app/Contents/Info.plist")
+          hdiutil detach /tmp/tfverify
+          if [ "$BUNDLED" != "$V" ]; then
+            echo "::error::app bundle version $BUNDLED != tag version $V"
+            exit 1
+          fi
+      - name: Generate SHA256 checksums
+        run: |
+          V="${{ needs.validate.outputs.version }}"
+          shasum -a 256 "TokenFlow-$V.dmg" > "TokenFlow-$V.dmg.sha256"
+          cat "TokenFlow-$V.dmg.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: TokenFlow-dmg
-          path: dist/*.dmg
+          path: |
+            TokenFlow-*.dmg
+            TokenFlow-*.dmg.sha256
           if-no-files-found: error
 
   demo-dashboard:
     name: Offline demo dashboard (.html)
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,9 +117,64 @@ jobs:
           path: tokenflow-dashboard-demo.html
           if-no-files-found: error
 
+  npm-package:
+    name: npm package (pack + validate)
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: Pack
+        run: |
+          npm pack
+          V="${{ needs.validate.outputs.version }}"
+          [ -f "vimoxshah-tokenflow-$V.tgz" ] || { echo "::error::npm tarball missing"; exit 1; }
+      - name: Inspect tarball (entrypoint, permissions, no secrets)
+        run: |
+          V="${{ needs.validate.outputs.version }}"
+          TGZ="vimoxshah-tokenflow-$V.tgz"
+          # entrypoint present and executable
+          tar -tzvf "$TGZ" | grep -q "bin/tokenflow.js" || { echo "::error::bin/tokenflow.js missing from tarball"; exit 1; }
+          PERMS=$(tar -tzvf "$TGZ" | grep "bin/tokenflow.js" | awk '{print $1}')
+          case "$PERMS" in *x*) ;; *) echo "::error::bin/tokenflow.js is not executable in tarball ($PERMS)"; exit 1;; esac
+          # no secrets or dev artifacts
+          if tar -tzf "$TGZ" | grep -qiE '\.env|secret|credential|node_modules|\.tokenflow/'; then
+            echo "::error::unexpected file in tarball"; exit 1
+          fi
+          shasum -a 256 "$TGZ" > "$TGZ.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: |
+            vimoxshah-tokenflow-*.tgz
+            vimoxshah-tokenflow-*.tgz.sha256
+          if-no-files-found: error
+
+  publish-npm:
+    name: Publish @vimoxshah/tokenflow to npm
+    needs: [validate, npm-package]
+    runs-on: ubuntu-latest
+    # Publishes only when NPM_TOKEN secret is configured. Skipped otherwise so
+    # forks can run the release pipeline without npm credentials.
+    if: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarball
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org/'
+      - name: Publish scoped public package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public vimoxshah-tokenflow-*.tgz
+
   release:
     name: Attach assets to the GitHub release
-    needs: [dmg, demo-dashboard]
+    needs: [validate, dmg, demo-dashboard]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -67,6 +183,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: demo-dashboard
+      - name: Verify all expected assets exist (fail loudly otherwise)
+        run: |
+          V="${{ needs.validate.outputs.version }}"
+          for f in "TokenFlow-$V.dmg" "TokenFlow-$V.dmg.sha256" "tokenflow-dashboard-demo.html"; do
+            [ -f "$f" ] || { echo "::error::$f missing"; exit 1; }
+          done
+          # checksum round-trip
+          shasum -a 256 -c "TokenFlow-$V.dmg.sha256"
       - name: Create or update the release with the assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,8 +199,8 @@ jobs:
             --title "TokenFlow ${GITHUB_REF_NAME#v}" \
             --generate-notes \
             --repo "$GITHUB_REPOSITORY" \
-            TokenFlow-*.dmg tokenflow-dashboard-demo.html \
+            TokenFlow-*.dmg TokenFlow-*.dmg.sha256 tokenflow-dashboard-demo.html \
             || gh release upload "$GITHUB_REF_NAME" \
                  --clobber \
                  --repo "$GITHUB_REPOSITORY" \
-                 TokenFlow-*.dmg tokenflow-dashboard-demo.html
+                 TokenFlow-*.dmg TokenFlow-*.dmg.sha256 tokenflow-dashboard-demo.html

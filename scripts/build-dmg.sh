@@ -15,7 +15,7 @@ DIST="$REPO/dist"
 APP="$DIST/TokenFlow.app"
 DMG="$DIST/TokenFlow-$VERSION.dmg"
 
-"$REPO/scripts/build-menubar-app.sh" "$DIST" >/dev/null
+"$REPO/scripts/build-menubar-app.sh" "$DIST" "$VERSION" >/dev/null
 echo "built TokenFlow.app"
 
 STAGING="$(mktemp -d)"

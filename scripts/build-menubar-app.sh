@@ -12,6 +12,9 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$REPO/menubar/TokenFlow/main.swift"
 OUT_DIR="${1:-$REPO/dist}"
 APP="$OUT_DIR/TokenFlow.app"
+# App version: first argument, else package.json version. Embedded into the
+# bundle's Info.plist so release CI can verify tag ↔ bundle consistency.
+VERSION="${2:-$(node -p "require('$REPO/package.json').version")}"
 
 command -v swiftc >/dev/null 2>&1 || {
   echo "error: swiftc not found — install Xcode Command Line Tools:" >&2
@@ -38,8 +41,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key>                 <string>TokenFlow</string>
     <key>CFBundleDisplayName</key>          <string>TokenFlow</string>
     <key>CFBundleIdentifier</key>           <string>app.tokenflow.bar</string>
-    <key>CFBundleVersion</key>              <string>1.0</string>
-    <key>CFBundleShortVersionString</key>   <string>1.0</string>
+    <key>CFBundleVersion</key>              <string>$VERSION</string>
+    <key>CFBundleShortVersionString</key>   <string>$VERSION</string>
     <key>CFBundlePackageType</key>          <string>APPL</string>
     <key>CFBundleExecutable</key>           <string>TokenFlow</string>
     <key>CFBundleIconFile</key>             <string>AppIcon</string>
