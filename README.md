@@ -28,6 +28,8 @@ per-source and per-model usage, capacity meters and forecast, in light and dark.
 <p align="center">
   🌐 <a href="https://vimoxshah.github.io/tokenflow/"><strong>Landing page</strong></a>
   &nbsp;·&nbsp;
+  🖥️ <a href="https://vimoxshah.github.io/tokenflow/demo/"><strong>Live demo</strong></a> <em>(synthetic data)</em>
+  &nbsp;·&nbsp;
   📦 <a href="https://www.npmjs.com/package/@vimoxshah/tokenflow"><code>@vimoxshah/tokenflow</code> on npm</a>
   &nbsp;·&nbsp;
   🍺 <code>brew install --cask tokenflow</code> (via <a href="https://github.com/vimoxshah/tokenflow">this tap</a>)

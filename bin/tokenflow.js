@@ -612,6 +612,17 @@ function safeReaddir(d) {
 // ===================================================================== demo ==
 
 async function cmdDemo() {
+  // Synthetic data must never mix into a real store: `demo` used to overwrite
+  // ~/.tokenflow/config.yaml with providers:['mock'] and ingest demo records
+  // into whatever home was active. An explicit $TOKENFLOW_HOME wins (scripted
+  // setups that want exactly that); otherwise a throwaway home under tmpdir()
+  // is created for this run, leaving the default store untouched.
+  if (!process.env.TOKENFLOW_HOME) {
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenflow-demo-'));
+    process.env.TOKENFLOW_HOME = sandbox;
+    console.log(`\n  ${C.dim}sandboxed demo store: ${sandbox}`);
+    console.log(`  reopen later with:   TOKENFLOW_HOME=${sandbox} tokenflow dashboard${C.r}`);
+  }
   process.env.TOKENFLOW_DEMO = '1';
   const cfg = loadConfig();
   cfg.providers = ['mock'];
