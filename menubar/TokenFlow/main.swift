@@ -1389,6 +1389,35 @@ enum PreviewRenderer {
 
 // ===================================================================== boot ===
 
+// --- single-instance guard -------------------------------------------------
+// Two copies in the menu bar cause duplicate items, flaky clicks, and zombie
+// popovers (launchd RunAtLoad + user double-click + `open -a` can all race).
+// A lock file with the holding PID: if that PID is alive, this copy exits.
+let lockPath = NSHomeDirectory() + "/.tokenflow/bar-instance.lock"
+FileManager.default.createFile(atPath: lockPath, contents: nil)
+// Advisory byte-range lock via Darwin fcntl: held for the process lifetime,
+// released automatically when the process dies (even on crash).
+var lockInfo = flock()
+lockInfo.l_type = Int16(F_WRLCK)
+lockInfo.l_whence = Int16(SEEK_SET)
+let fd = open(lockPath, O_RDWR | O_CREAT, 0o644)
+if fd >= 0 {
+    let got = fcntl(fd, F_SETLK, &lockInfo) == 0
+    if got {
+        // We hold the lock: record our PID for diagnostics.
+        var pidStr = String(ProcessInfo.processInfo.processIdentifier)
+        _ = pidStr.withUTF8 { buf in
+            lseek(fd, 0, SEEK_SET)
+            _ = write(fd, buf.baseAddress, buf.count)
+        }
+        _ = pidStr
+    } else {
+        // Another instance holds the lock and is alive — do not duplicate.
+        close(fd)
+        exit(0)
+    }
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 // Opt out of macOS Automatic Termination: with no windows open (menu-bar-only
