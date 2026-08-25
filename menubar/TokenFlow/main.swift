@@ -151,7 +151,28 @@ enum Paths {
     static var cliPath: String {
         if let e = Bundle.main.object(forInfoDictionaryKey: "TokenFlowCLIPath") as? String,
            FileManager.default.fileExists(atPath: e) { return e }
-        return "/usr/local/bin/tokenflow"
+        // Prefer the stable /usr/local symlink, but fall back to a checked-out
+        // repo — nvm version switches and clean machines may not have the
+        // symlink, and a missing CLI must never leave the menu bar blank.
+        let candidates = [
+            "/usr/local/bin/tokenflow",
+            NSHomeDirectory() + "/Desktop/Vimox/poc/tokenflow/bin/tokenflow.js",
+            NSHomeDirectory() + "/tokenflow/bin/tokenflow.js",
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+            ?? "/usr/local/bin/tokenflow"
+    }
+    /// Absolute node binary for launchd contexts where `env node` fails to
+    /// resolve nvm-managed installs (launchd PATH lacks the nvm dir).
+    static var explicitNode: String? {
+        let home = NSHomeDirectory()
+        let candidates = [
+            home + "/.nvm/versions/node/v24.13.1/bin/node",
+            home + "/.nvm/current/bin/node",
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
     static var nodePath: String {
         if let e = Bundle.main.object(forInfoDictionaryKey: "TokenFlowNodePath") as? String,
@@ -467,22 +488,15 @@ struct AppActions {
     // ---- actions -----------------------------------------------------------
 
     private func makeProcess(_ args: [String], detached: Bool) -> Process? {
-        let node = Paths.nodePath
-        guard node == "/usr/bin/env" || FileManager.default.fileExists(atPath: node) else {
-            DispatchQueue.main.async { self.model.actionError = "node not found at \(node)" }
-            return nil
-        }
-        guard FileManager.default.fileExists(atPath: Paths.cliPath) else {
-            DispatchQueue.main.async { self.model.actionError = "tokenflow CLI missing at \(Paths.cliPath)" }
-            return nil
-        }
+        // Prefer an absolute node binary (launchd's minimal PATH can't resolve
+        // nvm-managed installs via /usr/bin/env node); fall back to env.
         let proc = Process()
-        if node == "/usr/bin/env" {
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            proc.arguments = ["node", Paths.cliPath] + args
-        } else {
+        if let node = Paths.explicitNode, FileManager.default.fileExists(atPath: node) {
             proc.executableURL = URL(fileURLWithPath: node)
             proc.arguments = [Paths.cliPath] + args
+        } else {
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            proc.arguments = ["node", Paths.cliPath] + args
         }
         if detached {
             proc.standardOutput = FileHandle.nullDevice
