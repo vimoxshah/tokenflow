@@ -8,8 +8,11 @@
  *
  * Design constraints this file takes seriously:
  *
- * Single instance.  A pidfile guards against two watchers racing on the same
- *   store; a stale pidfile from a crashed run is detected and replaced.
+ * Single instance.  An identity-bearing lock guards against two watchers
+ *   racing on the same store. It records the boot the pid was issued by, so a
+ *   lock that outlived a reboot is stale by construction rather than being
+ *   trusted because the kernel handed its number to something else
+ *   (see watch-lock.js).
  * Failure isolation. One bad provider cannot stop the loop: refresh errors
  *   are recorded into the status file and back off exponentially instead.
  * Sleep/wake. The loop reschedules from wall-clock reality every tick, so a
@@ -18,12 +21,14 @@
  * Nothing leaves the machine. Refresh reads local logs; notifications go to
  *   the local OS; the status file stays in $TOKENFLOW_HOME.
  */
-import fs from 'node:fs';
-import { loadConfig, paths, ensureDirs } from './config.js';
+import { loadConfig, ensureDirs } from './config.js';
 import { refresh } from './ingest.js';
 import { listProviders } from './registry.js';
 import { buildLiveStatus, writeLiveStatus, readLiveStatus } from './live-status.js';
 import { notify as osNotify } from './notify.js';
+import {
+  bootTimeMs, clearLock, lockIsLive, processAlive, readLock, readLockPid, writeLock,
+} from './watch-lock.js';
 
 const MAX_BACKOFF_MS = 15 * 60 * 1000;
 
@@ -100,25 +105,9 @@ function humanize(ms) {
 
 // ------------------------------------------------------------- instance ----
 
-function readLockPid() {
-  try {
-    const pid = Number(fs.readFileSync(paths().watchPid, 'utf8').trim());
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-function processAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // ESRCH = no such process; EPERM = alive but owned by someone else.
-    return err.code !== 'ESRCH';
-  }
-}
-export { processAlive };
+// The lock itself lives in watch-lock.js so read-only status surfaces can ask
+// "is a watcher running?" without importing the daemon.
+export { processAlive, readLock, lockIsLive, bootTimeMs };
 
 /** Set while THIS process runs a watcher loop — guards same-process double start. */
 let ownedHere = false;
@@ -133,40 +122,37 @@ export function acquireWatchLock() {
     throw new Error('a watcher is already running in this process');
   }
   ensureDirs();
-  const existing = readLockPid();
-  if (existing && processAlive(existing)) {
-    throw Object.assign(new Error(`a watcher is already running (pid ${existing})`), {
+  const existing = readLock();
+  if (existing && lockIsLive(existing)) {
+    throw Object.assign(new Error(`a watcher is already running (pid ${existing.pid})`), {
       hint: '`tokenflow watch --status` shows it; `tokenflow watch --stop` stops it.',
     });
   }
-  fs.writeFileSync(paths().watchPid, String(process.pid));
+  writeLock();
   ownedHere = true;
 }
 
 export function releaseWatchLock() {
-  const p = paths().watchPid;
-  const pid = readLockPid();
-  if (pid === process.pid) {
-    try { fs.unlinkSync(p); } catch { /* already gone — that is fine */ }
-  }
+  if (readLockPid() === process.pid) clearLock();
   ownedHere = false;
 }
 
 /** Is a watcher running right now (and does it own the lock)? */
 export function watchIsRunning() {
-  const pid = readLockPid();
-  return !!(pid && processAlive(pid));
+  return lockIsLive(readLock());
 }
 
 export function stopWatch() {
-  const pid = readLockPid();
-  if (!pid || !processAlive(pid)) {
-    try { fs.unlinkSync(paths().watchPid); } catch { /* nothing to clean */ }
-    return { stopped: false, reason: 'not running' };
+  const lock = readLock();
+  if (!lock || !lockIsLive(lock)) {
+    // Clearing here is the manual escape hatch for a lock the identity check
+    // cannot judge (an unreadable /proc, a pid the OS will not describe).
+    const had = lock ? clearLock() : false;
+    return { stopped: false, reason: had ? 'not running (cleared a stale lock)' : 'not running' };
   }
   try {
-    process.kill(pid, 'SIGTERM');
-    return { stopped: true, pid };
+    process.kill(lock.pid, 'SIGTERM');
+    return { stopped: true, pid: lock.pid };
   } catch (err) {
     return { stopped: false, reason: err.message };
   }
@@ -204,6 +190,9 @@ export async function runCycle(opt = {}) {
       ? {
         ...(prev?.watcher || {}),
         pid: process.pid,
+        // The boot this pid was issued by: a reader can tell a live watcher
+        // from a pid number the kernel has since handed to somebody else.
+        boot: Math.round(bootTimeMs()),
         mode: 'daemon',
         intervalSeconds: opt.daemon.intervalSeconds ?? null,
         startedAt: prev?.watcher?.startedAt || new Date().toISOString(),

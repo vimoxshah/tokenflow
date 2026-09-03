@@ -282,16 +282,43 @@ async function cmdStatus() {
 // ================================================================ dashboard ==
 
 async function cmdDashboard() {
-  const port = Number(flags.port) || 7799;
+  const cfg = loadConfig();
+  // The configured port is the one every other surface opens — the menu bar
+  // reads it straight out of config.yaml — so the server must bind THAT port
+  // rather than a hardcoded default the rest of the app has never heard of.
+  const port = Number(flags.port) || Number(cfg.ui?.port) || 7799;
   const host = flags.host || '127.0.0.1';
+  const wantOpen = flags.open !== false && flags['no-open'] !== true;
+
+  // Already serving? Then this invocation is a second Dashboard click, not a
+  // failure. Open the window and leave the running server alone.
+  const { pingServer } = await import('../src/server/server.js');
+  const alive = await pingServer({ host, port });
+  if (alive) {
+    const url = `http://${host}:${port}`;
+    console.log(`\n  ${C.b}Tokenflow${C.r} ${C.dim}already serving${C.r}`);
+    console.log(`  ${C.c}${url}${C.r}`);
+    console.log(`  ${C.dim}${int(alive.records)} records · started elsewhere · loopback only${C.r}\n`);
+    if (wantOpen) tryOpen(url);
+    return;
+  }
+
   const b = buildBundle();
-  const s = await startServer({ port, host, token: flags.token === false ? false : undefined });
+  let s;
+  try {
+    s = await startServer({ port, host, token: flags.token === false ? false : undefined });
+  } catch (err) {
+    if (err.code !== 'EADDRINUSE') throw err;
+    throw Object.assign(new Error(`port ${port} is busy, and whatever holds it is not TokenFlow`), {
+      hint: `Free it, or pick another port:  tokenflow dashboard --port ${port + 1}`,
+    });
+  }
   console.log(`\n  ${C.b}Tokenflow${C.r}`);
   console.log(`  ${C.c}${s.url}${C.r}`);
   console.log(`  ${C.dim}${int(b.health.records)} records · ${b.health.coverage.from ? `${shortDate(b.health.coverage.from)} → ${shortDate(b.health.coverage.to)}` : 'no data'} · loopback only, nothing leaves this machine${C.r}`);
   if (!b.health.records) console.log(`  ${C.y}No data yet — click ↻ Refresh in the dashboard, or run 'tokenflow refresh'.${C.r}`);
   console.log(`  ${C.dim}Ctrl+C to stop${C.r}\n`);
-  if (flags.open !== false && flags['no-open'] !== true) tryOpen(s.url);
+  if (wantOpen) tryOpen(s.url);
   await new Promise(() => {});
 }
 
@@ -769,13 +796,57 @@ async function cmdRestore() {
 }
 
 async function cmdReset() {
+  const only = typeof flags.source === 'string' ? flags.source : null;
+  if (only) return resetOneSource(only);
   if (!flags.yes) {
-    throw Object.assign(new Error('this deletes all ingested data'), { hint: `re-run with --yes to confirm. Config and pricing are kept. Data home: ${paths().root}` });
+    throw Object.assign(new Error('this deletes all ingested data'), { hint: `re-run with --yes to confirm. Config and pricing are kept. Data home: ${paths().root}\n  To re-ingest a single source instead:  tokenflow reset --source <id> --yes` });
   }
   const p = paths();
   fs.rmSync(p.data, { recursive: true, force: true });
   ensureDirs();
   console.log(`${C.g}✓${C.r} cleared ${p.data} (config and pricing kept)`);
+}
+
+/**
+ * Forget one source and let the next refresh re-read it from scratch.
+ *
+ * This is the repair path for an adapter bug: the source's own logs or
+ * database still hold the truth, so dropping what was ingested from it and
+ * clearing its cursor re-derives that source correctly while every other
+ * source's records stay exactly as they are.
+ */
+async function resetOneSource(id) {
+  const store = new Store();
+  const known = Object.keys(store.state.sources || {});
+  const held = store.state.sources?.[id]?.records ?? null;
+  if (!known.includes(id)) {
+    throw Object.assign(new Error(`no ingested source called '${id}'`), {
+      hint: known.length ? `the store holds: ${known.sort().join(', ')}` : 'the store is empty — nothing to reset',
+    });
+  }
+  if (!flags.yes) {
+    throw Object.assign(new Error(`this drops every record ingested from '${id}'${held ? ` (${int(held)} at last count)` : ''}`), {
+      hint: `The next refresh re-reads ${id} from its own source, so nothing is lost that the source still knows. Re-run with --yes to confirm.`,
+    });
+  }
+  const { dropSourceRecords } = await import('../src/core/store.js');
+  const { rebuildAggregates } = await import('../src/core/ingest.js');
+
+  const res = dropSourceRecords(store, id);
+  delete store.state.sources[id];
+  const rb = rebuildAggregates(store);
+  store.state.counters.records = rb.records;
+  for (const sid of Object.keys(store.state.sources)) store.state.sources[sid].records = rb.bySource[sid] || 0;
+  store.saveCube();
+  store.saveSessions();
+  store.saveActivity();
+  store.saveState();
+
+  console.log(`  ${C.g}✓${C.r} dropped ${int(res.dropped)} record(s) from '${id}' across ${res.shards} shard(s)`);
+  console.log(`  ${C.g}✓${C.r} cleared its cursor — the next refresh re-reads it from the beginning`);
+  console.log(`  ${C.g}✓${C.r} rebuilt aggregates from the remaining ${int(rb.records)} record(s)`);
+  for (const [sid, n] of Object.entries(rb.bySource).sort((a, b) => b[1] - a[1])) console.log(`      ${sid.padEnd(12)} ${int(n).padStart(9)}`);
+  console.log(`\n  ${C.dim}next:  tokenflow refresh${C.r}\n`);
 }
 
 // ==================================================================== live ==

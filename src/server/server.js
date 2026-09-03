@@ -232,6 +232,35 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
   return { server, url: addr, token: authToken, close: () => new Promise((r) => server.close(r)) };
 }
 
+/**
+ * Ask whoever is listening on host:port whether they are a TokenFlow server.
+ *
+ * Used before opening a browser window and before starting a second server:
+ * "the port is busy" and "the dashboard is already up" look identical from
+ * the outside, and only one of them is good news.
+ *
+ * @returns {Promise<object|null>} the /api/ping payload, or null when nothing
+ *   there answers as TokenFlow (closed port, stranger, timeout, garbage).
+ */
+export function pingServer({ host = '127.0.0.1', port = 7799, timeoutMs = 1500 } = {}) {
+  return new Promise((resolve) => {
+    const req = http.get({ host, port, path: '/api/ping', timeout: timeoutMs }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c.length > 4096 ? '' : c; });
+      res.on('end', () => {
+        try {
+          const o = JSON.parse(body);
+          resolve(o && o.app === 'tokenflow' ? o : null);
+        } catch { resolve(null); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+}
+
 function send(res, code, type, body) {
   res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(body);

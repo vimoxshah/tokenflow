@@ -442,6 +442,57 @@ export function compactShards(store) {
   return { kept, dropped, shards };
 }
 
+/**
+ * Physically remove one source's records from every shard.
+ *
+ * The stale-generation mechanism cannot do this job: it supersedes records
+ * per source FILE, and cursor-based sources (SQLite adapters) have no file to
+ * supersede. Re-ingesting such a source after fixing its adapter therefore
+ * needs its old records dropped outright, which is what `reset --source` does.
+ *
+ * @returns {{kept:number, dropped:number, shards:number}}
+ */
+export function dropSourceRecords(store, sourceId) {
+  let kept = 0;
+  let dropped = 0;
+  let shards = 0;
+  for (const shard of store.listShards()) {
+    const src = path.join(store.p.records, shard);
+    const tmp = src + '.drop';
+    let buf = '';
+    let shardDropped = 0;
+    const out = fs.openSync(tmp, 'w');
+    try {
+      readLines(src, (line) => {
+        let o;
+        try { o = JSON.parse(line); } catch { return; }
+        if (o.so === sourceId) { dropped++; shardDropped++; return; }
+        kept++;
+        buf += line + '\n';
+        if (buf.length > 1 << 20) { fs.writeSync(out, buf); buf = ''; }
+      });
+      if (buf) fs.writeSync(out, buf);
+    } finally {
+      fs.closeSync(out);
+    }
+    if (!shardDropped) {
+      // Nothing to change here — leave the shard untouched rather than
+      // rewriting it byte-for-byte and disturbing its mtime.
+      try { fs.rmSync(tmp, { force: true }); } catch { /* leave the temp file */ }
+      continue;
+    }
+    try {
+      fs.renameSync(tmp, src);
+    } catch (err) {
+      if (!['EPERM', 'EXDEV', 'EACCES', 'ENOTSUP'].includes(err.code)) throw err;
+      fs.writeFileSync(src, fs.readFileSync(tmp));
+      try { fs.rmSync(tmp, { force: true }); } catch { /* leave the temp file */ }
+    }
+    shards++;
+  }
+  return { kept, dropped, shards };
+}
+
 export function fileId(sourceId, key) {
   return hashId(sourceId, key);
 }

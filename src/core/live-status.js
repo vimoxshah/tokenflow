@@ -22,6 +22,7 @@ import { loadConfig, paths, ensureDirs } from './config.js';
 import { readJson } from './store.js';
 import { compact, usd, countdown } from './units.js';
 import { detectMilestones } from '../analytics/milestones.js';
+import { lockIsLive, readLock } from './watch-lock.js';
 
 // Formatting adapters over the shared units.js formatters (which the browser
 // bundle also uses): null means "nothing to show", never "—", never 0.
@@ -324,8 +325,10 @@ export function withComputedFreshness(status, nowMs = Date.now()) {
  * The cache window derives from the watcher's own cadence (interval + slack),
  * because a snapshot written 90 seconds into a 120-second cycle is exactly as
  * current as the product promised — not stale. When a fallback compute does
- * happen, daemon identity (pid, cycles, last error) is carried over from the
- * cached file: a slow poll must never make the UI claim no watcher is running.
+ * happen, daemon identity (pid, cycles) is carried over from the cached file
+ * so a slow poll never makes the UI claim no watcher is running — but only
+ * while the watcher lock is actually live, so a dead daemon's identity does
+ * not linger either.
  */
 export function currentStatus(opt = {}) {
   const cached = readLiveStatus();
@@ -337,7 +340,15 @@ export function currentStatus(opt = {}) {
     if (age <= maxAgeMs) return { status: withComputedFreshness(cached), fromWatch: true };
   }
   const fresh = buildLiveStatus({ config: cfg });
-  if (cached?.watcher) fresh.watcher = cached.watcher;
+  // Carry daemon identity over ONLY while THAT daemon is really there. A
+  // watcher block outlives the process that wrote it, and repeating it after
+  // the watcher died is how a paused TokenFlow came to look live. Matching the
+  // pid against the lock holder also stops a restarted watcher from being
+  // described with its predecessor's pid and cycle count.
+  const lock = readLock();
+  if (cached?.watcher && lockIsLive(lock) && cached.watcher.pid === lock.pid) {
+    fresh.watcher = cached.watcher;
+  }
   if (!fresh.lastCycle && cached?.lastCycle) fresh.lastCycle = cached.lastCycle;
   if (!fresh.lastError && cached?.lastError) fresh.lastError = cached.lastError;
   return { status: fresh, fromWatch: false };
