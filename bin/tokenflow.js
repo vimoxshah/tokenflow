@@ -1401,6 +1401,10 @@ function help(code = 0) {
     tokenflow validate              re-validate every stored record
     tokenflow compact               drop superseded records after a rewrite
     tokenflow reset --yes           delete ingested data (keeps config)
+    tokenflow reset --source <id> --yes
+                                   forget ONE source and re-read it from
+                                   scratch on the next refresh (repairs a
+                                   source whose adapter was fixed)
 
   ${C.b}Flags${C.r}  --json  --quiet  --provider <id>  --from/--to <date>  --port <n>  --no-open  --debug
 

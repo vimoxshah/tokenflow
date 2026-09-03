@@ -16,6 +16,18 @@
 const MAD_SCALE = 1.4826;
 const SPIKE_Z = 3.5;      // Iglewicz–Hoaglin threshold for a modified z-score
 const HIGH_Z = 6;         // well past that: call it high severity
+/**
+ * Far past "high": magnitude at this scale outranks recency in the list.
+ *
+ * Severity saturates at `high` around z=6, and the ordering below then falls
+ * back to date, newest first. That buried a real one: an adapter bug inflated
+ * one day to 240× its 60-day median, scoring z=171, and it ranked THIRD behind
+ * two request spikes of z=6.5 and z=11.2 from later in the week. The menu bar
+ * shows the top two alerts, so for a week the loudest signal the product had
+ * was the one thing it did not show. A z of 171 and a z of 6 are not the same
+ * news, whichever happened more recently.
+ */
+const EXTREME_Z = 25;
 const BASELINE_WINDOW = 60;
 const MIN_BASELINE = 10;
 
@@ -167,9 +179,14 @@ export function detectAnomalies(daily, opt = {}) {
   }
 
   const cap = opt.limit ?? 12;
+  // severity, then extremes by magnitude, then recency. Ordinary alerts keep
+  // reading as a feed; an outlier of a different order never gets buried in it.
+  const extreme = (a) => ((a.z ?? 0) >= EXTREME_Z ? 0 : 1);
   return out
     .sort((a, b) =>
       SEV_ORDER[a.severity] - SEV_ORDER[b.severity]
+      || extreme(a) - extreme(b)
+      || (extreme(a) === 0 ? (b.z ?? 0) - (a.z ?? 0) : 0)
       || (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)
       || (b.z ?? 0) - (a.z ?? 0))
     .slice(0, cap);

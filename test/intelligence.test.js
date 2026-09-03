@@ -112,6 +112,24 @@ test('anomalies: a clear spike is flagged with its arithmetic', () => {
   assert.ok(spike.detail.includes('trailing'));
 });
 
+test('anomalies: an outlier of a different order outranks more recent ones', () => {
+  // The real shape this guards. A stable history, then a genuinely enormous
+  // day, then two ordinary-high spikes after it. Severity saturates at "high"
+  // for all three, so ordering by date alone put the enormous one third — and
+  // the menu bar only shows two. That is how 240× its median went unseen.
+  const vals = Array.from({ length: 40 }, (_, i) => 1000 + Math.round(Math.sin(i) * 100));
+  vals[35] = 250_000; // z far past EXTREME_Z
+  vals[37] = 9_000;   // ordinary high
+  vals[39] = 9_500;   // ordinary high, and the most recent
+  const out = detectAnomalies(series(vals)).filter((a) => a.type === 'token_spike');
+  assert.ok(out.length >= 3, `expected three spikes, got ${out.length}`);
+  assert.equal(out[0].observed, 250_000, 'the extreme day must come first');
+  assert.ok(out[0].z > 25);
+  // Everything after it stays a recency feed: newest ordinary spike first.
+  const ordinary = out.slice(1).map((a) => a.observed);
+  assert.deepEqual(ordinary, [9_500, 9_000], 'ordinary alerts keep reading newest-first');
+});
+
 test('anomalies: quiet data produces an empty list', () => {
   const vals = Array.from({ length: 30 }, (_, i) => 1000 + Math.sin(i) * 50);
   assert.deepEqual(detectAnomalies(series(vals)), []);
