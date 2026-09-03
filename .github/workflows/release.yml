@@ -1,20 +1,32 @@
 name: Release
 
-# Tag a release and everything is built, validated and attached automatically:
+# Tag a release and the artifacts are built, validated and attached:
 #
-#   git tag v1.1.0 && git push origin v1.1.0
+#   git tag vX.Y.Z && git push origin vX.Y.Z    # must match package.json
 #
-# Assets produced:
+# Attached to the GitHub release:
 #   TokenFlow-<version>.dmg              macOS menu bar app, drag-to-Applications
 #   TokenFlow-<version>.dmg.sha256       checksum for verification
-#   tokenflow-<version>.tgz + .sha256    npm package (published by the npm job)
 #   tokenflow-dashboard-demo.html        self-contained offline demo dashboard
 #   Source code (zip/tar.gz)             added by GitHub automatically
 #
-# Fail-loud guarantees (the reason stale/missing artifacts are impossible):
+# Built but NOT attached to the release:
+#   vimoxshah-tokenflow-<version>.tgz    kept as a workflow artifact, and the
+#                                        input to the npm publish job
+#
+# npm publishing is NOT automatic unless the repo has an NPM_TOKEN secret. With
+# no token the publish step is skipped and the job still reports success — so a
+# green release does not mean the package went out. Either add the secret, or
+# publish by hand after the tag lands:
+#
+#   npm publish --access public
+#
+# Fail-loud guarantees (the reason stale/wrong artifacts are impossible):
 #   - version consistency: package.json version must equal the tag
 #   - DMG filename must embed the tag version
 #   - app bundle Info.plist must report the tag version
+#   - the app carries NO build-host path and DOES carry its own CLI, checked on
+#     the finished image (1.1.1 shipped /Users/runner/... in its Info.plist)
 #   - checksums are generated after build and verified before attach
 #   - every upload step uses if-no-files-found: error / explicit existence checks
 #   - the release job fails if any expected asset is missing
