@@ -140,6 +140,8 @@ enum Paths {
     }
     static var statusFile: String { home + "/data/status.json" }
     static var watchLockFile: String { home + "/data/watch.pid" }
+    static var watchLogFile: String { home + "/watch.log" }
+    static var dashboardLogFile: String { home + "/dashboard.log" }
     static var configFile: String { home + "/config.yaml" }
     static var dashboardPort: Int {
         if let text = try? String(contentsOfFile: configFile, encoding: .utf8),
@@ -590,22 +592,25 @@ struct AppActions {
             return
         }
         // A watcher that refuses to start used to fail in complete silence:
-        // output went to /dev/null and the button just stayed on "play". Keep
-        // its stderr so the popover can say why.
-        let errPipe = Pipe()
-        proc.standardError = errPipe
+        // output went to /dev/null and the button just stayed on "play". Send
+        // it to the watcher log — the same file the launch agent uses — so the
+        // popover can quote the reason and the log keeps the whole story.
+        let logPath = Paths.watchLogFile
+        var logFrom: UInt64 = 0
+        if let log = appendHandle(logPath) {
+            logFrom = (try? log.offset()) ?? 0
+            proc.standardOutput = log
+            proc.standardError = log
+        }
         model.actionError = nil
         proc.terminationHandler = { [weak self] p in
             guard p.terminationStatus != 0 else { return }
-            let text = String(
-                data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8,
-            ) ?? ""
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.model.load()
                 guard !self.model.watcherLive else { return }
-                self.model.actionError = firstMeaningfulLine(text)
-                    ?? "watcher exited (\(p.terminationStatus))"
+                self.model.actionError = lastMeaningfulLine(ofFile: logPath, from: logFrom)
+                    ?? "watcher exited (\(p.terminationStatus)) — see \(logPath)"
                 self.renderTitle()
             }
         }
@@ -657,19 +662,23 @@ struct AppActions {
             model.actionError = "could not find the tokenflow CLI"
             return
         }
-        let errPipe = Pipe()
-        proc.standardError = errPipe
+        // A file, not a Pipe — same reason as the watcher: this server runs for
+        // as long as the dashboard is open and nobody would be draining it.
+        let logPath = Paths.dashboardLogFile
+        var logFrom: UInt64 = 0
+        if let log = appendHandle(logPath) {
+            logFrom = (try? log.offset()) ?? 0
+            proc.standardOutput = log
+            proc.standardError = log
+        }
         model.actionError = nil
         model.dashboardStarting = true
         proc.terminationHandler = { [weak self] p in
             guard p.terminationStatus != 0 else { return }
-            let text = String(
-                data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8,
-            ) ?? ""
             DispatchQueue.main.async {
                 guard let self, self.model.dashboardStarting else { return }
                 self.model.dashboardStarting = false
-                self.model.actionError = firstMeaningfulLine(text)
+                self.model.actionError = lastMeaningfulLine(ofFile: logPath, from: logFrom)
                     ?? "dashboard exited (\(p.terminationStatus)) — port \(port) may be busy"
             }
         }
@@ -719,15 +728,53 @@ struct AppActions {
     }
 }
 
-/// The first line of a CLI failure worth showing a human, trimmed to fit.
-private func firstMeaningfulLine(_ text: String) -> String? {
-    for raw in text.split(separator: "\n") {
-        let line = raw.trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: #"\u{1B}\[[0-9;]*m"#, with: "", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "✗! "))
-        if line.count > 3 { return String(line.prefix(120)) }
+/// A write handle positioned at the end of `path`, creating the file if needed.
+///
+/// Long-running children get their output APPENDED TO A FILE, never buffered
+/// in a Pipe. The refresh cycle shells out (the git provider alone writes to
+/// stderr several times a cycle), those children inherit fd 2, and a pipe that
+/// nobody drains fills its buffer within hours — at which point the writer
+/// blocks and the watcher this button started hangs. A file never blocks, and
+/// it is the same file the launch agent writes, so there is one place to look.
+private func appendHandle(_ path: String) -> FileHandle? {
+    let fm = FileManager.default
+    if !fm.fileExists(atPath: path) {
+        fm.createFile(atPath: path, contents: nil)
     }
-    return nil
+    guard let h = FileHandle(forWritingAtPath: path) else { return nil }
+    h.seekToEndOfFile()
+    return h
+}
+
+/// The line of a log worth showing a human, trimmed to fit.
+///
+/// Scans the tail backwards and prefers the CLI's own error marker: a failure
+/// prints the reason and then a hint, so the newest line is the hint and the
+/// line above it is what actually went wrong.
+private func lastMeaningfulLine(ofFile path: String, from: UInt64 = 0, tailBytes: UInt64 = 4096) -> String? {
+    guard let h = FileHandle(forReadingAtPath: path) else { return nil }
+    defer { try? h.close() }
+    guard let size = try? h.seekToEnd(), size > from else { return nil }
+    // Only what THIS launch wrote: the log is shared with the launch agent and
+    // accumulates for weeks, so an old line must never be quoted as the reason
+    // a start that just happened failed.
+    try? h.seek(toOffset: max(from, size > tailBytes ? size - tailBytes : 0))
+    guard let data = try? h.readToEnd(), let text = String(data: data, encoding: .utf8) else { return nil }
+
+    var fallback: String?
+    for raw in text.split(separator: "\n").reversed() {
+        // ICU takes \uhhhh, not Swift's \u{...}: the wrong form fails to
+        // compile and leaves escape codes in the message.
+        let plain = raw.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "\u{001B}\\[[0-9;]*m", with: "", options: .regularExpression)
+        let body = plain.trimmingCharacters(in: CharacterSet(charactersIn: "✗! "))
+        guard body.count > 3 else { continue }
+        if plain.hasPrefix("✗") || plain.lowercased().hasPrefix("fatal") {
+            return String(body.prefix(120))
+        }
+        if fallback == nil { fallback = String(body.prefix(120)) }
+    }
+    return fallback
 }
 
 // ============================================================== swiftui ui ==
