@@ -15,8 +15,17 @@ DIST="$REPO/dist"
 APP="$DIST/TokenFlow.app"
 DMG="$DIST/TokenFlow-$VERSION.dmg"
 
-"$REPO/scripts/build-menubar-app.sh" "$DIST" "$VERSION" >/dev/null
-echo "built TokenFlow.app"
+# A DMG is for other people's machines, so it must carry no path from this one.
+TOKENFLOW_PORTABLE=1 "$REPO/scripts/build-menubar-app.sh" "$DIST" "$VERSION" >/dev/null
+echo "built TokenFlow.app (portable)"
+
+# Fail here rather than shipping an app that points at the build host.
+for KEY in TokenFlowCLIPath TokenFlowNodePath; do
+  if /usr/libexec/PlistBuddy -c "Print :$KEY" "$APP/Contents/Info.plist" >/dev/null 2>&1; then
+    echo "error: $KEY is embedded in a distributable build" >&2
+    exit 1
+  fi
+done
 
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
