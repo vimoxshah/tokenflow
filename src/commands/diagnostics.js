@@ -11,6 +11,19 @@ import path from 'node:path';
 import { loadConfig, paths } from '../core/config.js';
 
 /**
+ * The shipped package.json is the only honest source for the version. A
+ * hardcoded fallback goes stale the moment anyone forgets it at release time,
+ * and then every diagnostics report quietly names the wrong release.
+ */
+function packageVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * @param {{includePaths?: boolean}} opt
  * @returns {object} diagnostics snapshot (plain JSON-able)
  */
@@ -26,7 +39,7 @@ export function collect(opt = {}) {
   };
 
   return {
-    version: process.env.npm_package_version || '1.1.0',
+    version: process.env.npm_package_version || packageVersion(),
     node: process.version,
     platform: `${os.platform()} ${os.arch()} ${os.release()}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,

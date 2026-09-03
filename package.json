@@ -1,6 +1,6 @@
 {
   "name": "@vimoxshah/tokenflow",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Local-first, provider-agnostic analytics for the AI tokens you actually spend. Zero dependencies, nothing leaves your machine.",
   "type": "module",
   "license": "MIT",
