@@ -3,10 +3,11 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## 1.1.1 — Unreleased
+## 1.1.1 — 2026-09-03
 
-A reliability release. Three defects had combined to leave the app paused, the
-dashboard unreachable, and one day's token total inflated by 37 billion.
+A reliability release. Five defects had combined to leave the app paused, the
+dashboard unreachable, the stop button inert, one day's token total inflated by
+37 billion — and the alert that would have caught it ranked out of sight.
 
 ### Fixed
 
