@@ -157,36 +157,82 @@ enum Paths {
         }
         return 7799
     }
-    static var cliPath: String {
+    /// The CLI shipped inside this app bundle. A distributable build always
+    /// has one; it is packed from the published npm package at build time.
+    static var bundledCLI: String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let p = res.appendingPathComponent("cli/package/bin/tokenflow.js").path
+        return FileManager.default.fileExists(atPath: p) ? p : nil
+    }
+
+    /// Which CLI this app drives.
+    ///
+    /// The bundled copy comes BEFORE anything found on the system. The app and
+    /// the CLI share a contract — the status file's shape, the watcher lock
+    /// format, /api/ping — so the copy that ships with the binary is the only
+    /// one guaranteed to match it. A newer CLI installed separately is not
+    /// automatically a compatible one.
+    ///
+    /// A local (non-portable) build embeds the developer's clone and that wins,
+    /// so an installed app still drives the checkout being edited.
+    static var cliPath: String? {
         if let e = Bundle.main.object(forInfoDictionaryKey: "TokenFlowCLIPath") as? String,
            FileManager.default.fileExists(atPath: e) { return e }
-        // Prefer the stable /usr/local symlink, but fall back to a checked-out
-        // repo — nvm version switches and clean machines may not have the
-        // symlink, and a missing CLI must never leave the menu bar blank.
+        if let b = bundledCLI { return b }
         let candidates = [
             "/usr/local/bin/tokenflow",
+            "/opt/homebrew/bin/tokenflow",
             NSHomeDirectory() + "/Desktop/Vimox/poc/tokenflow/bin/tokenflow.js",
             NSHomeDirectory() + "/tokenflow/bin/tokenflow.js",
         ]
         return candidates.first { FileManager.default.fileExists(atPath: $0) }
-            ?? "/usr/local/bin/tokenflow"
     }
-    /// Absolute node binary for launchd contexts where `env node` fails to
-    /// resolve nvm-managed installs (launchd PATH lacks the nvm dir).
+
+    /// The lowest Node the CLI runs on (package.json "engines").
+    static let minimumNodeMajor = 22
+
+    /// An absolute node binary.
+    ///
+    /// launchd hands over a minimal PATH that cannot resolve an nvm install, so
+    /// `env node` is not enough. nvm versions are discovered rather than named:
+    /// a hardcoded version is one `nvm install` away from being wrong, and it
+    /// was — the previous list led with whichever version the developer had.
     static var explicitNode: String? {
+        let fm = FileManager.default
         let home = NSHomeDirectory()
-        let candidates = [
-            home + "/.nvm/versions/node/v24.13.1/bin/node",
+        let nvm = home + "/.nvm/versions/node"
+        // Highest nvm version at or above the engine floor.
+        let fromNvm: [String] = ((try? fm.contentsOfDirectory(atPath: nvm)) ?? [])
+            .compactMap { name in
+                let major = Int(name.drop(while: { !$0.isNumber })
+                    .prefix(while: { $0.isNumber })) ?? 0
+                guard major >= minimumNodeMajor else { return nil }
+                let bin = "\(nvm)/\(name)/bin/node"
+                return fm.isExecutableFile(atPath: bin) ? bin : nil
+            }
+            .sorted { versionKey($0) > versionKey($1) }
+        let candidates = fromNvm + [
             home + "/.nvm/current/bin/node",
             "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
+            "/usr/bin/node",
         ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+        return candidates.first { fm.isExecutableFile(atPath: $0) }
     }
+
+    /// Sortable numeric key for a path containing a version like v24.13.1.
+    private static func versionKey(_ path: String) -> Int {
+        let digits = path.split(separator: "/")
+            .first(where: { $0.hasPrefix("v") && $0.dropFirst().first?.isNumber == true }) ?? ""
+        let parts = digits.dropFirst().split(separator: ".").compactMap { Int($0) }
+        let p = parts + [0, 0, 0]
+        return p[0] * 1_000_000 + p[1] * 1_000 + p[2]
+    }
+
     static var nodePath: String {
         if let e = Bundle.main.object(forInfoDictionaryKey: "TokenFlowNodePath") as? String,
            FileManager.default.fileExists(atPath: e) { return e }
-        return "/usr/bin/env"
+        return explicitNode ?? "/usr/bin/env"
     }
 }
 
@@ -474,6 +520,7 @@ struct AppActions {
             return nil // consumed
         }
         model.load()
+        checkDependencies()
         renderTitle()
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
@@ -547,21 +594,41 @@ struct AppActions {
 
     // ---- actions -----------------------------------------------------------
 
+    /// What to tell someone whose install cannot run anything. Nothing the app
+    /// does works without a CLI to drive, so say the command rather than
+    /// failing quietly — this is what a cask-only install looks like.
+    private let missingCLIHint = "TokenFlow's CLI is missing — install it with:  npm i -g @vimoxshah/tokenflow"
+    private let missingNodeHint = "Node \(Paths.minimumNodeMajor).5+ is required and was not found — install it from nodejs.org or with:  brew install node"
+
+    /// Report a missing dependency once at launch, so the first click is not
+    /// the first anyone hears of it.
+    private func checkDependencies() {
+        if Paths.cliPath == nil {
+            model.actionError = missingCLIHint
+        } else if Paths.explicitNode == nil {
+            model.actionError = missingNodeHint
+        }
+    }
+
     /// Detached children we still want to hear back from: a Process released
     /// before it exits never runs its terminationHandler.
     private var watcherProc: Process?
     private var dashboardProc: Process?
 
     private func makeProcess(_ args: [String], detached: Bool) -> Process? {
-        // Prefer an absolute node binary (launchd's minimal PATH can't resolve
-        // nvm-managed installs via /usr/bin/env node); fall back to env.
+        guard let cli = Paths.cliPath else {
+            model.actionError = missingCLIHint
+            return nil
+        }
+        // Prefer an absolute node binary (launchd's minimal PATH cannot resolve
+        // an nvm-managed install via `env node`); fall back to env.
         let proc = Process()
-        if let node = Paths.explicitNode, FileManager.default.fileExists(atPath: node) {
+        if let node = Paths.explicitNode {
             proc.executableURL = URL(fileURLWithPath: node)
-            proc.arguments = [Paths.cliPath] + args
+            proc.arguments = [cli] + args
         } else {
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            proc.arguments = ["node", Paths.cliPath] + args
+            proc.arguments = ["node", cli] + args
         }
         if detached {
             proc.standardOutput = FileHandle.nullDevice
@@ -603,7 +670,7 @@ struct AppActions {
             return
         }
         guard let proc = makeProcess(["watch"], detached: true) else {
-            model.actionError = "could not find the tokenflow CLI"
+            model.actionError = missingCLIHint
             return
         }
         // A watcher that refuses to start used to fail in complete silence:
@@ -693,7 +760,7 @@ struct AppActions {
 
     private func startDashboard(port: Int) {
         guard let proc = makeProcess(["dashboard"], detached: true) else {
-            model.actionError = "could not find the tokenflow CLI"
+            model.actionError = missingCLIHint
             return
         }
         // A file, not a Pipe — same reason as the watcher: this server runs for

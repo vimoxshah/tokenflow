@@ -3,6 +3,54 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.2 — 2026-09-03
+
+Makes the downloadable app usable on a machine that is not the one that built
+it. 1.1.1 was correct as source and as an npm package; its DMG was not.
+
+### Fixed
+
+- **The released app pointed at the machine that built it.** Every build
+  embedded the absolute path of its own node binary and CLI, which is right for
+  a developer driving their checkout and wrong for a release: the 1.1.1 DMG
+  shipped `TokenFlowCLIPath = /Users/runner/work/tokenflow/...`, a path that
+  exists on no user's machine. Only path-discovery fallbacks kept the app
+  working at all. A distributable build now embeds no path
+  (`TOKENFLOW_PORTABLE=1`), the DMG script refuses to package one that does,
+  and the release workflow re-checks it after mounting the finished image.
+- **A cask-only install had nothing to run.** The cask installs the app; the
+  CLI came from npm. Anyone who only ran `brew install --cask tokenflow` got a
+  menu bar that could read an existing status file and do nothing else — no
+  refresh, no watcher, no dashboard. The app now carries its own CLI (see
+  below).
+- **Node discovery named one specific version.** The first candidate was
+  `~/.nvm/versions/node/v24.13.1/bin/node` — whichever version the developer
+  happened to have. One `nvm install` away from being wrong for everybody.
+  nvm installs are now discovered and the highest one at or above the engine
+  floor wins.
+
+### Added
+
+- **The app bundles its own CLI**, at
+  `Contents/Resources/cli/package/bin/tokenflow.js`. It is packed with
+  `npm pack` and then pruned to the files the CLI actually executes, so the
+  bundle is always a subset of the published package and never carries a file
+  npm does not ship. The bundled copy takes priority over any CLI found on the
+  system, because the app and the CLI share a contract — the status file's
+  shape, the watcher lock format, `/api/ping` — and the copy shipped beside the
+  binary is the only one guaranteed to match it. A local build still embeds the
+  developer's clone, which wins, so an installed app keeps driving the checkout
+  being edited.
+- **A missing dependency now says so.** With no CLI or no Node the menu bar
+  reported nothing and every button failed silently. It names the problem and
+  the command that fixes it, at launch rather than on the first click.
+
+### Changed
+
+- The cask states the Node requirement in `caveats` instead of declaring
+  `depends_on formula: "node"`, which would install a second Node beside an
+  nvm- or asdf-managed one and fight the version manager.
+
 ## 1.1.1 — 2026-09-03
 
 A reliability release. Five defects had combined to leave the app paused, the

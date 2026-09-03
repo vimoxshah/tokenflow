@@ -86,6 +86,34 @@ jobs:
             echo "::error::app bundle version $BUNDLED != tag version $V"
             exit 1
           fi
+      - name: Verify the app carries no build-host paths and bundles its CLI
+        run: |
+          V="${{ needs.validate.outputs.version }}"
+          hdiutil attach -nobrowse -mountpoint /tmp/tfpaths "dist/TokenFlow-$V.dmg" 2>/dev/null \
+            || hdiutil attach -nobrowse -mountpoint /tmp/tfpaths "TokenFlow-$V.dmg"
+          PLIST=/tmp/tfpaths/TokenFlow.app/Contents/Info.plist
+          # 1.1.1 shipped /Users/runner/... in these keys, which exists on no
+          # user's machine. A distributable build must embed neither.
+          for KEY in TokenFlowCLIPath TokenFlowNodePath; do
+            if /usr/libexec/PlistBuddy -c "Print :$KEY" "$PLIST" >/dev/null 2>&1; then
+              hdiutil detach /tmp/tfpaths || true
+              echo "::error::$KEY is embedded in the release build"
+              exit 1
+            fi
+          done
+          CLI=/tmp/tfpaths/TokenFlow.app/Contents/Resources/cli/package/bin/tokenflow.js
+          if [ ! -f "$CLI" ]; then
+            hdiutil detach /tmp/tfpaths || true
+            echo "::error::the app ships no bundled CLI — a cask-only install would do nothing"
+            exit 1
+          fi
+          GOT=$(node "$CLI" --version)
+          hdiutil detach /tmp/tfpaths || true
+          if [ "$GOT" != "$V" ]; then
+            echo "::error::bundled CLI reports $GOT, expected $V"
+            exit 1
+          fi
+          echo "no embedded host paths; bundled CLI reports $GOT"
       - name: Generate SHA256 checksums
         run: |
           V="${{ needs.validate.outputs.version }}"
