@@ -4,11 +4,25 @@ name: Pages
 #
 # One-time repo setting: Settings → Pages → Source: "GitHub Actions".
 # Live at https://vimoxshah.github.io/tokenflow/
+#
+# The interactive demo at /demo/ is GENERATED here rather than committed. A
+# checked-in copy was a 1.5 MB blob that went stale at every release — it
+# advertised the previous version — and it embedded the absolute path of the
+# machine that produced it, including the username, on a public page. Building
+# it on the runner means it always matches the code being deployed and can
+# never carry anyone's home directory. Code paths are in the trigger below so a
+# release refreshes it, not just an edit to site/.
 
 on:
   push:
     branches: [main]
-    paths: [site/**, .github/workflows/pages.yml]
+    paths:
+      - site/**
+      - docs/media/**
+      - bin/**
+      - src/**
+      - package.json
+      - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
@@ -23,12 +37,36 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
       # upload-pages-artifact takes a single directory; stage site + media into it
       - name: Stage site with screenshots
         run: |
           mkdir -p _pages/docs
           cp -R site/. _pages/
           cp -R docs/media _pages/docs/media
+      - name: Generate the interactive demo from synthetic data
+        env:
+          # A throwaway store, deliberately OUTSIDE $HOME. The runner's own temp
+          # dir sits under /home/runner, and the export embeds its data home in
+          # the page — which would trip the home-directory check below and, more
+          # to the point, is the class of path that leaked a username before.
+          TOKENFLOW_HOME: /tmp/tokenflow-demo-store
+        run: |
+          mkdir -p _pages/demo
+          # 60 days keeps the page around 1.5 MB; the 160-day default doubles it.
+          node bin/tokenflow.js demo --no-serve --days 60
+          node bin/tokenflow.js export --html _pages/demo/index.html
+          # Fail loudly rather than deploying a page with real data or none.
+          test -s _pages/demo/index.html || { echo "::error::demo page was not generated"; exit 1; }
+          grep -q '"demo":true' _pages/demo/index.html \
+            || { echo "::error::generated page is not flagged as demo data"; exit 1; }
+          if grep -q "$HOME/" _pages/demo/index.html; then
+            echo "::error::the demo page embeds a home directory path"
+            exit 1
+          fi
+          echo "demo page: $(wc -c < _pages/demo/index.html) bytes"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _pages
