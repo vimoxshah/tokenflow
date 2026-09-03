@@ -1,6 +1,6 @@
 cask "tokenflow" do
-  version "1.1.1"
-  sha256 "60fd7f5ce48e694af823394c63fbade8785f0ebe617fa606279e1888c7f2837c"
+  version "1.1.2"
+  sha256 "4403c6163b374f149cdfb79e8f02e7a1167b4894da739b32ba7bb59c502fc884"
 
   url "https://github.com/vimoxshah/tokenflow/releases/download/v#{version}/TokenFlow-#{version}.dmg"
   name "TokenFlow"
