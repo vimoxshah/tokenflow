@@ -54,3 +54,6 @@ TODO.local.md
 *.key
 *_token
 *.credentials.json
+
+# Staging dir for a local run of the Pages workflow's demo generation
+_pages/
