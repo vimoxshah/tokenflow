@@ -270,6 +270,67 @@ test('watch lock: a pid recycled across a reboot does not hold the lock', async 
   });
 });
 
+// -------------------------------------------------------- watcher agent -----
+
+test('watch agent plist: a clean stop stays stopped, a crash comes back', async () => {
+  const agent = await import('../src/core/watch-agent.js');
+  const xml = agent.renderPlist({
+    nodeBin: '/opt/node/bin/node', cli: '/repo/bin/tokenflow.js',
+    home: '/home/tf', workingDir: '/repo',
+  });
+
+  // KeepAlive must NOT be a bare true. That restarts the job after ANY exit,
+  // including the clean one `watch --stop` produces — measured at about two
+  // seconds, which silently defeats the menu bar's stop button.
+  assert.ok(!/<key>KeepAlive<\/key>\s*<true\/>/.test(xml), 'KeepAlive must not be an unconditional true');
+  assert.match(xml, /<key>KeepAlive<\/key>\s*<dict><key>SuccessfulExit<\/key><false\/><\/dict>/);
+  // A watcher that cannot take the lock exits 1, which is a restart under the
+  // rule above; without a throttle that is an infinite respawn loop.
+  assert.match(xml, /<key>ThrottleInterval<\/key><integer>(\d+)<\/integer>/);
+  assert.ok(Number(/<key>ThrottleInterval<\/key><integer>(\d+)<\/integer>/.exec(xml)[1]) >= 60);
+
+  assert.match(xml, /<key>RunAtLoad<\/key><true\/>/);
+  assert.match(xml, /<string>\/opt\/node\/bin\/node<\/string>/);
+  assert.match(xml, /<string>\/repo\/bin\/tokenflow\.js<\/string>/);
+  assert.match(xml, /<string>watch<\/string>/);
+  assert.match(xml, /<key>TOKENFLOW_HOME<\/key><string>\/home\/tf<\/string>/);
+  // launchd hands over a minimal PATH and the git adapter shells out.
+  assert.match(xml, /<key>PATH<\/key><string>\/opt\/node\/bin:/);
+  assert.match(xml, /<string>\/home\/tf\/watch\.log<\/string>/);
+});
+
+test('watch agent: finds a foreign watcher agent by what it runs, not its name', async () => {
+  const agent = await import('../src/core/watch-agent.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-agents-'));
+  try {
+    const plist = (label, args) => `<plist version="1.0"><dict>
+      <key>Label</key><string>${label}</string>
+      <key>ProgramArguments</key><array>${args.map((a) => `<string>${a}</string>`).join('')}</array>
+      </dict></plist>`;
+
+    // A hand-rolled agent can be called anything, so matching a label would
+    // miss it — and two agents running a watcher fight over the lock for ever.
+    fs.writeFileSync(path.join(dir, 'com.someone.whatever.plist'),
+      plist('com.someone.whatever', ['/usr/bin/node', '/repo/bin/tokenflow.js', 'watch']));
+    // The digest agent runs the same CLI but not a watcher: leave it alone.
+    fs.writeFileSync(path.join(dir, 'app.tokenflow.digest.plist'),
+      plist('app.tokenflow.digest', ['/usr/bin/node', '/repo/bin/tokenflow.js', 'digest', '--deliver']));
+    // Somebody else's agent entirely.
+    fs.writeFileSync(path.join(dir, 'com.other.thing.plist'),
+      plist('com.other.thing', ['/usr/bin/watchman', 'watch']));
+
+    const found = agent.findForeignAgents(dir);
+    assert.deepEqual(found.map((f) => f.label), ['com.someone.whatever']);
+
+    // Our own agent is never its own conflict.
+    fs.writeFileSync(path.join(dir, 'app.tokenflow.watch.plist'),
+      plist('app.tokenflow.watch', ['/usr/bin/node', '/repo/bin/tokenflow.js', 'watch']));
+    assert.deepEqual(agent.findForeignAgents(dir).map((f) => f.label), ['com.someone.whatever']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('runCycle produces a valid status file even with zero sources', async () => {
   await withHome(async (dir, { watch, live, config }) => {
     const cfg = structuredClone(config.DEFAULT_CONFIG);

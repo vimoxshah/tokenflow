@@ -29,7 +29,7 @@ import {
   buildLiveStatus, currentStatus, readLiveStatus, withComputedFreshness, barLine,
 } from '../src/core/live-status.js';
 import {
-  startWatch, runCycle, stopWatch, watchIsRunning, releaseWatchLock,
+  startWatch, runCycle, stopWatch, watchIsRunning, releaseWatchLock, readLock,
 } from '../src/core/watch.js';
 import { renderXbar, installSwiftBarPlugin } from '../src/export/menubar.js';
 
@@ -126,8 +126,36 @@ async function cmdSetup() {
 
   console.log(`\n${C.g}✓${C.r} wrote ${file}`);
   console.log(`  enabled providers: ${detected.length ? detected.join(', ') : '(none)'}`);
-  console.log(`  timezone: ${cfg.timezone}\n`);
+  console.log(`  timezone: ${cfg.timezone}`);
+  await setupWatchAgent();
   console.log(`Next:  ${C.c}tokenflow refresh${C.r}   then   ${C.c}tokenflow dashboard${C.r}\n`);
+}
+
+/**
+ * Set up the watcher to run by default, because "live" is the point.
+ *
+ * Installing a login agent is a real side effect, so it is announced and
+ * `--no-agent` opts out. On anything other than macOS it prints the hint and
+ * does nothing.
+ */
+async function setupWatchAgent() {
+  if (flags.agent === false || flags['no-agent'] === true) {
+    console.log(`  ${C.dim}watcher agent: skipped (--no-agent). Install later: tokenflow watch --install-agent${C.r}\n`);
+    return;
+  }
+  const agent = await import('../src/core/watch-agent.js');
+  if (!agent.supported()) {
+    console.log(`  ${C.dim}watcher: run 'tokenflow watch' from a systemd --user unit, or 'watch --once' from cron${C.r}\n`);
+    return;
+  }
+  try {
+    const r = agent.install();
+    for (const f of r.removed) console.log(`  ${C.y}!${C.r} removed a conflicting watcher agent: ${f.label}`);
+    console.log(`${C.g}✓${C.r} the watcher now starts at login ${C.dim}(tokenflow watch --uninstall-agent removes it)${C.r}\n`);
+  } catch (err) {
+    console.log(`  ${C.y}! could not install the watcher agent: ${err.message}${C.r}`);
+    console.log(`  ${C.dim}run it by hand with 'tokenflow watch', or retry with 'tokenflow watch --install-agent'${C.r}\n`);
+  }
 }
 
 // ================================================================ providers ==
@@ -866,7 +894,36 @@ async function liveStatus() {
  *   --status        is a watcher running? how fresh is it?
  *   --stop          stop a running watcher
  */
+/**
+ * `tokenflow watch --install-agent` / `--uninstall-agent`.
+ *
+ * Live data needs a resident watcher. Without an agent one only lasts as long
+ * as the session that started it, so a reboot leaves stale numbers behind a
+ * paused menu bar.
+ */
+async function watchAgentCommand() {
+  const agent = await import('../src/core/watch-agent.js');
+  if (flags['uninstall-agent']) {
+    const r = agent.uninstall();
+    console.log(r.removed
+      ? `  ${C.g}✓${C.r} removed the watcher agent ${C.dim}(${r.plist})${C.r}\n  ${C.dim}the watcher no longer starts at login; 'tokenflow watch' still runs by hand.${C.r}\n`
+      : `  ${C.dim}○ no watcher agent was installed${C.r}\n`);
+    return;
+  }
+  const r = agent.install();
+  for (const f of r.removed) {
+    console.log(`  ${C.y}!${C.r} removed a conflicting agent: ${C.b}${f.label}${C.r}`);
+    console.log(`      ${C.dim}${f.file} — two agents running a watcher fight over the same lock${C.r}`);
+  }
+  console.log(`  ${C.g}✓${C.r} installed the watcher agent ${C.dim}(${r.plist})${C.r}`);
+  console.log(`  ${C.dim}starts at login · restarts on a crash · a deliberate stop stays stopped${C.r}`);
+  console.log(`  ${C.dim}log: ${paths().root}/watch.log${C.r}`);
+  if (!r.started) console.log(`  ${C.y}!${C.r} launchctl would not start it — check Console.app, or run 'tokenflow watch' by hand`);
+  console.log(`\n  ${C.dim}remove it:  tokenflow watch --uninstall-agent${C.r}\n`);
+}
+
 async function cmdWatch() {
+  if (flags['install-agent'] || flags['uninstall-agent']) return watchAgentCommand();
   if (flags.stop) {
     const r = stopWatch();
     console.log(r.stopped ? `${C.g}✓${C.r} stopped watcher ${C.dim}(pid ${r.pid})${C.r}` : `${C.dim}○ ${r.reason}${C.r}`);
@@ -877,9 +934,17 @@ async function cmdWatch() {
     const st = readLiveStatus();
     console.log(`  watcher   ${running ? `${C.g}running${C.r}` : `${C.dim}not running${C.r}`}`);
     // Identity lines only describe a live process — a dead watcher's leftovers
-    // are history, not status.
-    if (running && st?.watcher?.pid != null) {
-      console.log(`  pid       ${st.watcher.pid} · every ${st.watcher.intervalSeconds ?? '?'}s · ${int(st.watcher.cycles)} cycle(s)`);
+    // are history, not status. The PID comes from the LOCK, which is the only
+    // thing that knows who holds it; the cycle count comes from the status
+    // file, and only when that file was written by this same watcher. After a
+    // restart the two disagree for one cycle, and reporting the dead PID then
+    // would be exactly the kind of small lie that hid a stale watcher before.
+    const lock = running ? readLock() : null;
+    if (lock) {
+      const own = st?.watcher?.pid === lock.pid ? st.watcher : null;
+      const every = own?.intervalSeconds ?? st?.watcher?.intervalSeconds ?? '?';
+      const cycles = own ? `${int(own.cycles)} cycle(s)` : 'first cycle pending';
+      console.log(`  pid       ${lock.pid} · every ${every}s · ${cycles}`);
     }
     const lastErr = st?.lastError;
     if (lastErr) console.log(`  ${C.y}last error${C.r} ${relativeTime(lastErr.at)}: ${lastErr.message}`);
@@ -887,6 +952,22 @@ async function cmdWatch() {
       const fresh = withComputedFreshness(st).freshness;
       console.log(`  data      ${fresh.stale ? `${C.y}stale${C.r}` : `${C.g}fresh${C.r}`} ${st.freshness.lastRefresh ? `· updated ${relativeTime(st.freshness.lastRefresh)}` : '(never refreshed)'}`);
       console.log(`  status    ${paths().status}`);
+    }
+    const agent = await import('../src/core/watch-agent.js');
+    if (agent.supported()) {
+      const a = agent.status();
+      const state = !a.installed ? `${C.dim}not installed${C.r}`
+        : a.loaded ? `${C.g}installed${C.r} ${C.dim}· starts at login, restarts on crash${C.r}`
+          : `${C.y}installed but not loaded${C.r}`;
+      console.log(`  agent     ${state}`);
+      if (!a.installed) console.log(`            ${C.dim}install it:  tokenflow watch --install-agent${C.r}`);
+      // Two agents running a watcher means the loser exits and respawns for
+      // ever; say so rather than letting it churn quietly in the log.
+      for (const f of a.foreign) {
+        console.log(`  ${C.y}!${C.r} another agent also runs a watcher: ${f.label}`);
+        console.log(`            ${C.dim}${f.file}${C.r}`);
+        console.log(`            ${C.dim}'tokenflow watch --install-agent' replaces it with the supported one.${C.r}`);
+      }
     }
     if (!running && !flags.json) {
       console.log(`\n  ${C.dim}start one:  tokenflow watch${C.r}`);
@@ -1354,6 +1435,9 @@ function help(code = 0) {
     tokenflow watch --once          one cycle and exit (cron-friendly)
     tokenflow watch --status        is a watcher running? how fresh is the data?
     tokenflow watch --stop          stop a running watcher
+    tokenflow watch --install-agent keep the watcher running across reboots
+                                   (installed by default at setup on macOS;
+                                    --uninstall-agent removes it)
     tokenflow usage                 today / week / month tokens & cost (--json)
     tokenflow cost                  estimated vs measured spend, projections
     tokenflow capacity              configured limits: %, burn, reset countdowns

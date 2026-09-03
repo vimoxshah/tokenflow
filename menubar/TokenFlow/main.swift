@@ -141,6 +141,12 @@ enum Paths {
     static var statusFile: String { home + "/data/status.json" }
     static var watchLockFile: String { home + "/data/watch.pid" }
     static var watchLogFile: String { home + "/watch.log" }
+    /// The supported login agent, if the CLI has installed one.
+    static var watchAgentLabel: String { "app.tokenflow.watch" }
+    static var watchAgentPlist: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(watchAgentLabel).plist").path
+    }
     static var dashboardLogFile: String { home + "/dashboard.log" }
     static var configFile: String { home + "/config.yaml" }
     static var dashboardPort: Int {
@@ -587,6 +593,15 @@ struct AppActions {
     }
 
     private func startWatcherDetached() {
+        // Prefer the login agent when one is installed: launchd supervises it,
+        // so it restarts after a crash and comes back at the next login. A bare
+        // child started here would do neither, which would quietly leave the
+        // user worse off after pressing play than they were after logging in.
+        if FileManager.default.fileExists(atPath: Paths.watchAgentPlist), kickstartWatchAgent() {
+            model.actionError = nil
+            pollUntilWatcherSeen(6)
+            return
+        }
         guard let proc = makeProcess(["watch"], detached: true) else {
             model.actionError = "could not find the tokenflow CLI"
             return
@@ -619,19 +634,38 @@ struct AppActions {
             model.actionError = error.localizedDescription
             return
         }
-        // The freshly started watcher takes the lock within a moment; poll so
-        // the button flips to "stop" as soon as it does rather than looking dead.
-        func refreshUntilSeen(_ attempts: Int) {
-            guard attempts > 0 else { model.load(); renderTitle(); return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                guard let self else { return }
-                self.model.load()
-                self.renderTitle()
-                if self.watcherRunning { return }
-                refreshUntilSeen(attempts - 1)
-            }
+        pollUntilWatcherSeen(6)
+    }
+
+    /// Ask launchd to start the agent. `false` when there is no such job, so
+    /// the caller can fall back to spawning a watcher directly.
+    private func kickstartWatchAgent() -> Bool {
+        let uid = getuid()
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        proc.arguments = ["kickstart", "gui/\(uid)/\(Paths.watchAgentLabel)"]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            return proc.terminationStatus == 0
+        } catch {
+            return false
         }
-        refreshUntilSeen(6)
+    }
+
+    /// A freshly started watcher takes the lock within a moment; poll so the
+    /// button flips to "stop" as soon as it does rather than looking dead.
+    private func pollUntilWatcherSeen(_ attempts: Int) {
+        guard attempts > 0 else { model.load(); renderTitle(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            self.model.load()
+            self.renderTitle()
+            if self.watcherRunning { return }
+            self.pollUntilWatcherSeen(attempts - 1)
+        }
     }
 
     private func toggleWatcherAction() {
