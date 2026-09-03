@@ -60,6 +60,26 @@
  * already been emitted, and emit only the DELTA when a row grew. The base
  * record carries the group's first_seen; a delta carries the last_seen at
  * which the new usage was observed.
+ *
+ * ### The tail key MUST be the table's whole primary key
+ *
+ * session_model_usage is keyed on SIX columns:
+ *
+ *   (session_id, model, billing_provider, billing_base_url, billing_mode, task)
+ *
+ * An earlier version of this adapter keyed its tails on four of them, leaving
+ * out billing_base_url and billing_mode. Two real rows — the same session and
+ * model, billed once with mode "" and once with mode "chat_completions" —
+ * therefore shared one tail. Each pass, each row computed its delta against
+ * the OTHER row's totals and then overwrote the tail, so the pair ping-ponged
+ * forever: every refresh cycle emitted the difference between them again, with
+ * a fresh emission index that made each one look like a new request. Five
+ * colliding sessions produced 37 BILLION phantom tokens in a single day and
+ * the totals grew with every cycle, not with usage.
+ *
+ * Two rules keep that from recurring: the key below is the full primary key,
+ * and the tail stores a HIGH-WATER MARK rather than the row's latest numbers,
+ * so a total that comes back lower can never manufacture a delta.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -118,6 +138,7 @@ export default createProvider({
 
       const rows = db.prepare(
         `SELECT u.session_id AS session_id, u.model AS model, u.billing_provider AS billing_provider,
+                u.billing_base_url AS billing_base_url, u.billing_mode AS billing_mode,
                 u.task AS task, u.api_call_count AS api_call_count,
                 u.input_tokens AS input_tokens, u.output_tokens AS output_tokens,
                 u.cache_read_tokens AS cache_read_tokens, u.cache_write_tokens AS cache_write_tokens,
@@ -159,7 +180,13 @@ export default createProvider({
         // dashboard can show; skip it rather than emit an empty request.
         if (FIELDS.every((k) => !base[k]) && measuredCost === null) { skipped++; continue; }
 
-        const key = [r.session_id, r.model ?? '', r.billing_provider ?? '', r.task ?? ''].join('|');
+        // The table's whole primary key — see "The tail key MUST be the
+        // table's whole primary key" above. Dropping a column here silently
+        // merges distinct rows and makes their deltas oscillate.
+        const key = [
+          r.session_id, r.model ?? '', r.billing_provider ?? '',
+          r.billing_base_url ?? '', r.billing_mode ?? '', r.task ?? '',
+        ].join('|');
         const prev = tails[key];
         const delta = {};
         let any = false;
@@ -177,10 +204,18 @@ export default createProvider({
         // row (not against its current total), so cost never double counts.
         const costDelta = prev && measuredCost !== null ? Math.max(0, round6(measuredCost - (prev.c || 0))) : measuredCost;
 
-        // Remember what this row accounts for. The emission index keeps each
-        // delta's record id distinct and stable across runs.
+        // Remember what this row accounts for, as a HIGH-WATER MARK. These
+        // totals only ever grow in the source table, so a lower reading is an
+        // anomaly (a source-side reset, a re-count, or two rows this adapter
+        // cannot tell apart) — and keeping the maximum means such a reading
+        // can never be turned into usage that did not happen.
         const emissionIndex = prev ? (prev.n || 0) : 0;
-        tails[key] = { ls: lastSeen ?? (prev?.ls || 0), f: { ...base }, c: measuredCost, n: emissionIndex + 1 };
+        const highWater = {};
+        for (const k of FIELDS) highWater[k] = Math.max(prev ? (prev.f[k] ?? 0) : 0, base[k] ?? 0);
+        const costHighWater = measuredCost === null && (prev?.c ?? null) === null
+          ? null
+          : Math.max(prev?.c ?? 0, measuredCost ?? 0);
+        tails[key] = { ls: lastSeen ?? (prev?.ls || 0), f: highWater, c: costHighWater, n: emissionIndex + 1 };
         records++;
 
         const model = str(r.model);
@@ -239,6 +274,8 @@ export default createProvider({
             hermes_task: str(r.task),
             api_calls: intOrNull(r.api_call_count),
             billing_provider: str(r.billing_provider),
+            billing_base_url: str(r.billing_base_url),
+            billing_mode: str(r.billing_mode),
             cost_status: str(r.cost_status),
             session_open: r.ended_at === null || r.ended_at === undefined ? true : undefined,
             ...(prev ? { continuation_of: key } : {}),

@@ -125,7 +125,10 @@ test('freshness is recomputed against the current clock, not frozen at write tim
 
 test('currentStatus trusts the watcher cadence and never forgets the daemon', async () => {
   await withHome(async (_dir, { live, watch }) => {
-    // Daemon-written snapshot with watcher identity.
+    // Daemon-written snapshot with watcher identity. The lock is part of the
+    // setup because it is the authority on liveness: only a watcher holding it
+    // gets its identity carried into a fallback compute.
+    watch.acquireWatchLock();
     await watch.runCycle({ registry: [], providers: [], daemon: { intervalSeconds: 120 } });
     let r = live.currentStatus();
     assert.equal(r.fromWatch, true);
@@ -141,6 +144,11 @@ test('currentStatus trusts the watcher cadence and never forgets the daemon', as
     r = live.currentStatus(); // window = interval(120s)+60s < 5min -> compute path
     assert.equal(r.fromWatch, false);
     assert.equal(r.status.watcher?.pid, st.watcher.pid, 'fallback compute preserves watcher identity');
+
+    // …and drops it once the watcher is gone, so a paused TokenFlow never
+    // reports itself live.
+    watch.releaseWatchLock();
+    assert.ok(!live.currentStatus().status.watcher, 'a released lock leaves no watcher claim');
   });
 });
 
@@ -223,6 +231,42 @@ test('watch lock: single instance, stale replacement, clean release', async () =
     assert.equal(watch.watchIsRunning(), false);
     watch.acquireWatchLock(); // must not throw
     watch.releaseWatchLock();
+  });
+});
+
+test('watch lock: a pid recycled across a reboot does not hold the lock', async () => {
+  await withHome(async (dir, { watch }) => {
+    const lockFile = path.join(dir, 'data', 'watch.pid');
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+
+    // The real failure this guards: a lock file written before a reboot, whose
+    // pid the kernel has since handed to an unrelated daemon. `kill(pid, 0)`
+    // keeps succeeding, so a pid-only check refuses to start a watcher forever.
+    // pid 1 (launchd/init) is always alive and is definitely not ours.
+    fs.writeFileSync(lockFile, '1');
+    assert.equal(watch.watchIsRunning(), false, 'a live non-tokenflow pid must not read as our watcher');
+    watch.acquireWatchLock(); // must not throw
+    watch.releaseWatchLock();
+
+    // Same story in the JSON form: the pid is alive, but its boot stamp
+    // belongs to an earlier boot, so the lock cannot describe a live process.
+    fs.writeFileSync(lockFile, JSON.stringify({ v: 2, pid: process.pid, boot: 1000 }));
+    assert.equal(watch.watchIsRunning(), false, 'a lock from a previous boot is stale');
+    watch.acquireWatchLock(); // must not throw
+    assert.equal(watch.watchIsRunning(), true);
+
+    // What we write carries the identity a future reader needs.
+    const held = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+    assert.equal(held.pid, process.pid);
+    assert.ok(Math.abs(held.boot - watch.bootTimeMs()) < 30_000, 'boot stamp names this boot');
+    watch.releaseWatchLock();
+
+    // `--stop` is the escape hatch: it clears a lock it judges stale.
+    fs.writeFileSync(lockFile, JSON.stringify({ v: 2, pid: process.pid, boot: 1000 }));
+    const r = watch.stopWatch();
+    assert.equal(r.stopped, false);
+    assert.match(r.reason, /stale/);
+    assert.equal(fs.existsSync(lockFile), false);
   });
 });
 

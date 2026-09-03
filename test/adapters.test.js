@@ -461,14 +461,15 @@ function buildHermesDb(dir) {
   return { file, db };
 }
 
-function hermesUsage(db, { session, model, provider = '', task = '', calls = 3, i = 0, o = 0, cr = 0, cw = 0, rs = 0, actual = 0, first, last, source = 'cli', cwd = null, branch = null, root = null, parent = null, started = null, ended = null }) {
+function hermesUsage(db, { session, model, provider = '', baseUrl = '', mode = '', task = '', calls = 3, i = 0, o = 0, cr = 0, cw = 0, rs = 0, actual = 0, first, last, source = 'cli', cwd = null, branch = null, root = null, parent = null, started = null, ended = null }) {
   db.prepare('INSERT OR REPLACE INTO sessions (id, source, cwd, git_branch, git_repo_root, parent_session_id, started_at, ended_at, title) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(session, source, cwd, branch, root, parent, started ?? first, ended ?? last, `session ${session}`);
   db.prepare(`INSERT OR REPLACE INTO session_model_usage
-    (session_id, model, billing_provider, task, api_call_count, input_tokens, output_tokens,
-     cache_read_tokens, cache_write_tokens, reasoning_tokens, actual_cost_usd, cost_status, first_seen, last_seen)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(session, model, provider, task, calls, i, o, cr, cw, rs, actual, actual > 0 ? 'measured' : null, first, last);
+    (session_id, model, billing_provider, billing_base_url, billing_mode, task, api_call_count,
+     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+     actual_cost_usd, cost_status, first_seen, last_seen)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(session, model, provider, baseUrl, mode, task, calls, i, o, cr, cw, rs, actual, actual > 0 ? 'measured' : null, first, last);
 }
 
 function hermesCtx(dir) {
@@ -557,6 +558,75 @@ test('hermes: a grown usage row emits only the delta, and an unchanged re-read e
 
     const third = await fetchAll(hermes, hermesCtx(dir), state);
     assert.equal(third.records.length, 0, 'an unchanged re-read must produce no duplicates');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hermes: rows differing only in billing_mode are distinct, not an oscillating pair', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-hermes-'));
+  try {
+    // The exact shape that produced 37 billion phantom tokens in one day: one
+    // session and model billed through the same provider twice, distinguished
+    // only by billing_mode — a column the tail key used to ignore. The two
+    // rows then shared a tail, each computed its delta against the other's
+    // totals, and every refresh cycle re-emitted the difference forever.
+    const { db } = buildHermesDb(dir);
+    const row = { session: 's1', model: 'gpt-5.5', provider: 'opencode-free', baseUrl: 'https://example.invalid/v1', first: 1787000000, last: 1787000100 };
+    hermesUsage(db, { ...row, mode: '', i: 380141, o: 43829, cr: 44942080 });
+    hermesUsage(db, { ...row, mode: 'chat_completions', i: 902243, o: 16861, cr: 33361280 });
+    db.close();
+
+    const billable = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens'];
+    const tokensOf = (recs) => recs.reduce(
+      (n, r) => n + billable.reduce((m, k) => m + (Number.isFinite(r[k]) ? r[k] : 0), 0), 0,
+    );
+    const state = {};
+    const first = await fetchAll(hermes, hermesCtx(dir), state);
+    assert.equal(first.records.length, 2, 'two source rows are two records');
+    assert.equal(tokensOf(first.records), 380141 + 43829 + 44942080 + 902243 + 16861 + 33361280);
+    assert.equal(new Set(first.records.map((r) => r.id)).size, 2, 'distinct rows get distinct ids');
+
+    // The decisive check: re-reading an UNCHANGED database must be a no-op.
+    // Under the collision this emitted the pair's difference again on every
+    // pass, so the totals grew with the number of refresh cycles.
+    for (let pass = 0; pass < 3; pass++) {
+      const again = await fetchAll(hermes, hermesCtx(dir), state);
+      assert.equal(again.records.length, 0, `pass ${pass + 2} must add nothing`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hermes: a field that dips while another grows cannot manufacture usage', { skip: !haveSqlite }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-hermes-'));
+  try {
+    const { db } = buildHermesDb(dir);
+    const row = { session: 's1', model: 'gpt-5.5', provider: 'openrouter', first: 1787000000 };
+    hermesUsage(db, { ...row, i: 5000, o: 1000, last: 1787000100 });
+    db.close();
+
+    const state = {};
+    assert.equal((await fetchAll(hermes, hermesCtx(dir), state)).records.length, 1);
+
+    // A row where input GREW but output DIPPED — the mixed case the colliding
+    // pair produced. The row is emitted for its real growth, and the tail must
+    // keep output's high-water mark: recording the dip would turn output's
+    // return to its old value into usage that never happened.
+    const db2 = new DatabaseSync(path.join(dir, 'state.db'));
+    hermesUsage(db2, { ...row, i: 5200, o: 20, last: 1787000200 });
+    db2.close();
+    const grew = await fetchAll(hermes, hermesCtx(dir), state);
+    assert.equal(grew.records.length, 1);
+    assert.equal(grew.records[0].input_tokens, 200);
+    assert.equal(grew.records[0].output_tokens, 0, 'a dip contributes nothing');
+
+    const db3 = new DatabaseSync(path.join(dir, 'state.db'));
+    hermesUsage(db3, { ...row, i: 5200, o: 1000, last: 1787000300 });
+    db3.close();
+    assert.equal((await fetchAll(hermes, hermesCtx(dir), state)).records.length, 0,
+      'output returning to its earlier high is not new usage');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

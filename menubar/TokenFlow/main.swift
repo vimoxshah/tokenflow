@@ -139,6 +139,7 @@ enum Paths {
             .appendingPathComponent(".tokenflow", isDirectory: true).path
     }
     static var statusFile: String { home + "/data/status.json" }
+    static var watchLockFile: String { home + "/data/watch.pid" }
     static var configFile: String { home + "/config.yaml" }
     static var dashboardPort: Int {
         if let text = try? String(contentsOfFile: configFile, encoding: .utf8),
@@ -190,6 +191,51 @@ func processAlive(_ pid: Int?) -> Bool {
     guard let pid, pid > 1 else { return false }
     if kill(pid_t(pid), 0) == 0 { return true }
     return errno != ESRCH
+}
+
+// ========================================================== watcher lock ====
+
+/// Epoch milliseconds of the last boot, straight from the kernel.
+///
+/// The watcher's lock file records the boot its pid was issued by, because pid
+/// numbers restart and get reused at every boot. Without this check a lock
+/// that outlived a restart keeps naming a live process — just not ours — and
+/// the watcher can never start again. That is not theoretical: a lock left at
+/// pid 810 was inherited by `mobilerepaird` after a reboot and TokenFlow sat
+/// paused behind it, the play button doing nothing at all.
+func bootTimeMs() -> Double? {
+    var tv = timeval()
+    var size = MemoryLayout<timeval>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_BOOTTIME]
+    guard sysctl(&mib, 2, &tv, &size, nil, 0) == 0, size > 0 else { return nil }
+    return Double(tv.tv_sec) * 1000 + Double(tv.tv_usec) / 1000
+}
+
+/// Boot stamps are derived from whole-second clocks on both sides, so allow a
+/// little slack; a reboot moves the stamp by far more than this.
+private let bootToleranceMs: Double = 30_000
+
+/// Is a watcher of OURS holding the lock right now?
+///
+/// Reads the lock file rather than `status.json`: a watcher block outlives the
+/// process that wrote it, so the status file can only say that a watcher ran,
+/// never that one is running.
+func watcherLockIsLive() -> Bool {
+    guard let raw = try? String(contentsOfFile: Paths.watchLockFile, encoding: .utf8) else { return false }
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if text.isEmpty { return false }
+
+    // Legacy locks are a bare pid with no boot stamp. Nothing to cross-check,
+    // so fall back to plain liveness; the CLI does the authoritative check
+    // before it refuses to start.
+    guard text.hasPrefix("{"), let data = text.data(using: .utf8),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let pid = obj["pid"] as? Int
+    else { return processAlive(Int(text)) }
+
+    guard processAlive(pid) else { return false }
+    guard let boot = obj["boot"] as? Double, let now = bootTimeMs() else { return true }
+    return abs(boot - now) <= bootToleranceMs
 }
 
 // ============================================================ formatting ====
@@ -286,7 +332,13 @@ final class StatusModel: ObservableObject {
     @Published var status: TFStatus?
     @Published var refreshing = false
     @Published var actionError: String?
-    func load() { status = loadStatus() }
+    /// Read once per load, not per render — liveness costs a file read.
+    @Published var watcherLive = false
+    @Published var dashboardStarting = false
+    func load() {
+        status = loadStatus()
+        watcherLive = watcherLockIsLive()
+    }
 }
 
 struct AppActions {
@@ -431,7 +483,7 @@ struct AppActions {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
-    private var watcherRunning: Bool { processAlive(model.status?.watcher?.pid) }
+    private var watcherRunning: Bool { model.watcherLive }
 
     /// Adaptive headline: worst limit when configured, else today's cost when
     /// priced, else today's tokens — mirroring `status --bar`.
@@ -487,6 +539,11 @@ struct AppActions {
 
     // ---- actions -----------------------------------------------------------
 
+    /// Detached children we still want to hear back from: a Process released
+    /// before it exits never runs its terminationHandler.
+    private var watcherProc: Process?
+    private var dashboardProc: Process?
+
     private func makeProcess(_ args: [String], detached: Bool) -> Process? {
         // Prefer an absolute node binary (launchd's minimal PATH can't resolve
         // nvm-managed installs via /usr/bin/env node); fall back to env.
@@ -528,11 +585,37 @@ struct AppActions {
     }
 
     private func startWatcherDetached() {
-        guard let proc = makeProcess(["watch"], detached: true) else { return }
-        try? proc.run()
-        // The freshly started watcher needs its first cycle (~seconds) before
-        // status.json names it; poll briefly so the button flips to "stop"
-        // as soon as the pidfile exists instead of appearing dead.
+        guard let proc = makeProcess(["watch"], detached: true) else {
+            model.actionError = "could not find the tokenflow CLI"
+            return
+        }
+        // A watcher that refuses to start used to fail in complete silence:
+        // output went to /dev/null and the button just stayed on "play". Keep
+        // its stderr so the popover can say why.
+        let errPipe = Pipe()
+        proc.standardError = errPipe
+        model.actionError = nil
+        proc.terminationHandler = { [weak self] p in
+            guard p.terminationStatus != 0 else { return }
+            let text = String(
+                data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8,
+            ) ?? ""
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.model.load()
+                guard !self.model.watcherLive else { return }
+                self.model.actionError = firstMeaningfulLine(text)
+                    ?? "watcher exited (\(p.terminationStatus))"
+                self.renderTitle()
+            }
+        }
+        watcherProc = proc
+        do { try proc.run() } catch {
+            model.actionError = error.localizedDescription
+            return
+        }
+        // The freshly started watcher takes the lock within a moment; poll so
+        // the button flips to "stop" as soon as it does rather than looking dead.
         func refreshUntilSeen(_ attempts: Int) {
             guard attempts > 0 else { model.load(); renderTitle(); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -550,9 +633,101 @@ struct AppActions {
         if watcherRunning { runCLI(["watch", "--stop"]) } else { startWatcherDetached() }
     }
 
+    /// Open the dashboard — starting the server first when nothing is serving.
+    ///
+    /// This button used to open a browser at the configured port and hope. With
+    /// no server running (the common case: the app had just launched, or the
+    /// watcher was down) the browser showed a connection error and the button
+    /// looked broken.
     private func openDashboard() {
-        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(Paths.dashboardPort)")!)
+        guard !model.dashboardStarting else { return }
+        let port = Paths.dashboardPort
+        probeDashboard(port: port) { [weak self] serving in
+            guard let self else { return }
+            if serving {
+                NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(port)")!)
+            } else {
+                self.startDashboard(port: port)
+            }
+        }
     }
+
+    private func startDashboard(port: Int) {
+        guard let proc = makeProcess(["dashboard"], detached: true) else {
+            model.actionError = "could not find the tokenflow CLI"
+            return
+        }
+        let errPipe = Pipe()
+        proc.standardError = errPipe
+        model.actionError = nil
+        model.dashboardStarting = true
+        proc.terminationHandler = { [weak self] p in
+            guard p.terminationStatus != 0 else { return }
+            let text = String(
+                data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8,
+            ) ?? ""
+            DispatchQueue.main.async {
+                guard let self, self.model.dashboardStarting else { return }
+                self.model.dashboardStarting = false
+                self.model.actionError = firstMeaningfulLine(text)
+                    ?? "dashboard exited (\(p.terminationStatus)) — port \(port) may be busy"
+            }
+        }
+        dashboardProc = proc
+        do { try proc.run() } catch {
+            model.dashboardStarting = false
+            model.actionError = error.localizedDescription
+            return
+        }
+        // The server builds its data bundle before it binds, which on a large
+        // store takes several seconds — wait generously instead of calling it
+        // a failure. The CLI opens the browser itself once it is listening.
+        awaitDashboard(port: port, attemptsLeft: 30)
+    }
+
+    private func awaitDashboard(port: Int, attemptsLeft: Int) {
+        guard attemptsLeft > 0 else {
+            model.dashboardStarting = false
+            model.actionError = "the dashboard did not come up on port \(port)"
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.model.dashboardStarting else { return }
+            self.probeDashboard(port: port) { serving in
+                if serving {
+                    self.model.dashboardStarting = false
+                } else {
+                    self.awaitDashboard(port: port, attemptsLeft: attemptsLeft - 1)
+                }
+            }
+        }
+    }
+
+    /// Is a TokenFlow dashboard answering on this port? Loopback only.
+    private func probeDashboard(port: Int, done: @escaping (Bool) -> Void) {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/api/ping") else { return done(false) }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 1.5
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            // Identify the app, not just an open port: something else on the
+            // port is a problem to report, not a dashboard to open.
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+                && (data.flatMap { String(data: $0, encoding: .utf8) }?.contains("\"tokenflow\"") ?? false)
+            DispatchQueue.main.async { done(ok) }
+        }.resume()
+    }
+}
+
+/// The first line of a CLI failure worth showing a human, trimmed to fit.
+private func firstMeaningfulLine(_ text: String) -> String? {
+    for raw in text.split(separator: "\n") {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: #"\u{1B}\[[0-9;]*m"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "✗! "))
+        if line.count > 3 { return String(line.prefix(120)) }
+    }
+    return nil
 }
 
 // ============================================================== swiftui ui ==
@@ -1032,6 +1207,7 @@ private struct GettingStarted: View {
 private struct ActionsBar: View {
     let refreshing: Bool
     let live: Bool
+    var dashboardStarting = false
     let actions: AppActions
 
     var body: some View {
@@ -1055,13 +1231,21 @@ private struct ActionsBar: View {
 
             Button(action: actions.openDashboard) {
                 HStack(spacing: 6) {
-                    Image(systemName: "macwindow")
-                    Text("Dashboard").font(.system(size: 12, weight: .semibold))
+                    if dashboardStarting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "macwindow")
+                    }
+                    // Starting the server takes a few seconds on a large store,
+                    // so say so rather than looking inert.
+                    Text(dashboardStarting ? "Starting…" : "Dashboard")
+                        .font(.system(size: 12, weight: .semibold))
                 }
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
             }
             .buttonStyle(.plain)
+            .disabled(dashboardStarting)
 
             Spacer()
 
@@ -1178,10 +1362,9 @@ struct MenuContentView: View {
 
     private var s: TFStatus? { model.status }
     private var hasData: Bool { (s?.health?.records ?? 0) > 0 }
-    private var watcherLive: Bool {
-        guard let pid = s?.watcher?.pid, pid > 1 else { return false }
-        return kill(pid_t(pid), 0) == 0 || errno != ESRCH
-    }
+    /// One source of truth for "is it live": the watcher's own lock file,
+    /// boot-verified. `status.watcher` only records that a watcher once ran.
+    private var watcherLive: Bool { model.watcherLive }
     private var updatedAge: Double? {
         guard let d = s?.lastRefreshDate else { return nil }
         return Date().timeIntervalSince(d) * 1000
@@ -1294,14 +1477,16 @@ struct MenuContentView: View {
                 }
 
                 Divider()
-                ActionsBar(refreshing: model.refreshing, live: watcherLive, actions: actions)
+                ActionsBar(refreshing: model.refreshing, live: watcherLive,
+                           dashboardStarting: model.dashboardStarting, actions: actions)
             } else {
                 GettingStarted(onSetup: actions.runSetup)
                 if let err = model.actionError {
                     errorLine("⚠︎ \(err)")
                 }
                 Divider()
-                ActionsBar(refreshing: model.refreshing, live: false, actions: actions)
+                ActionsBar(refreshing: model.refreshing, live: false,
+                           dashboardStarting: model.dashboardStarting, actions: actions)
             }
 
             FooterRow()
@@ -1353,12 +1538,14 @@ struct MenuContentView: View {
 enum PreviewRenderer {
     @MainActor
     static func render(_ prefix: String) {
-        guard let status = loadStatus() else {
+        let model = StatusModel()
+        // Load the way the app does, so a preview shows the real live/paused
+        // state instead of a hand-assembled one.
+        model.load()
+        guard model.status != nil else {
             FileHandle.standardError.write(Data("preview: no status at \(Paths.statusFile)\n".utf8))
             exit(1)
         }
-        let model = StatusModel()
-        model.status = status
         for (name, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
             // ImageRenderer cannot draw ScrollView content off-screen (it renders
             // fully transparent), so lay the view out in an off-screen hosting
