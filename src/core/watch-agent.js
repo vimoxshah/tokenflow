@@ -70,10 +70,10 @@ function xml(s) {
 }
 
 export function renderPlist({ nodeBin, cli, home, workingDir }) {
-  // launchd starts jobs with a minimal PATH. The git adapter shells out, so
-  // give it somewhere to find git — and node's own directory first, because an
-  // nvm-managed install is not on any default PATH.
-  const bin = path.dirname(nodeBin);
+  // A launchd plist always carries POSIX paths, so build them with path.posix
+  // rather than the host's separator. Rendering is then identical everywhere,
+  // which is what makes it testable on a machine that could never run it.
+  const bin = path.posix.dirname(nodeBin);
   const PATH = [bin, '/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin', '/opt/homebrew/bin'].join(':');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -92,8 +92,8 @@ export function renderPlist({ nodeBin, cli, home, workingDir }) {
     <dict><key>SuccessfulExit</key><false/></dict>
     <key>ThrottleInterval</key><integer>${THROTTLE_SECONDS}</integer>
     <key>WorkingDirectory</key><string>${xml(workingDir)}</string>
-    <key>StandardOutPath</key><string>${xml(path.join(home, 'watch.log'))}</string>
-    <key>StandardErrorPath</key><string>${xml(path.join(home, 'watch.log'))}</string>
+    <key>StandardOutPath</key><string>${xml(path.posix.join(home, 'watch.log'))}</string>
+    <key>StandardErrorPath</key><string>${xml(path.posix.join(home, 'watch.log'))}</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>TOKENFLOW_HOME</key><string>${xml(home)}</string>
