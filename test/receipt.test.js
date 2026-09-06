@@ -14,7 +14,9 @@ import {
   renderReceiptMarkdown, renderReceiptsTable, renderSessionStats, renderGuard, UNATTRIBUTED,
 } from '../src/analytics/receipt.js';
 import { buildPriceBook, estimateCost } from '../src/core/pricing.js';
-import { repoRootOf, makeRepoResolver } from '../src/commands/receipt.js';
+import { repoRootOf, makeRepoResolver, run as runReceiptCommand } from '../src/commands/receipt.js';
+import { Store, encodeRecord } from '../src/core/store.js';
+import { validateReceipt } from '../src/analytics/receipt-schema.js';
 import { readTranscript, evaluateSession, hookOutput, applySet, installSnippet, GUARD_KEYS } from '../src/commands/guard.js';
 import { loadProviders } from '../src/core/registry.js';
 import { loadConfig } from '../src/core/config.js';
@@ -314,6 +316,40 @@ test('repoRootOf: a worktree resolves to its main checkout; a plain dir to itsel
   assert.equal(resolve({ metadata: { cwd: wt }, repository: 'er', project: 'er' }), 'main');
   assert.equal(resolve({ metadata: {}, repository: 'fallback', project: 'p' }), 'fallback');
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// ------------------------------------------- receipt command: portable JSON ---
+
+test('receipt --branch --json: the portable receipt.v1 document, with the ticket the branch names', () => {
+  const prev = process.env.TOKENFLOW_HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-receipt-home-'));
+  process.env.TOKENFLOW_HOME = home;
+  try {
+    const store = new Store();
+    store.writer('2026-08-01').write(encodeRecord(rec({
+      date: '2026-08-01', hour: 10, dow: 6, client: 'claude-code', interface: 'CLI',
+      git_branch: 'feat/ENG-42-widget', request_id: 'req1', id: 'r1',
+    })));
+    store.closeWriters();
+
+    const out = runReceiptCommand({ branch: 'feat/ENG-42-widget', json: true });
+    const r = out.json.receipt;
+    assert.equal(r.schemaVersion, 1, 'a single receipt is emitted as v1, not as the raw builder entry');
+    assert.equal(r.branch, 'feat/ENG-42-widget');
+    assert.ok(r.costUsd > 0);
+
+    // Proves run() threads config.tickets into the builder: without it b.ticket is null.
+    assert.deepEqual(r.ticket, { system: 'other', key: 'ENG-42', url: null });
+    assert.equal(r.verdict, null, 'no --repo means no repository policy to judge against');
+
+    // Honest null rather than an invented sha: naming a commit needs a checkout.
+    assert.equal(r.headSha, null);
+    assert.equal(validateReceipt(r).ok, false, 'and that null is exactly why this one is not schema-valid');
+    assert.match(validateReceipt(r).errors.join('; '), /headSha/);
+  } finally {
+    if (prev === undefined) delete process.env.TOKENFLOW_HOME; else process.env.TOKENFLOW_HOME = prev;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 // --------------------------------------------------------------- guard ---

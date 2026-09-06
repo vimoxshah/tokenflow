@@ -14,7 +14,8 @@ import { execFileSync } from 'node:child_process';
 import {
   install, uninstall, status, prePush, run, renderHookScript,
 } from '../src/commands/hooks.js';
-import { readNote } from '../src/core/receipt-note.js';
+import { buildBranchReceipt, readNote } from '../src/core/receipt-note.js';
+import { validateReceipt } from '../src/analytics/receipt-schema.js';
 import { Store, encodeRecord } from '../src/core/store.js';
 
 const ALL_ZERO_SHA = '0'.repeat(40);
@@ -192,15 +193,52 @@ test('pre-push: parses stdin, writes a receipt note, and pushes it to the remote
 
   const note = readNote({ repoPath: repo, sha });
   assert.ok(note, 'a note should be attached locally');
-  assert.equal(note.schemaVersion, 0);
+  assert.equal(note.schemaVersion, 1);
   assert.equal(note.branch, 'feat/x');
   assert.equal(note.headSha, sha);
   assert.ok(note.costUsd > 0);
   assert.equal(note.pr, null, 'no PR is known at push time');
 
+  assert.equal(note.ticket, null, '"feat/x" names no ticket, and an absent ticket is null, not omitted');
+  assert.equal(note.verdict, null, 'this repo declares no receipt cap, so nothing judged it');
+  assert.equal(validateReceipt(note).ok, true, validateReceipt(note).errors.join('; '));
+
   // Pushed to the (local, bare) remote too — offline, no network involved.
   const pushed = execFileSync('git', ['notes', '--ref=tokenflow', 'show', sha], { cwd: bare, encoding: 'utf8' });
   assert.deepEqual(JSON.parse(pushed), note);
+}));
+
+test('receipt note: v1 carries the ticket the branch names and the verdict against the repo cap', (t) => withHome(() => {
+  const { tmp, repo } = makeRepo();
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const branch = 'feat/ENG-42-widget';
+  git(['checkout', '-q', '-b', branch], repo);
+  fs.writeFileSync(path.join(repo, 'widget.txt'), 'work\n');
+  git(['add', '.'], repo);
+  git(['commit', '-q', '-m', 'widget'], repo);
+  seedRecord(repo, { git_branch: branch, id: 'r2', session_id: 's2' });
+
+  const writeCap = (usd) => {
+    fs.mkdirSync(path.join(repo, '.tokenflow'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tokenflow', 'policy.yaml'), `receipt:\n  maxCostUsd: ${usd}\n`);
+  };
+
+  const uncapped = buildBranchReceipt({ repoPath: repo, branch });
+  assert.equal(uncapped.schemaVersion, 1);
+  assert.deepEqual(uncapped.ticket, { system: 'other', key: 'ENG-42', url: null });
+  assert.equal(uncapped.verdict, null, 'no cap declared is "nobody judged this", never "it passed"');
+  assert.ok(uncapped.costUsd > 0, 'the seeded turn must price for the caps below to mean anything');
+
+  // The caps bracket the receipt's own cost, so this holds whatever the price table says.
+  writeCap(Number((uncapped.costUsd / 2).toFixed(6)));
+  const over = buildBranchReceipt({ repoPath: repo, branch });
+  assert.equal(over.verdict.overBudget, true);
+  assert.equal(over.verdict.maxCostPer100Lines, null, 'an undeclared cap stays null rather than being invented');
+  assert.equal(validateReceipt(over).ok, true, validateReceipt(over).errors.join('; '));
+
+  writeCap(Number((uncapped.costUsd * 2).toFixed(6)));
+  const within = buildBranchReceipt({ repoPath: repo, branch });
+  assert.equal(within.verdict.overBudget, false);
 }));
 
 test('pre-push: a branch with no local sessions writes no note and never blocks', (t) => withHome(() => {

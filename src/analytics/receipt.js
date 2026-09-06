@@ -28,6 +28,8 @@
 import { estimateCost } from '../core/pricing.js';
 import { MEASUREMENT } from '../core/schema.js';
 import { usd, compact, pct, shortDate } from '../core/units.js';
+import { extractTicket } from './tickets.js';
+import { toReceiptV0, RECEIPT_SCHEMA_VERSION_V1 } from './receipt-schema.js';
 
 /** @typedef {ReturnType<typeof import('../core/pricing.js').buildPriceBook>} PriceBook */
 
@@ -217,7 +219,8 @@ function daysBetween(a, b) {
  *
  * @param {Iterable<object>} records normalized records (any measurement; only primary count)
  * @param {{book?:PriceBook|null, prs?:PullRequest[], repoOf?:(rec:object)=>string|null,
- *   minTurns?:number, automated?:RegExp|null}} [opt]
+ *   minTurns?:number, automated?:RegExp|null,
+ *   tickets?:{system?:string|null, baseUrl?:string|null, pattern?:string|null}}} [opt]
  */
 export function buildReceipts(records, opt = {}) {
   const b = createReceiptBuilder(opt);
@@ -229,7 +232,8 @@ export function buildReceipts(records, opt = {}) {
  * The streaming form of buildReceipts(): feed records one at a time (a store
  * scan never has to materialize every record), then finish(). Same result.
  * @param {{book?:PriceBook|null, prs?:PullRequest[], repoOf?:(rec:object)=>string|null,
- *   minTurns?:number, automated?:RegExp|null}} [opt]
+ *   minTurns?:number, automated?:RegExp|null,
+ *   tickets?:{system?:string|null, baseUrl?:string|null, pattern?:string|null}}} [opt]
  */
 export function createReceiptBuilder(opt = {}) {
   const book = opt.book ?? null;
@@ -237,6 +241,7 @@ export function createReceiptBuilder(opt = {}) {
   const minTurns = opt.minTurns ?? 1;
   const prs = opt.prs || [];
   const automated = opt.automated ?? null;
+  const tickets = opt.tickets || {};
 
   // PRs per (repo-or-any, branch), merged ones sorted by merge time.
   const prIndex = new Map();
@@ -284,10 +289,10 @@ export function createReceiptBuilder(opt = {}) {
     }
   }
 
-  return { add, finish: () => finishReceipts(repos, { prs, minTurns, automated, seen }) };
+  return { add, finish: () => finishReceipts(repos, { prs, minTurns, automated, seen, tickets }) };
 }
 
-function finishReceipts(repos, { prs, minTurns, automated, seen }) {
+function finishReceipts(repos, { prs, minTurns, automated, seen, tickets }) {
   const out = [];
   const seenBranches = new Set();
   let total = 0;
@@ -330,6 +335,11 @@ function finishReceipts(repos, { prs, minTurns, automated, seen }) {
         b.prWindow = null;
       }
       b.longLived = LONG_LIVED_BRANCH.test(b.key);
+      // The branch name is tried first; a merged PR's title is a fallback,
+      // since some teams keep the ticket key only in the title. null when
+      // neither names one — the branch stays a valid receipt, just
+      // unattributed to a ticket (see analytics/tickets.js).
+      b.ticket = extractTicket(b.key, tickets) || (b.pr && b.pr.title ? extractTicket(b.pr.title, tickets) : null);
       branches.push(b);
     }
     const prFor = new Map();
@@ -378,6 +388,63 @@ function finishReceipts(repos, { prs, minTurns, automated, seen }) {
       branches: seenBranches.size,
       records: seen,
     },
+  };
+}
+
+// -------------------------------------------------------- portable receipt ---
+
+/** A finite, strictly positive cap. Anything else (missing, zero, negative, NaN) is "no cap". */
+function positiveCap(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/**
+ * The `verdict` block of a receipt.v1: which caps were checked, and whether
+ * this receipt crossed one. The comparison matches the GitHub Action's own
+ * (`judgeBudget` in action/index.js) so the two never disagree about the same
+ * receipt: STRICTLY greater is over, equal to the cap is within, and a cap
+ * with no matching measurement on the receipt is left unjudged rather than
+ * guessed as a pass or a fail.
+ * @param {{costUsd:number|null, costPer100Lines:number|null}} v0 the v0 receipt being extended
+ * @param {{maxCostUsd?:number|null, maxCostPer100Lines?:number|null}|null} [caps]
+ * @returns {{maxCostUsd:number|null, maxCostPer100Lines:number|null, overBudget:boolean}|null}
+ */
+function receiptVerdict(v0, caps) {
+  const maxCostUsd = positiveCap(caps ? caps.maxCostUsd : null);
+  const maxCostPer100Lines = positiveCap(caps ? caps.maxCostPer100Lines : null);
+  if (maxCostUsd === null && maxCostPer100Lines === null) return null;
+  const over = (value, cap) => cap !== null && typeof value === 'number' && value > cap;
+  return {
+    maxCostUsd,
+    maxCostPer100Lines,
+    overBudget: over(v0.costUsd, maxCostUsd) || over(v0.costPer100Lines, maxCostPer100Lines),
+  };
+}
+
+/**
+ * Map one branch receipt into the portable receipt.v1 shape
+ * (schemas/receipt.v1.json): every v0 field unchanged, plus the ticket this
+ * branch names and the verdict against the caps its repository declared.
+ *
+ * `caps` is a parameter rather than something read here, because this module
+ * stays pure (no Node imports) and the caps live in a repository's
+ * `.tokenflow/policy.yaml`. The caller reads them with
+ * `loadRepoPolicy(repoRoot).receipt` (src/core/policy.js) and passes them in.
+ * With no caps, or with none declared, `verdict` is null: a receipt nobody
+ * judged, never one that passed.
+ *
+ * @param {object} b one branch receipt (an entry of `result.repos[i].branches`)
+ * @param {{repo:string, headSha:string|null, toolVersion:string, generatedAt?:string}} meta
+ * @param {{caps?:{maxCostUsd?:number|null, maxCostPer100Lines?:number|null}|null}} [opt]
+ * @returns {object} a receipt.v1 object
+ */
+export function toReceiptV1(b, meta, opt = {}) {
+  const v0 = toReceiptV0(b, meta);
+  return {
+    ...v0,
+    schemaVersion: RECEIPT_SCHEMA_VERSION_V1,
+    ticket: b.ticket || null,
+    verdict: receiptVerdict(v0, opt.caps || null),
   };
 }
 

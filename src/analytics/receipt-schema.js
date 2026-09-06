@@ -1,6 +1,6 @@
 /**
- * Receipt schema v0 — a branch receipt shaped to travel with the code (as a
- * git note) rather than live on a server. Three things live here:
+ * Receipt schema v0 and v1 — a branch receipt shaped to travel with the code
+ * (as a git note) rather than live on a server. What lives here:
  *
  *   toReceiptV0()            maps one buildReceipts() branch entry (the shape
  *                             src/analytics/receipt.js produces) into the
@@ -11,10 +11,21 @@
  *                             `required` list in schemas/receipt.v0.json —
  *                             test/receipt-schema.test.js checks the two
  *                             don't drift apart.
+ *   validateReceiptV1()      the same validator, plus the two fields v1 adds
+ *                             on top of v0 (schemas/receipt.v1.json): an
+ *                             optional `ticket` and an optional `verdict`.
+ *                             Every field v0 requires, v1 requires too.
+ *   validateReceipt()        dispatches on `receipt.schemaVersion` (0 or 1)
+ *                             so a v0 note already pushed to a repo keeps
+ *                             validating forever.
  *   renderReceiptV0Markdown() the same PR-comment table shape as
  *                             renderReceiptMarkdown() in receipt.js, plus an
  *                             `<!-- tokenflow-receipt -->` marker on the first
  *                             line so a CI comment can be found and updated.
+ *                             Renders a v1 receipt too: a ticket line (when
+ *                             `ticket` is set) and a verdict line (when
+ *                             `verdict` is set) are no-ops on a v0 receipt,
+ *                             which never carries those fields.
  *
  * Every dollar figure here is an estimate from local token counts against a
  * local price table — never measured billing, never a network round trip.
@@ -22,8 +33,11 @@
  */
 import { usd, compact, pct, shortDate } from '../core/units.js';
 
-/** The one receipt schema version this module speaks. */
+/** The v0 receipt schema version this module speaks. */
 export const RECEIPT_SCHEMA_VERSION = 0;
+
+/** The v1 receipt schema version this module speaks. */
+export const RECEIPT_SCHEMA_VERSION_V1 = 1;
 
 /** Fields schemas/receipt.v0.json marks `required`. Kept in sync by hand. */
 const REQUIRED_FIELDS = [
@@ -96,21 +110,18 @@ const isNullableNonNegInt = (v) => v === null || (isInt(v) && v >= 0);
 const isStr = (v) => typeof v === 'string';
 
 /**
- * Hand-written validator for the receipt.v0 shape — no dependencies, mirrors
- * schemas/receipt.v0.json field-for-field.
- * @param {*} obj
- * @returns {{ok:boolean, errors:string[]}}
+ * The field-for-field checks shared by every receipt schema version — every
+ * field the v0 schema requires, v1 requires too, so this one function serves
+ * both validators. Version-specific checks (schemaVersion's exact value,
+ * v1's optional `ticket`/`verdict`) are layered on by the caller.
+ * @param {object} obj already confirmed to be a plain object
+ * @param {string[]} errors pushed to in place
  */
-export function validateReceiptV0(obj) {
-  const errors = [];
-  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-    return { ok: false, errors: ['receipt must be an object'] };
-  }
+function validateCommon(obj, errors) {
   for (const key of REQUIRED_FIELDS) {
     if (!(key in obj)) errors.push(`missing required field "${key}"`);
   }
 
-  if ('schemaVersion' in obj && obj.schemaVersion !== RECEIPT_SCHEMA_VERSION) errors.push(`schemaVersion must be ${RECEIPT_SCHEMA_VERSION}`);
   if ('generatedAt' in obj && !isStr(obj.generatedAt)) errors.push('generatedAt must be a string');
   if ('toolVersion' in obj && !isStr(obj.toolVersion)) errors.push('toolVersion must be a string');
   if ('repo' in obj && !(isStr(obj.repo) && obj.repo.length > 0)) errors.push('repo must be a non-empty string');
@@ -167,19 +178,100 @@ export function validateReceiptV0(obj) {
     if (!Array.isArray(obj.notes)) errors.push('notes must be an array');
     else obj.notes.forEach((n, i) => { if (!isStr(n)) errors.push(`notes[${i}] must be a string`); });
   }
+}
 
+/**
+ * The `ticket` and `verdict` checks v1 adds on top of v0. Both are optional —
+ * a receipt with neither key is a valid v1 receipt, the same as a v0 one.
+ * @param {object} obj already confirmed to be a plain object
+ * @param {string[]} errors pushed to in place
+ */
+function validateV1Extras(obj, errors) {
+  const TICKET_SYSTEMS = new Set(['jira', 'linear', 'github', 'other']);
+  if ('ticket' in obj && obj.ticket !== null) {
+    const t = obj.ticket;
+    if (typeof t !== 'object' || Array.isArray(t)) {
+      errors.push('ticket must be an object or null');
+    } else {
+      if (!TICKET_SYSTEMS.has(t.system)) errors.push('ticket.system must be one of "jira", "linear", "github", "other"');
+      if (!(isStr(t.key) && t.key.length > 0)) errors.push('ticket.key must be a non-empty string');
+      if (!(t.url === null || isStr(t.url))) errors.push('ticket.url must be a string or null');
+    }
+  }
+
+  if ('verdict' in obj && obj.verdict !== null) {
+    const v = obj.verdict;
+    if (typeof v !== 'object' || Array.isArray(v)) {
+      errors.push('verdict must be an object or null');
+    } else {
+      if (!isNullableNum(v.maxCostUsd)) errors.push('verdict.maxCostUsd must be a number or null');
+      if (!isNullableNum(v.maxCostPer100Lines)) errors.push('verdict.maxCostPer100Lines must be a number or null');
+      if (typeof v.overBudget !== 'boolean') errors.push('verdict.overBudget must be a boolean');
+    }
+  }
+}
+
+/**
+ * Hand-written validator for the receipt.v0 shape — no dependencies, mirrors
+ * schemas/receipt.v0.json field-for-field.
+ * @param {*} obj
+ * @returns {{ok:boolean, errors:string[]}}
+ */
+export function validateReceiptV0(obj) {
+  const errors = [];
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+    return { ok: false, errors: ['receipt must be an object'] };
+  }
+  if ('schemaVersion' in obj && obj.schemaVersion !== RECEIPT_SCHEMA_VERSION) errors.push(`schemaVersion must be ${RECEIPT_SCHEMA_VERSION}`);
+  validateCommon(obj, errors);
   return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Hand-written validator for the receipt.v1 shape — every field v0 requires,
+ * plus the optional `ticket` and `verdict` v1 adds. Mirrors
+ * schemas/receipt.v1.json field-for-field.
+ * @param {*} obj
+ * @returns {{ok:boolean, errors:string[]}}
+ */
+export function validateReceiptV1(obj) {
+  const errors = [];
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+    return { ok: false, errors: ['receipt must be an object'] };
+  }
+  if ('schemaVersion' in obj && obj.schemaVersion !== RECEIPT_SCHEMA_VERSION_V1) errors.push(`schemaVersion must be ${RECEIPT_SCHEMA_VERSION_V1}`);
+  validateCommon(obj, errors);
+  validateV1Extras(obj, errors);
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Validate a receipt of any schema version this module knows, dispatching on
+ * `receipt.schemaVersion` — so a v0 note a repo already pushed keeps
+ * validating forever, alongside new v1 receipts.
+ * @param {*} receipt
+ * @returns {{ok:boolean, errors:string[]}}
+ */
+export function validateReceipt(receipt) {
+  if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    return { ok: false, errors: ['receipt must be an object'] };
+  }
+  if (receipt.schemaVersion === RECEIPT_SCHEMA_VERSION) return validateReceiptV0(receipt);
+  if (receipt.schemaVersion === RECEIPT_SCHEMA_VERSION_V1) return validateReceiptV1(receipt);
+  return { ok: false, errors: [`unsupported schemaVersion ${JSON.stringify(receipt.schemaVersion)}; this build of TokenFlow knows versions 0 and 1`] };
 }
 
 const money = (v) => (v === null || v === undefined ? '—' : usd(v));
 const share = (v) => (v === null || v === undefined ? '—' : pct(v, 0));
 
 /**
- * A receipt.v0 object rendered for a PR comment — the same table shape as
- * renderReceiptMarkdown() in src/analytics/receipt.js, plus a leading
- * `<!-- tokenflow-receipt -->` marker so CI can find and update its own
- * comment instead of piling up a new one per push.
- * @param {object} receipt a receipt.v0 object (see toReceiptV0())
+ * A receipt.v0 (or v1) object rendered for a PR comment — the same table
+ * shape as renderReceiptMarkdown() in src/analytics/receipt.js, plus a
+ * leading `<!-- tokenflow-receipt -->` marker so CI can find and update its
+ * own comment instead of piling up a new one per push. When the receipt
+ * carries v1's optional `ticket` and `verdict` fields, a row is added for
+ * each; a v0 receipt never has either field, so those rows are simply absent.
+ * @param {object} receipt a receipt.v0 or receipt.v1 object (see toReceiptV0())
  * @returns {string}
  */
 export function renderReceiptV0Markdown(receipt) {
@@ -207,6 +299,17 @@ export function renderReceiptV0Markdown(receipt) {
   if (receipt.window && receipt.window.first && receipt.window.last) {
     const merged = receipt.pr && receipt.pr.mergedAt ? ` (merged ${shortDate(receipt.pr.mergedAt.slice(0, 10))})` : receipt.pr ? ' (PR open)' : '';
     L.push(`| Window | ${shortDate(receipt.window.first.slice(0, 10))} → ${shortDate(receipt.window.last.slice(0, 10))}${merged} |`);
+  }
+  if (receipt.ticket) {
+    const t = receipt.ticket;
+    L.push(`| Ticket | ${t.url ? `[${t.key}](${t.url})` : t.key} |`);
+  }
+  if (receipt.verdict) {
+    const v = receipt.verdict;
+    const caps = [];
+    if (v.maxCostUsd !== null) caps.push(`cap ${money(v.maxCostUsd)}`);
+    if (v.maxCostPer100Lines !== null) caps.push(`cap ${money(v.maxCostPer100Lines)} per 100 lines`);
+    L.push(`| Budget | ${v.overBudget ? 'over budget' : 'within budget'}${caps.length ? ` (${caps.join(', ')})` : ''} |`);
   }
   L.push('');
   L.push(`<sub>${receipt.notes.join(' ')}</sub>`);
