@@ -185,3 +185,70 @@ These are review rules. The compiler prints them; a person enforces them.
    current.
 4. Look at it. Render the dashboard, the snapshot and the landing before
    claiming done; the compiler measures colour, not layout.
+
+## 11. Components
+
+Tokens alone never reach the screen. Before this layer every control fell back
+to a browser default: a native `<select>` that no variable can style, a native
+date input, and no popover, menu or tooltip at all. The result read as three
+different products on one page.
+
+The layer is vanilla ESM in `src/ui/components/`, styled by the single file
+`src/ui/styles/components.css`. It borrows the anatomy and the interaction
+contracts of Radix and shadcn, not their code: those are React and need a
+bundler, and this product ships zero dependencies and must open from `file://`.
+
+**Import from one path.**
+
+```js
+import { icon, ICON_NAMES, createPopover, createListbox,
+         createMenu, attachTooltip, createDateRange } from './components/index.js';
+```
+
+| Primitive | Anatomy it implements | Where it is used |
+|---|---|---|
+| `icon(name, opts)` | 24x24 stroke geometry, `currentColor` | every control that is not text alone |
+| `createPopover` | anchored panel, top layer, flip and shift | the base of the three below |
+| `createListbox` | Radix Select: `listbox` / `option` / `aria-selected` | every filter that was a `<select>` |
+| `createMenu` | `menu` / `menuitem`, arrow keys, `<kbd>` hints | export, skin picker, row overflow |
+| `attachTooltip` | delayed on the first, instant within a group | icon-only buttons |
+| `createDateRange` | presets plus custom fields behind one button | replaces the whole quick-range row |
+
+### The rules this layer adds
+
+- **One focus ring.** `:focus-visible` only, `outline: 2px solid var(--accent)`
+  with a 2px offset, matching what `styles.css` already draws on `.btn`. A
+  keyboard user sees one ring in the product, never two competing ones. No rule
+  removes an outline without putting something in its place.
+- **Not one literal colour.** There is no hex, `rgb()` or `hsl()` in
+  `components.css`. Every value is a role variable, which is what lets a skin
+  or a mode restyle the whole layer for free. `test/components.test.js` fails
+  the build if a literal appears.
+- **Motion is state, not decoration.** A panel enters over `--dur-fast` and
+  leaves faster, growing from the trigger edge it actually landed on. Rows do
+  not animate: the active row must land under the arrow key, the same rule the
+  command palette follows. Under `prefers-reduced-motion` every transform
+  collapses to an opacity change and nothing travels.
+- **Tabular figures on anything numeric**, so a digit changing does not shift
+  the row.
+- **The adjacent-tooltip rule.** The first tooltip waits 400ms. While any
+  tooltip is visible the next appears instantly and without animation, so
+  reading along a toolbar has no lag. The group goes cold shortly after the
+  last one hides. This one detail is most of what "fast" means in a toolbar.
+- **An icon is never the accessible name.** Every SVG is `aria-hidden` and
+  unfocusable. `attachTooltip` gives its text to a control that has no name of
+  its own and hides itself from the a11y tree when the control already has one,
+  so nothing is ever announced twice.
+
+### Testing
+
+The logic that decides an outcome is pure and exported, so `node:test` covers
+it with no DOM and no test dependency: `computePlacement` (popover.js),
+`filterItems` and `typeaheadMatch` (listbox.js), and `presetRange` (daterange.js).
+What needs a real layout is verified by rendering.
+
+### Registering the stylesheet
+
+The offline snapshot inlines everything under `src/ui/styles/` on its own. The
+dev server does not: a new file there also needs its path added to `OWN_STYLES`
+in `src/ui/app.js`, next to `palette.css` and `first-run.css`.
