@@ -1,0 +1,26 @@
+name: 'TokenFlow receipt comment'
+description: >-
+  Reads the TokenFlow receipt attached to a pull request's head commit as a
+  git note (refs/notes/tokenflow) and posts or updates it as one PR comment.
+  Makes no network call beyond the GitHub API; reads no prompt or code content.
+branding:
+  icon: 'file-text'
+  color: 'purple'
+
+inputs:
+  token:
+    description: 'GitHub token used to read/write the PR comment.'
+    required: false
+    default: ${{ github.token }}
+  notes-ref:
+    description: 'The git notes ref the receipt was written to.'
+    required: false
+    default: 'tokenflow'
+  comment-marker:
+    description: 'HTML comment used to find the existing receipt comment to update, instead of posting a new one every push.'
+    required: false
+    default: '<!-- tokenflow-receipt -->'
+
+runs:
+  using: 'node20'
+  main: 'index.js'

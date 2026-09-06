@@ -105,7 +105,7 @@ test('sync: push writes per-machine file, pull merges siblings', () => {
       ],
     }));
 
-    const r = m.push({ config: cfg });
+    const r = /** @type {{file:string|null, days:number}} */ (m.push({ config: cfg }));
     assert.ok(r.days >= 2);
     const id = m.machineId(tmpHome);
     const pushed = fs.readFileSync(path.join(shared, `${id}.jsonl`), 'utf8').trim().split('\n');

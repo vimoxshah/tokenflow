@@ -140,3 +140,36 @@ function persist(s) {
 
 /** Reset state (new month detected by callers, or user command). */
 export function resetBudgetState() { try { fs.unlinkSync(STATE_FILE()); } catch { /* absent */ } }
+
+// ------------------------------------------------------- scoped budgets ---
+//
+// Budgets per repo and per team, alongside the single monthly budget above.
+// Config:
+//
+//   budgets:
+//     - id: api-monthly
+//       scope: repo            # total | repo | team
+//       repo: api               # required when scope is repo
+//       monthlyUsd: 150
+//       warnAt: 0.8             # optional, default 0.8 — a fraction, same
+//                                # meaning as `limits[].warnAt`
+//
+// This function is the pure evaluator only: given what was already spent in
+// a scope and its declared cap, decide ok / warn / over. Finding "what was
+// spent" for a repo or a team needs I/O (the store, the sync folder) and
+// lives in src/commands/budget-scopes.js so this module stays dependency-free
+// and unit-testable without a filesystem.
+
+/**
+ * @param {{spentUsd?:number, monthlyUsd?:number, warnAt?:number}} [input]
+ * @returns {{spentUsd:number, monthlyUsd:number, warnAt:number, share:number, state:'ok'|'warn'|'over'}|null}
+ *   null when no positive monthly cap was declared for this scope (including
+ *   when called with nothing at all — the same "no cap" answer).
+ */
+export function scopedBudgetState({ spentUsd, monthlyUsd, warnAt = 0.8 } = {}) {
+  if (!(monthlyUsd > 0)) return null;
+  const spent = spentUsd > 0 ? spentUsd : 0;
+  const share = spent / monthlyUsd;
+  const state = share >= 1 ? 'over' : share >= warnAt ? 'warn' : 'ok';
+  return { spentUsd: spent, monthlyUsd, warnAt, share, state };
+}

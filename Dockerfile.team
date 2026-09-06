@@ -1,0 +1,20 @@
+# TokenFlow team server — tiny image, zero runtime dependencies, no `npm install`.
+# See docs/team-server.md.
+#
+#   docker build -f Dockerfile.team -t tokenflow-team .
+#   docker run -d -e TOKENFLOW_TEAM_TOKEN=<shared-secret> -p 7790:7790 \
+#     -v tokenflow-team-data:/data tokenflow-team
+FROM node:22-alpine
+
+WORKDIR /app
+COPY package.json ./
+COPY bin ./bin
+COPY src ./src
+
+ENV TOKENFLOW_HOME=/data
+VOLUME ["/data"]
+EXPOSE 7790
+
+# --host 0.0.0.0 so the container's port mapping can reach the server; a
+# non-loopback bind requires TOKENFLOW_TEAM_TOKEN to be set at `docker run`.
+CMD ["node", "bin/tokenflow.js", "team", "serve", "--host", "0.0.0.0", "--port", "7790"]
