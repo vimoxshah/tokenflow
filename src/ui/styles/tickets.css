@@ -1,0 +1,9 @@
+/* Tickets tab. The KPI row, the top-tickets bar chart and the ticket table
+   all reuse the shared .cards / .card / chartCard / table() components from
+   src/ui/charts.js and styles.css, so there is little to add here. Every
+   view stylesheet loads together in every skin and mode, so what is added
+   stays prefixed `tickets-` to stay out of another view's way. */
+
+.tickets-foot {
+  padding: 2px 14px 0;
+}

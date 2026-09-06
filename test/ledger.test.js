@@ -29,7 +29,7 @@ const team = await import('../src/core/team.js');
 
 /** A fresh TOKENFLOW_HOME with an (empty) cube and a state.json carrying a
  * unique `lastRefresh`. buildReceiptsForStore() (src/core/bundle.js, not
- * ours to edit) caches its result keyed on `lastRefresh|records|pricing`; a
+ * ours to edit) caches its result keyed on `lastRefresh|records|pricing|tickets`; a
  * shared default (null) across every test in this file would return the
  * FIRST test's receipts to every later one. A unique lastRefresh per fixture
  * busts that cache. */
