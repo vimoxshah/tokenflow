@@ -445,6 +445,9 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 11px; co
   display: flex; align-items: center; gap: 9px; flex: 1 1 auto; min-width: 0;
   color: var(--text-primary); text-decoration: none; font-weight: 600; font-size: 15px; letter-spacing: var(--tr-body);
 }
+/* Same fix as .side-item:hover below: the app's general a:hover rule sets an
+   underline, and :hover outranks a plain class selector in the cascade. */
+.side-brand:hover { text-decoration: none; }
 .side-brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-toggle {
   appearance: none; background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
@@ -478,29 +481,33 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 11px; co
   transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), transform var(--dur-press) var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) {
-  .side-item:hover { color: var(--text-primary); background: var(--surface-2); }
+  /* text-decoration: none, not just inherited from the base rule above. The
+     app's general a:hover rule sets underline, and :hover beats a plain class
+     selector in the cascade, so without this a nav item that means "colour
+     and fill" would get a stray underline too. */
+  .side-item:hover { color: var(--text-primary); background: var(--surface-2); text-decoration: none; }
 }
 .side-item:active { transform: scale(.98); }
 .side-item[aria-current=page] { color: var(--text-primary); background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
 .side-label { overflow: hidden; text-overflow: ellipsis; }
-.side-mono { display: none; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .04em; width: 28px; text-align: center; flex: none; }
 .side-foot {
   padding: 10px 16px 14px; font-size: 11.5px; color: var(--text-muted); border-top: 1px solid var(--border);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .side-resizer { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 1; }
-.side-resizer:hover, .side-resizer:focus-visible, body.resizing .side-resizer {
-  background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none;
-}
+/* A native outline would sit half off this 6px strip, so focus answers with a
+   solid fill instead, deliberately stronger than the hover tint, so a
+   keyboard user can tell "focused" from "moused over" at a glance. */
+.side-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); outline: none; }
+.side-resizer:focus-visible, body.resizing .side-resizer { background: var(--accent); outline: none; }
 body.resizing { cursor: col-resize; user-select: none; }
 .side-open { display: none; }
 
-/* The collapsed rail keeps every destination reachable: two-letter monograms
+/* The collapsed rail keeps every destination reachable: an icon per view,
    with the full label as a tooltip, plus the search button as its shortcut. */
 @media (min-width: 900px) {
-  .app.collapsed .side-label, .app.collapsed .side-group, .app.collapsed .side-brand-name,
+  .app.collapsed .side-label, .app.collapsed .side-brand-name,
   .app.collapsed .side-search-label, .app.collapsed .side-foot, .app.collapsed .side-resizer { display: none; }
-  .app.collapsed .side-mono { display: inline-block; }
   .app.collapsed .side-head { flex-direction: column; gap: 6px; padding: 14px 0 8px; }
   .app.collapsed .side-brand { flex: none; }
   .app.collapsed .side-search { justify-content: center; margin: 2px 8px 8px; padding: 7px 0; }

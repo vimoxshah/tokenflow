@@ -1,0 +1,59 @@
+/* Sidebar: substantial additions on top of the base rules in styles.css.
+ * New work goes here so it never collides with a concurrent edit to that
+ * file; deletions and small tweaks to what already existed there stay in
+ * styles.css instead. Colour, radius, shadow and motion are role variables
+ * throughout, same rule as the rest of the app; spacing here follows the
+ * --sp-* scale the way its sibling components.css does. */
+
+/* ------------------------------------------------------------ brand focus --
+ * styles.css's shared focus-visible list covers .side-item, .side-search and
+ * .side-toggle but not .side-brand, so the rail's top control (a focusable
+ * link) had no visible ring at all. */
+.side-brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* --------------------------------------------------------------- nav icons --
+ * icon() already sizes and colours itself (.tf-icon: flex: none; color:
+ * inherit), which is what lets a nav item's icon pick up .side-item's own
+ * text colour on hover and on the active row for free. This only guards that
+ * sizing against the label's ellipsis squeezing it in a narrow expanded
+ * sidebar. */
+.side-item .tf-icon {
+  flex: none;
+}
+
+/* ----------------------------------------------------- collapsed: search --
+ * The rail has room for the icon or the shortcut hint, never both, and the
+ * icon reads at a glance where "⌘K" does not at 56px. */
+@media (min-width: 900px) {
+  .app.collapsed .side-search kbd {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------ collapsed: group lines --
+ * A group heading has nowhere to spell itself out at 56px, but the grouping
+ * it names is still real. The heading node itself becomes the separator, the
+ * same element, so nothing about TAB_GROUPS or item order changes, collapsed
+ * to a hairline between the icons that come before it and after it. The very
+ * first group opens the rail and needs no line above it. */
+@media (min-width: 900px) {
+  .app.collapsed .side-group {
+    display: block;
+    height: 0;
+    overflow: hidden;
+    color: transparent;
+    font-size: 0;
+    line-height: 0;
+    padding: 0;
+    margin: var(--sp-6) var(--sp-10);
+    border-top: 1px solid var(--hairline);
+  }
+  .app.collapsed .side-group:first-child {
+    margin-top: 0;
+    border-top: none;
+  }
+}
