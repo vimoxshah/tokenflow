@@ -25,13 +25,23 @@ import { readAnnotations } from './annotations.js';
  * record scan costs seconds on a large store, so the result is cached against
  * the store's refresh stamp and streamed through the builder rather than
  * materialized. Shipped in the bundle so the offline snapshot has them too.
+ *
+ * `tickets` is the user's `tickets:` config block (system, baseUrl, pattern).
+ * It changes which ticket key each branch resolves to, so it is part of the
+ * cache key: editing the config and reopening the dashboard must not serve
+ * receipts built under the old pattern. It defaults to what is on disk so a
+ * caller that has no config object in hand still gets the user's own setting.
+ *
+ * @param {import('./store.js').Store} store
+ * @param {object} pricing pricing overrides (the shape of pricing.json)
+ * @param {{system?:string|null, baseUrl?:string|null, pattern?:string|null}} [tickets]
  */
 let receiptsCache = { key: null, value: null };
-export function buildReceiptsForStore(store, pricing) {
-  const key = `${store.state.lastRefresh || ''}|${store.state.records || ''}|${JSON.stringify(pricing || {})}`;
+export function buildReceiptsForStore(store, pricing, tickets = loadConfig().tickets || {}) {
+  const key = `${store.state.lastRefresh || ''}|${store.state.records || ''}|${JSON.stringify(pricing || {})}|${JSON.stringify(tickets || {})}`;
   if (receiptsCache.key === key) return receiptsCache.value;
   const t0 = Date.now();
-  const builder = createReceiptBuilder({ book: buildPriceBook(pricing || {}), repoOf: makeRepoResolver() });
+  const builder = createReceiptBuilder({ book: buildPriceBook(pricing || {}), repoOf: makeRepoResolver(), tickets: tickets || {} });
   store.scanRecords((o) => {
     if (o.ms !== MEASUREMENT.PRIMARY) return;
     builder.add(decodeRecord(o));
@@ -124,7 +134,7 @@ export function buildBundle({ config = loadConfig(), receipts = true } = {}) {
     // against the same cube every other surface reads.
     limits: Array.isArray(config.limits) ? config.limits : [],
     health,
-    receipts: receipts ? buildReceiptsForStore(store, pricing) : null,
+    receipts: receipts ? buildReceiptsForStore(store, pricing, config.tickets || {}) : null,
     // User-marked calendar days ("switched to Opus 5"), drawn on every daily
     // chart. A missing annotations.json yields an empty list, never a throw.
     annotations: readAnnotations().items,

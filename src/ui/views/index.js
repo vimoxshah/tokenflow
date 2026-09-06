@@ -21,6 +21,7 @@ import * as branches from './branches.js';
 import * as anatomy from './anatomy.js';
 import * as whatif from './whatif.js';
 import * as rhythm from './rhythm.js';
+import * as tickets from './tickets.js';
 
 /**
  * Everything a view is allowed to use from the host application.
@@ -82,4 +83,5 @@ export const VIEWS = [
   anatomy,
   whatif,
   rhythm,
+  tickets,
 ];
