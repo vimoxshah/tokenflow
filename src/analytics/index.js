@@ -87,7 +87,14 @@ export function resolveRange(id, coverage, today) {
       const lastMonthEnd = addDays(first, -1);
       return { from: `${lastMonthEnd.slice(0, 7)}-01`, to: lastMonthEnd };
     }
+    // "All data" ends at the last day the store actually has, not at today.
+    // Every relative range above counts back from `today`, which is the point
+    // of passing it, but ending "all" there put a date on the range button
+    // that no record reaches and made it disagree with the coverage line in
+    // the header, which reads the same dataset. The rows matched are identical
+    // either way, since there is nothing after coverage.to to match.
     case 'all':
+      return { from, to: coverage.to };
     default:
       return { from, to };
   }
