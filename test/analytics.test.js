@@ -297,6 +297,14 @@ test('resolveRange honours the dataset, not the wall clock', () => {
   assert.deepEqual(resolveRange('mtd', cov, '2026-08-20'), { from: '2026-08-01', to: '2026-08-20' });
   assert.deepEqual(resolveRange('lastmonth', cov, '2026-08-20'), { from: '2026-07-01', to: '2026-07-31' });
   assert.deepEqual(resolveRange('today', cov, '2026-08-20'), { from: '2026-08-20', to: '2026-08-20' });
+
+  // A store whose newest record is older than "today" is the case that
+  // separates the two meanings. Relative ranges still count back from today,
+  // but "all data" ends at the last day the store HAS: ending it at today put
+  // a date on the range button that no record reaches, disagreeing with the
+  // coverage line in the header for the same dataset.
+  assert.deepEqual(resolveRange('all', cov, '2026-09-06'), { from: '2026-03-14', to: '2026-08-20' });
+  assert.deepEqual(resolveRange('7d', cov, '2026-09-06'), { from: '2026-08-31', to: '2026-09-06' });
 });
 
 test('computeView produces a coherent view and matches its own totals', async () => {
