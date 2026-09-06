@@ -249,13 +249,19 @@ export function createPopover({ trigger, render, placement = 'bottom-start', onO
     if (reason === 'native') finish();
     else closing = setTimeout(finish, 120);
 
-    // Escape and select always hand focus back. Every other reason hands it
-    // back only if the panel still had it, which is what separates a
-    // programmatic or replaced close (focus is inside, so it must be rescued
-    // or it falls to <body> and Tab restarts at the top of the document) from
-    // an outside click (focus has already moved to what the user clicked, and
-    // taking it away would be theft).
-    if (typeof trigger.focus === 'function' && (RETURNS_FOCUS.has(reason) || heldFocus)) trigger.focus();
+    // Escape and select always hand focus back. A programmatic, replaced or
+    // native close hands it back only if the panel still had it, or focus
+    // falls to <body> and Tab restarts at the top of the document.
+    //
+    // An outside click is excluded outright, and must stay excluded. Its
+    // `heldFocus` is not trustworthy: the dismissal runs on pointerdown in the
+    // capture phase, BEFORE the browser's own default action moves focus to
+    // whatever was clicked, so the panel still holds focus at the instant we
+    // look and `heldFocus` is always true. Trusting it stole focus back to the
+    // trigger, and because `focus()` scrolls its element into view, dismissing
+    // a panel while scrolled down jumped the page to the top.
+    const rescue = RETURNS_FOCUS.has(reason) || (reason !== 'outside' && heldFocus);
+    if (typeof trigger.focus === 'function' && rescue) trigger.focus();
     if (onClose) onClose();
   }
 

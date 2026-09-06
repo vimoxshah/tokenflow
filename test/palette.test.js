@@ -9,6 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { rankCommands, matchRanges, groupByCategory, paletteSections } from '../src/ui/palette.js';
 
 const TABS = [
@@ -289,4 +290,41 @@ test('a keyword hit still never outranks any label hit, including a label subseq
   ];
   const ranked = rankCommands(commands, 'export');
   assert.deepEqual(ranked.map((c) => c.id), ['label-subseq', 'keyword-only']);
+});
+
+// ------------------------------------------------- a closed dialog stays closed ---
+//
+// Shipped in 1.3.0: `dialog.palette-dialog { display: flex }` was written
+// unqualified, which overrides the user agent's own
+// `dialog:not([open]) { display: none }`. The CLOSED palette therefore stayed
+// in the page flow, painted and hit-testable, landing below the footer on a
+// tall page and over the content on a short one. Typing in it produced "No
+// commands available", and clicking a row in it still ran the command.
+//
+// Nothing threw, so no unit test and none of the 21 release screenshots caught
+// it. This pins the invariant at the only level it can be pinned without a
+// browser: no author rule may set `display` on a dialog that is not qualified
+// to `[open]`.
+test('css: no stylesheet sets display on an unqualified dialog selector', () => {
+  const uiDir = new URL('../src/ui/', import.meta.url);
+  const files = ['styles.css', ...fs.readdirSync(new URL('styles/', uiDir)).filter((f) => f.endsWith('.css')).map((f) => `styles/${f}`)];
+
+  const offenders = [];
+  for (const rel of files) {
+    const css = fs.readFileSync(new URL(rel, uiDir), 'utf8');
+    // Crude on purpose: a real parser is a dependency, and the shape we are
+    // guarding against is a plain top-level rule.
+    for (const [, selectorList, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/(^|[\s;])display\s*:/.test(body)) continue;
+      if (/display\s*:\s*none/.test(body)) continue;
+      for (const selector of selectorList.split(',')) {
+        const subject = selector.trim().split(/[\s>+~]+/).pop() || '';
+        if (!/(^|[.#[])?dialog\b/.test(subject)) continue;
+        if (subject.includes('[open]')) continue;
+        offenders.push(`${rel}: ${selector.trim()}`);
+      }
+    }
+  }
+
+  assert.deepEqual(offenders, [], `a closed <dialog> must not be rendered; qualify these with [open]:\n${offenders.join('\n')}`);
 });
