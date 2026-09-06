@@ -10,7 +10,7 @@
  *    so they are live-dashboard only. A snapshot shows why instead of a dead
  *    control (see docs/ui-views.md, "Working offline").
  */
-import { el, timeSeries } from '../charts.js';
+import { el, timeSeries, legend } from '../charts.js';
 import { hitRateSeries, writeSplitSeries } from '../../analytics/cache-health.js';
 
 /** @typedef {import('./index.js').ViewContext} ViewContext */
@@ -141,17 +141,25 @@ function writeSplitCard(ctx) {
     { key: 'shortTTL', label: 'Short-TTL writes', color: 'var(--series-1)' },
     { key: 'longTTL', label: 'Long-TTL writes', color: 'var(--series-2)' },
   ];
-  const renderChart = (w) => timeSeries({
-    data: rows.map((r) => ({ key: r.date, shortTTL: r.shortTTL, longTTL: r.longTTL })),
-    keys,
-    mode: 'stacked',
-    fmtY: (v) => compact(v),
-    fmtX: (k) => shortDate(k),
-    fmtXLong: (k) => shortDate(k),
-    width: w,
-    height: 220,
-    ariaLabel: 'Daily cache write split, short-TTL versus long-TTL',
-  });
+  // Stacked, so the chart cannot carry direct end labels. Without a legend the
+  // two series would be told apart by colour alone, which the sibling charts
+  // never ask of the reader.
+  const renderChart = (w) => {
+    const wrap = el('div');
+    wrap.appendChild(timeSeries({
+      data: rows.map((r) => ({ key: r.date, shortTTL: r.shortTTL, longTTL: r.longTTL })),
+      keys,
+      mode: 'stacked',
+      fmtY: (v) => compact(v),
+      fmtX: (k) => shortDate(k),
+      fmtXLong: (k) => shortDate(k),
+      width: w,
+      height: 220,
+      ariaLabel: 'Daily cache write split, short-TTL versus long-TTL',
+    }));
+    wrap.appendChild(legend(keys.map((k) => ({ color: k.color, label: k.label }))));
+    return wrap;
+  };
   const tableSpec = {
     columns: [
       { key: 'date', label: 'Date', text: true, value: (r) => shortDate(r.date) },
