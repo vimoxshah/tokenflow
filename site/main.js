@@ -1,109 +1,72 @@
-/* GSAP choreography with a fail-safe guarantee:
-   every animated-from-invisible element MUST end visible even if GSAP,
-   ScrollTrigger, or any animation errors. Sections must never be blank. */
+/* The landing page's only script. Zero dependencies, three jobs:
+   1. reveal sections as they enter the viewport (narrative motion tier, 85ms
+      stagger, at most seven items) — and reveal everything at once when the
+      reader prefers reduced motion or the observer is unavailable;
+   2. draw the marginal-cost chart once, when it is seen;
+   3. copy install commands to the clipboard with visible confirmation.
+   Nothing is fetched, measured or reported. */
 (function () {
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  'use strict';
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const root = document.documentElement;
 
-  function revealAll() {
-    document.querySelectorAll('.reveal').forEach(n => { n.style.opacity = '1'; n.style.transform = 'none'; });
+  // ---- reveals -------------------------------------------------------------
+  const targets = Array.from(document.querySelectorAll('[data-reveal]'));
+  function show(node) { node.classList.add('in'); }
+  if (reduce || !('IntersectionObserver' in window)) {
+    targets.forEach(show);
+  } else {
+    root.classList.add('js-reveal');
+    // Siblings inside one group stagger; the group index caps at seven so a
+    // long list never ends in a broken tail.
+    document.querySelectorAll('[data-reveal-group]').forEach((g) => {
+      Array.from(g.children).forEach((child, i) => { child.style.setProperty('--i', String(Math.min(i, 6))); });
+    });
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { show(e.target); io.unobserve(e.target); }
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.05 });
+    targets.forEach((n) => {
+      const r = n.getBoundingClientRect();
+      if (r.top < window.innerHeight * 0.92) show(n); else io.observe(n);
+    });
+    // Whatever happens, nothing stays hidden for long.
+    setTimeout(() => { targets.forEach(show); io.disconnect(); }, 2500);
   }
 
-  if (!window.gsap || !window.ScrollTrigger || reduceMotion) { revealAll(); return; }
-  try {
-    gsap.registerPlugin(ScrollTrigger);
-  } catch (e) { revealAll(); return; }
-
-  // GSAP confirmed working: arm the hidden-initial-state CSS, then animate.
-  // Elements already in the viewport get .in immediately so nothing above the
-  // fold ever flashes or stays blank while scrolling.
-  document.body.classList.add('js-anim');
-  const io = new IntersectionObserver((entries) => {
-    for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-  }, { threshold: 0.05 });
-  document.querySelectorAll('.reveal').forEach(n => {
-    const r = n.getBoundingClientRect();
-    if (r.top < window.innerHeight) { n.classList.add('in'); }
-    else io.observe(n);
-  });
-
-  // Safety net: whatever happens below, after 3s force everything on-screen.
-  setTimeout(() => { revealAll(); io.disconnect(); }, 3000);
-
-  // hero entrance choreography
-  gsap.from('nav', { y: -64, opacity: 0, duration: .8, ease: 'power3.out' });
-  gsap.from('.eyebrow', { opacity: 0, y: 16, duration: .6, delay: .1, ease: 'power2.out' });
-  gsap.from('h1', { opacity: 0, y: 28, duration: .9, delay: .2, ease: 'power3.out' });
-  gsap.from('.sub', { opacity: 0, y: 20, duration: .7, delay: .38, ease: 'power2.out' });
-  gsap.from('.cta .btn', { opacity: 0, y: 16, stagger: .08, duration: .6, delay: .5, ease: 'power2.out' });
-  gsap.from('.proof-line', { opacity: 0, duration: .8, delay: .68 });
-
-  const heroSvg = document.querySelectorAll('#hero-visual rect.bar-pop, #hero-visual path.hero-line');
-  if (heroSvg.length) {
-    gsap.set(heroSvg, { clearProps: 'all' }); // hand bars/lines over to GSAP
-    gsap.from('#hero-visual rect.bar-pop',
-      { scaleY: 0, transformOrigin: 'bottom', stagger: .05, duration: .7, delay: .5, ease: 'back.out(1.4)' });
-    gsap.from('#hero-visual path.hero-line',
-      { strokeDasharray: 600, strokeDashoffset: 600, duration: 1.6, delay: .9, ease: 'power2.inOut', stagger: .3 });
-    gsap.to('#hero-visual', { y: -12, duration: 3, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 1.6 });
+  // ---- the marginal-cost chart --------------------------------------------
+  const chart = document.getElementById('marginal-chart');
+  if (chart) {
+    const bars = chart.querySelectorAll('.mc-bar');
+    const draw = () => chart.classList.add('drawn');
+    if (reduce || !('IntersectionObserver' in window)) draw();
+    else {
+      const io = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) { draw(); io.disconnect(); }
+      }, { threshold: 0.4 });
+      io.observe(chart);
+    }
+    bars.forEach((b, i) => b.style.setProperty('--i', String(i)));
   }
 
-  // section reveals — GSAP tween only; CSS visibility is handled by the
-  // armed .in classes above, so a tween failure can never blank content
-  try {
-    document.querySelectorAll('.reveal:not(.in)').forEach(el => {
-      gsap.fromTo(el, { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: .8, ease: 'power2.out',
-        scrollTrigger: { trigger: el, start: 'top 88%' },
-        onComplete: () => el.classList.add('in') });
+  // ---- copy buttons --------------------------------------------------------
+  document.querySelectorAll('[data-copy]').forEach((btn) => {
+    const label = btn.textContent;
+    btn.addEventListener('click', async () => {
+      const text = btn.getAttribute('data-copy');
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied';
+        btn.classList.add('done');
+      } catch (e) {
+        // No clipboard permission: select the text so a manual copy is one keystroke away.
+        const code = btn.parentElement && btn.parentElement.querySelector('code');
+        if (code && window.getSelection) {
+          const range = document.createRange(); range.selectNodeContents(code);
+          const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+        }
+        btn.textContent = 'Select + ⌘C';
+      }
+      setTimeout(() => { btn.textContent = label; btn.classList.remove('done'); }, 1600);
     });
-  } catch (e) { revealAll(); }
-
-  // tagline words activate one at a time on scroll
-  const tag = document.querySelector('.tagline');
-  if (tag) {
-    const accentWords = new Set(['honestly.']);
-    tag.innerHTML = tag.textContent.trim().split(/\s+/).map(w =>
-      `<span class="w${accentWords.has(w) ? ' accent' : ''}">${w}</span>`).join(' ');
-    gsap.to(tag.querySelectorAll('.w'), { color: (i, t) =>
-        t.classList.contains('accent') ? '#8f9dff' : '#f2f4f8',
-      stagger: .09, ease: 'none',
-      scrollTrigger: { trigger: '#tagline', start: 'top 70%', end: 'top 25%', scrub: true } });
-  }
-
-  // comparison chart draws as it enters
-  const strip = document.getElementById('chart-strip');
-  if (strip && window.buildComparisonChart) {
-    buildComparisonChart(strip);
-    gsap.from('#chart-strip svg path.drawn', {
-      strokeDashoffset: (i, t) => t.getTotalLength(),
-      strokeDasharray: (i, t) => t.getTotalLength(),
-      duration: 1.8, ease: 'power2.inOut',
-      scrollTrigger: { trigger: strip, start: 'top 80%' }
-    });
-    gsap.from('#chart-strip svg rect.gbar', {
-      scaleY: 0, transformOrigin: 'bottom', stagger: .04, duration: .6, ease: 'power2.out',
-      scrollTrigger: { trigger: strip, start: 'top 80%' }
-    });
-  }
-
-  // world map: flows draw themselves, dots fade up in one wave
-  const map = document.getElementById('worldmap');
-  if (map) {
-    const flows = map.querySelectorAll('path.flow');
-    flows.forEach(p => { const L = p.getTotalLength(); p.style.strokeDasharray = `4 6`; p.style.strokeDashoffset = L; });
-    gsap.to(flows, {
-      strokeDashoffset: 0, duration: 1.6, stagger: .3, ease: 'power2.inOut',
-      scrollTrigger: { trigger: map, start: 'top 75%' }
-    });
-    gsap.from(map.querySelectorAll('circle[r="1.6"]'), {
-      opacity: 0, duration: .8, stagger: { amount: .9, from: 'random' },
-      scrollTrigger: { trigger: map, start: 'top 78%' }
-    });
-  }
-
-  // feature cards cascade
-  const grid = document.getElementById('feature-grid');
-  if (grid) gsap.from(grid.querySelectorAll('.card'), {
-    opacity: 0, y: 28, stagger: .07, duration: .7, ease: 'power2.out',
-    scrollTrigger: { trigger: grid, start: 'top 82%' }
   });
 })();
