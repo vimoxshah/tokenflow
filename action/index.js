@@ -2,24 +2,34 @@
  * TokenFlow receipt comment — the GitHub Action body.
  *
  * On a `pull_request` event: fetch refs/notes/tokenflow, read the note
- * attached to the PR's head sha, validate it against receipt.v0, render it,
- * and upsert (PATCH if a marked comment already exists, else POST) one PR
- * comment. No note on that sha, or the event isn't a pull request: log one
- * line and exit 0 — this is opt-in decoration, never a required check.
+ * attached to the PR's head sha, validate it against whichever receipt schema
+ * that note declares (v0 or v1 - `validateReceipt` dispatches on
+ * `schemaVersion`, so a note written by an older TokenFlow keeps working), judge it
+ * against a declared budget (an action input or a repo policy file), render
+ * it, and upsert (PATCH if a marked comment already exists, else POST) one
+ * PR comment. No note on that sha, or the event isn't a pull request: log
+ * one line and exit 0 — a missing receipt is opt-in decoration, never a
+ * required check. An over-budget receipt, with `fail-on-over-budget`, fails
+ * the job instead — that is what lets this action gate a merge.
  *
  * Zero npm dependencies: only Node builtins plus this repo's own
- * src/analytics/receipt-schema.js (a relative import, since the action runs
- * from this repo's own checkout in CI). Every side effect (env, fetch, git)
- * is a parameter of run(), so tests can inject fakes without touching the
- * network or a real git remote.
+ * src/analytics/receipt-schema.js, src/core/yaml.js and src/core/units.js
+ * (relative imports, since the action runs from this repo's own checkout in
+ * CI). Every side effect (env, fetch, git) is a parameter of run(), so tests
+ * can inject fakes without touching the network or a real git remote.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateReceiptV0, renderReceiptV0Markdown } from '../src/analytics/receipt-schema.js';
+import { validateReceipt, renderReceiptV0Markdown } from '../src/analytics/receipt-schema.js';
+import { parseYaml } from '../src/core/yaml.js';
+import { usd } from '../src/core/units.js';
 
 const API = 'https://api.github.com';
+
+/** Returned by run() when there is nothing to judge (no event, no PR, no note, invalid receipt). */
+const NO_RECEIPT = { posted: false, costUsd: null, overBudget: false, verdict: 'no receipt to judge', failJob: false };
 
 /**
  * Read one Action input the way GitHub Actions exposes it: `INPUT_<NAME>`,
@@ -94,9 +104,119 @@ export async function upsertComment({ fetchImpl, repoFull, prNumber, token, exis
 }
 
 /**
+ * A finite, strictly positive number, or null for anything else (missing,
+ * blank, NaN, zero, negative). A bad or absent cap is the same as no cap,
+ * never a crash and never a false trigger.
+ * @param {*} v
+ * @returns {number|null}
+ */
+function positiveNumber(v) {
+  if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? v : null;
+  if (typeof v !== 'string' || v.trim() === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Read `<cwd>/<policyFile>`'s `receipt.maxCostUsd` / `receipt.maxCostPer100Lines`.
+ * A missing file, a malformed file, or a value that is not a positive number
+ * all mean no cap from this source — never a crash, matching src/core/policy.js's
+ * posture toward a broken checked-in file.
+ * @param {{cwd:string, policyFile:string}} opt
+ * @returns {{maxCostUsd:number|null, maxCostPer100Lines:number|null}}
+ */
+export function readPolicyCaps({ cwd, policyFile }) {
+  const none = { maxCostUsd: null, maxCostPer100Lines: null };
+  const file = path.join(cwd, policyFile);
+  if (!fs.existsSync(file)) return none;
+  try {
+    const doc = parseYaml(fs.readFileSync(file, 'utf8'));
+    const receipt = doc && typeof doc === 'object' && !Array.isArray(doc) && doc.receipt
+      && typeof doc.receipt === 'object' && !Array.isArray(doc.receipt) ? doc.receipt : {};
+    return {
+      maxCostUsd: positiveNumber(receipt.maxCostUsd),
+      maxCostPer100Lines: positiveNumber(receipt.maxCostPer100Lines),
+    };
+  } catch {
+    return none; // malformed policy file: no cap, never a crash
+  }
+}
+
+/**
+ * Judge one receipt against the declared caps.
+ * `overBudget` per cap requires a measured value on the receipt; a cap with
+ * no matching measurement (e.g. `costPer100Lines` on a receipt with no
+ * matched pull request) is reported as not evaluated rather than guessed as
+ * either pass or fail.
+ * @param {object} receipt a validated receipt.v0 or receipt.v1 object
+ * @param {{maxCostUsd:number|null, maxCostPer100Lines:number|null}} caps
+ * @returns {{overBudget:boolean, anyDeclared:boolean, heading:string|null, details:string[]}}
+ */
+export function judgeBudget(receipt, caps) {
+  const details = [];
+  let anyOver = false;
+  let anyWithin = false;
+  let anyDeclared = false;
+
+  if (caps.maxCostUsd !== null) {
+    anyDeclared = true;
+    if (receipt.costUsd === null) {
+      details.push(`cost cap ${usd(caps.maxCostUsd)} not evaluated (no priced turns on this receipt)`);
+    } else if (receipt.costUsd > caps.maxCostUsd) {
+      anyOver = true;
+      details.push(`cost ${usd(receipt.costUsd)} is over the ${usd(caps.maxCostUsd)} cap`);
+    } else {
+      anyWithin = true;
+      details.push(`cost ${usd(receipt.costUsd)} is within the ${usd(caps.maxCostUsd)} cap`);
+    }
+  }
+
+  if (caps.maxCostPer100Lines !== null) {
+    anyDeclared = true;
+    if (receipt.costPer100Lines === null) {
+      details.push(`per-100-lines cap ${usd(caps.maxCostPer100Lines)} not evaluated (no changed-line cost on this receipt)`);
+    } else if (receipt.costPer100Lines > caps.maxCostPer100Lines) {
+      anyOver = true;
+      details.push(`${usd(receipt.costPer100Lines)} per 100 lines is over the ${usd(caps.maxCostPer100Lines)} cap`);
+    } else {
+      anyWithin = true;
+      details.push(`${usd(receipt.costPer100Lines)} per 100 lines is within the ${usd(caps.maxCostPer100Lines)} cap`);
+    }
+  }
+
+  const heading = anyOver ? 'Over budget' : anyWithin ? 'Within budget' : anyDeclared ? 'Budget cap not evaluated' : null;
+  return { overBudget: anyOver, anyDeclared, heading, details };
+}
+
+/**
+ * Write `name=value` pairs to the file at `env.GITHUB_OUTPUT`, if set.
+ * Appends, because every step in a job shares the same file.
+ * @param {object} env
+ * @param {Record<string,string>} fields
+ */
+function writeGithubOutput(env, fields) {
+  const file = env.GITHUB_OUTPUT;
+  if (!file) return;
+  const text = Object.entries(fields).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
+  fs.appendFileSync(file, text);
+}
+
+/**
+ * Append a markdown block to the file at `env.GITHUB_STEP_SUMMARY`, if set.
+ * @param {object} env
+ * @param {string} markdown
+ */
+function writeGithubStepSummary(env, markdown) {
+  const file = env.GITHUB_STEP_SUMMARY;
+  if (!file) return;
+  fs.appendFileSync(file, markdown + '\n');
+}
+
+/**
  * The action's entry point. Every side effect is injectable so tests never
  * touch the network or a real git remote.
  * @param {{env?:object, fetchImpl?:typeof fetch, execFileSyncImpl?:typeof execFileSync, cwd?:string}} [opt]
+ * @returns {Promise<{posted:boolean, costUsd:number|null, overBudget:boolean, verdict:string, failJob:boolean}>}
  */
 export async function run(opt = {}) {
   const env = opt.env || process.env;
@@ -107,17 +227,21 @@ export async function run(opt = {}) {
   const token = input(env, 'token', env.GITHUB_TOKEN || '');
   const notesRef = input(env, 'notes-ref', 'tokenflow');
   const marker = input(env, 'comment-marker', '<!-- tokenflow-receipt -->');
+  const maxUsdInput = input(env, 'max-usd', '');
+  const maxUsdPer100LinesInput = input(env, 'max-usd-per-100-lines', '');
+  const failOnOverBudget = input(env, 'fail-on-over-budget', 'true').toLowerCase() === 'true';
+  const policyFile = input(env, 'policy-file', '.tokenflow/policy.yaml');
 
   const eventPath = env.GITHUB_EVENT_PATH;
   if (!eventPath || !fs.existsSync(eventPath)) {
     console.log('tokenflow-receipt: no GITHUB_EVENT_PATH; nothing to do');
-    return;
+    return NO_RECEIPT;
   }
   const payload = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
   const pr = payload.pull_request;
   if (!pr || !pr.head || !pr.head.sha || !pr.number) {
     console.log('tokenflow-receipt: not a pull_request event; nothing to do');
-    return;
+    return NO_RECEIPT;
   }
   const sha = pr.head.sha;
   const prNumber = pr.number;
@@ -132,23 +256,52 @@ export async function run(opt = {}) {
   const receipt = readNoteForSha({ sha, notesRef, cwd, execFileSyncImpl });
   if (!receipt) {
     console.log(`tokenflow-receipt: no receipt note on ${sha}; nothing to do`);
-    return;
+    return NO_RECEIPT;
   }
-  const { ok, errors } = validateReceiptV0(receipt);
+  const { ok, errors } = validateReceipt(receipt);
   if (!ok) {
     console.log(`tokenflow-receipt: receipt on ${sha} failed validation (${errors.join('; ')}); not posting`);
-    return;
+    return NO_RECEIPT;
   }
 
-  const body = renderReceiptV0Markdown(receipt);
+  const policyCaps = readPolicyCaps({ cwd, policyFile });
+  const caps = {
+    maxCostUsd: positiveNumber(maxUsdInput) !== null ? positiveNumber(maxUsdInput) : policyCaps.maxCostUsd,
+    maxCostPer100Lines: positiveNumber(maxUsdPer100LinesInput) !== null ? positiveNumber(maxUsdPer100LinesInput) : policyCaps.maxCostPer100Lines,
+  };
+  const budget = judgeBudget(receipt, caps);
+  const verdict = budget.anyDeclared ? `${budget.heading}: ${budget.details.join('; ')}` : 'No budget cap declared';
+  const failJob = budget.overBudget && failOnOverBudget;
+
+  let body = renderReceiptV0Markdown(receipt);
+  if (budget.anyDeclared) {
+    const [markerLine, ...rest] = body.split('\n');
+    body = [markerLine, '', `**${budget.heading}**: ${budget.details.join('; ')}`, ...rest].join('\n');
+  }
+
   const existing = await findExistingComment({ fetchImpl, repoFull, prNumber, token, marker });
   await upsertComment({ fetchImpl, repoFull, prNumber, token, existing, body });
   console.log(`tokenflow-receipt: ${existing ? 'updated' : 'posted'} the receipt comment on PR #${prNumber}`);
+
+  writeGithubOutput(env, {
+    'cost-usd': receipt.costUsd === null ? '' : String(receipt.costUsd),
+    'over-budget': String(budget.overBudget),
+    verdict,
+  });
+  writeGithubStepSummary(env, body);
+
+  if (failJob) {
+    console.log(`::error::tokenflow-receipt: over budget on PR #${prNumber} - ${verdict}`);
+  }
+
+  return { posted: true, costUsd: receipt.costUsd, overBudget: budget.overBudget, verdict, failJob };
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isMain) {
-  run().catch((err) => {
+  run().then((result) => {
+    if (result && result.failJob) process.exitCode = 1;
+  }).catch((err) => {
     console.error(`tokenflow-receipt: ${err.message}`);
     process.exitCode = 1;
   });
