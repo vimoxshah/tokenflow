@@ -3,6 +3,103 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.0 — 2026-09-06
+
+Receipts that leave the laptop and land where the decision is made: on the pull request, on a
+ticket, in the FinOps tool, and in the agent's own hands. Nothing here reads prompt or code
+content, and nothing here is hosted by us.
+
+### Added
+
+- **Receipts on GitHub: comment, budget, merge gate.** A GitHub Action reads the receipt a push
+  already attached as a git note, posts or edits ONE pull request comment (found by a
+  `<!-- tokenflow-receipt -->` marker, so it never stacks), and judges it against a cap declared as
+  a workflow input or in the repository's committed `.tokenflow/policy.yaml`. Over budget fails the
+  job, and a failed job is a status check a branch protection rule can require before a merge. A
+  push with no receipt logs one line and exits 0: a missing receipt is never itself a blocker. A cap
+  is crossed only when the value is strictly greater, and a cap with no matching measurement reports
+  "not evaluated" rather than a false pass. Zero npm dependencies, and every side effect is
+  injectable, so the tests never touch the network. See docs/receipts-on-github.md.
+- **A self-hosted GitHub App.** `tokenflow team serve` can now receive YOUR OWN GitHub App and
+  answer every pull request with the same receipt comment plus a "TokenFlow spend" check run:
+  neutral until a receipt lands, red when the repository's own cap is crossed, green otherwise. We
+  host nothing and store nothing. The receipt is read from your repository over the API, rendered,
+  posted back, and dropped. Webhook deliveries are authenticated by GitHub's signature over the raw
+  body, in constant time; installation tokens are minted per delivery and never cached. Overlapping
+  deliveries for one pull request are serialized, and a late-arriving note always wins, so a green
+  check is never overwritten by a stale neutral one. Flags `--github-app-id`, `--github-key-file`,
+  `--github-webhook-secret`, `--github-api-url` (GitHub Enterprise works by pointing it at
+  `/api/v3`) and `--github-notes-ref`, each with a `TOKENFLOW_GH_*` environment variable.
+  `POST /github/webhook` answers 404 until all three required values are set. See docs/github-app.md.
+- **Cost per ticket.** A **Tickets** tab and `tokenflow tickets`: every branch receipt that names
+  the same Jira, Linear or GitHub key, grouped across every repository and branch. The key is read
+  from the branch name, or from a merged pull request's title when the branch name has none.
+  Matching is a convention, not a guarantee, so a branch that names no key stays in an
+  `(unattributed)` row rather than being guessed into a ticket, and the built-in shape requires two
+  letters and two digits, which is what keeps `UTF-8` from reading as a ticket. Configure it with a
+  `tickets:` block (`system`, `baseUrl`, `pattern`); `baseUrl` is the only thing that turns a key
+  into a link, and building that link is string work that never contacts your tracker.
+  `--csv`, `--json`, `--top`. See docs/tickets.md.
+- **FOCUS-shaped export.** `tokenflow export --focus` writes one row per branch receipt and
+  `tokenflow team --focus` writes one row per machine-day, both to
+  `tokenflow-focus-YYYY-MM-DD.csv` under the FinOps FOCUS column names, so an estimate produced
+  entirely on this machine can sit beside a real cloud bill in a tool that already ingests FOCUS.
+  The four FOCUS cost columns deliberately carry the same number, because splitting one estimate
+  into four would claim a precision this data does not have, and every row says so twice: in
+  `ChargeDescription` and in `Tags.costBasis`. The null contract survives the export: a missing
+  value is an empty cell, never a `0`. See docs/focus-export.md.
+- **An MCP server, so the agent can read its own bill.** `tokenflow mcp` speaks the Model Context
+  Protocol over stdio and offers four read-only tools: `tokenflow_receipt` (what this branch has
+  cost), `tokenflow_policy` (the caps in force here, and which layer each came from),
+  `tokenflow_usage` (totals for the last N days and the top models) and `tokenflow_budget` (the
+  monthly cap and where this month stands). Every other surface reports to a human after the fact;
+  this one hands the numbers to the participant actually spending the money, in time to change what
+  it does next. Local stdio: no socket, no network call, nothing written to the store. stdout
+  carries JSON-RPC and nothing else. See docs/mcp.md.
+- **Org policy: a ceiling above the personal and repo caps.** A team can publish a `policy.yaml` on
+  its own team server; `tokenflow policy pull` caches it locally and `tokenflow refresh` keeps that
+  cache warm (at most one fetch an hour). The org layer applies as a CEILING: for each guard key it
+  can only lower the effective cap, never raise one, and a key it does not declare leaves the
+  personal or repository value alone. The guard hook never fetches, only reads the cache, so a
+  session is never blocked waiting on a server, however stale that cache is. A failed pull keeps the
+  cache it had, rather than replacing a good policy with nothing. `tokenflow policy show` prints
+  every key with its source, now `[personal]`, `[repo]`, `[org]` or `[default]`.
+  See docs/policy.md.
+- **A self-hosting kit for the team server.** `Dockerfile.team`, a compose file, and a deployment
+  guide, so the process that receives your rollups and your GitHub App is something a customer
+  stands up in an afternoon on hardware they own. `tokenflow team check` verifies one from a laptop:
+  reachable, token accepted, org policy present, and what to fix when not. See docs/team-server.md.
+- **Receipt schema v1.** The portable receipt (`schemas/receipt.v1.json`) gains two optional fields:
+  `ticket`, the tracked-work item the branch names, and `verdict`, the result of checking the
+  receipt against the `receipt:` caps its repository committed. Every field v0 required is still
+  required and unmoved, so **a v0 receipt stays valid forever**: `validateReceipt()` dispatches on
+  `schemaVersion`, and both the Action and the self-hosted App accept either version. The pre-push
+  hook and `tokenflow receipt --branch <b> --json` now emit v1. See docs/receipt-schema.md.
+
+### Changed
+
+- **A sidebar instead of a tab bar.** The dashboard is now an app shell: a
+  left sidebar holds every view, grouped by topic (Spend, Sessions, Models,
+  Time, Data, and "More views" for anything a registered module adds), and the
+  content takes the rest of the width. The sidebar collapses to a rail of
+  two-letter monograms with the full name as a tooltip, resizes by dragging its
+  edge (or with the arrow keys on the handle; double-click resets), and
+  remembers both settings with the other preferences. Below 900 pixels it is a
+  drawer opened from the header. The search row at the top of the sidebar
+  replaces the "⌘K" chip and opens the same command palette. The header now
+  shows the active view's name. This replaces the two-row tab wrap from 1.2.0,
+  which broke down as soon as a real dataset showed every tab.
+- **A blocked session is told how to actually unblock itself.** When the guard blocks on a cap that
+  came from the org ceiling, the message no longer suggests `tokenflow guard --set`, which writes
+  your own config and cannot lift a ceiling. It names the org policy and points at docs/policy.md
+  instead. A personal or repo cap keeps the old advice, because there the command does work.
+- **`tokenflow receipt --branch <b> --json` prints the portable Receipt v1 document.** It used to
+  print the internal builder entry. A script that read the old shape needs one update; the numbers
+  are the same, the field names follow schemas/receipt.v1.json. See docs/receipt-schema.md.
+- **The dashboard's Tickets tab honours your `tickets:` config.** The whole-store receipt pass now
+  threads that block through, and caches on it, so editing the config and reopening the dashboard
+  never serves receipts built under the old pattern.
+
 ## 1.2.0 — 2026-09-06
 
 Spend attributed to the unit of work, a guard that acts while a session is

@@ -3,8 +3,13 @@
  * tokenflow — the CLI.
  *
  * Every command is safe to run repeatedly and never writes outside
- * $TOKENFLOW_HOME (default ~/.tokenflow). Nothing here makes a network
- * request.
+ * $TOKENFLOW_HOME (default ~/.tokenflow).
+ *
+ * Nothing here makes a network request unless you configured one: `sync --to`
+ * pushes to the team server you named, `policy pull` (and the refresh that
+ * keeps its cache warm) reads from that same server, and `team check` asks it
+ * whether it is healthy. With no `sync.to` in config, none of those paths open
+ * a socket. See the Privacy section of README.md for the full list.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -88,8 +93,11 @@ async function main() {
     case 'diagnostics': return cmdDiagnostics();
     case 'team': return cmdTeam();
     case 'receipt': case 'receipts': return cmdReceipt();
+    case 'tickets': return cmdTickets();
     case 'hooks': return cmdHooks();
     case 'guard': return cmdGuard();
+    case 'policy': return cmdPolicy();
+    case 'mcp': return cmdMcp();
     default:
       console.error(`${C.red}Unknown command "${cmd}".${C.r}\n`);
       return help(1);
@@ -232,6 +240,7 @@ async function cmdRefresh() {
     },
   });
   if (lastLine) rewrite('');
+  await refreshOrgPolicy();
   if (flags.json) return console.log(JSON.stringify(report, null, 2));
 
   console.log('');
@@ -256,6 +265,25 @@ async function cmdRefresh() {
   }
   if (!report.done) console.log(`  ${C.y}◐ time budget reached — run 'tokenflow refresh' again to continue${C.r}`);
   console.log('');
+}
+
+/**
+ * Keep the cached org policy warm on the schedule the user already runs.
+ *
+ * The guard hook reads that cache and NEVER fetches (src/core/policy.js), so
+ * without a refresh somewhere the ceiling a team declared would only ever
+ * arrive when someone remembered to run `tokenflow policy pull`. A refresh is
+ * already a deliberate, foreground act, which makes it the right place.
+ *
+ * Silent by design and never fatal: a machine with no `sync.to` does nothing
+ * at all (not even a stat of the cache), and a team server that is down must
+ * not turn a successful ingest into a failed command.
+ */
+async function refreshOrgPolicy() {
+  try {
+    const { refreshOrgPolicyIfStale } = await import('../src/commands/policy.js');
+    await refreshOrgPolicyIfStale({ config: loadConfig(), home: paths().root });
+  } catch { /* the org ceiling stays as cached; an ingest is never failed by it */ }
 }
 
 // =================================================================== status ==
@@ -422,8 +450,62 @@ function tryOpen(url) {
 
 // =================================================================== export ==
 
+/**
+ * Write FOCUS-shaped rows as `tokenflow-focus-<date>.csv` into `--out <dir>`
+ * (the working directory by default) and return the path. Shared by
+ * `export --focus` (one row per branch receipt) and `team --focus` (one row
+ * per machine-day), so both land the same filename and the same CSV rules.
+ * @param {object[]} rows rows from focusRowsFromReceipts()/focusRowsFromDaily()
+ * @returns {Promise<string>}
+ */
+async function writeFocusCsv(rows) {
+  const { toCsv } = await import('../src/export/focus.js');
+  const outDir = flags.out ? String(flags.out) : process.cwd();
+  const file = path.join(outDir, exportFilename('tokenflow-focus', new Date(), 'csv'));
+  fs.writeFileSync(file, toCsv(rows));
+  return file;
+}
+
+/**
+ * Every branch in the store as a portable receipt (schemas/receipt.v1.json) —
+ * the same builder, price book and repository resolver `tokenflow receipt`
+ * and the Tickets tab use, so a dollar here always agrees with the dollar
+ * shown there. `headSha` is null: this walks the store, not a checkout, so
+ * there is no commit to name.
+ * @returns {Promise<object[]>}
+ */
+async function storeReceiptsV1() {
+  const [{ loadPrimaryRecords }, { buildReceipts, toReceiptV1 }, { makeRepoResolver }] = await Promise.all([
+    import('../src/commands/receipt.js'),
+    import('../src/analytics/receipt.js'),
+    import('../src/core/repo.js'),
+  ]);
+  const cfg = loadConfig();
+  const book = buildPriceBook(readJson(paths().pricing, {}));
+  const from = typeof flags.from === 'string' ? flags.from : null;
+  const to = typeof flags.to === 'string' ? flags.to : null;
+  const result = buildReceipts(loadPrimaryRecords({ from, to }), {
+    book,
+    repoOf: makeRepoResolver(),
+    tickets: cfg.tickets || {},
+  });
+  const toolVersion = readJson(path.join(root(), 'package.json'), {}).version || '0.0.0';
+  const out = [];
+  for (const R of result.repos) {
+    for (const b of R.branches) out.push(toReceiptV1(b, { repo: R.repo, headSha: null, toolVersion }));
+  }
+  return out;
+}
+
 async function cmdExport() {
   const outDir = flags.out ? String(flags.out) : process.cwd();
+  if (flags.focus) {
+    const { focusRowsFromReceipts } = await import('../src/export/focus.js');
+    const rows = focusRowsFromReceipts(await storeReceiptsV1());
+    const file = await writeFocusCsv(rows);
+    console.log(`${C.g}✓${C.r} ${file}  ${C.dim}${int(rows.length)} branch receipts · FOCUS-shaped, every figure a local estimate${C.r}`);
+    return;
+  }
   if (flags.html !== undefined) {
     const file = typeof flags.html === 'string' ? flags.html : path.join(outDir, exportFilename('tokenflow', new Date(), 'html'));
     const { html, stats } = buildSnapshot({ maxRecords: Number(flags.maxRecords) || 20000 });
@@ -1203,6 +1285,14 @@ async function cmdReceipt() {
   console.log(out.text);
 }
 
+/** `tokenflow tickets` — spend grouped by the ticket key in a branch name or a merged PR title. */
+async function cmdTickets() {
+  const { run } = await import('../src/commands/tickets.js');
+  const out = run(flags);
+  if (flags.json) return console.log(JSON.stringify(out.json, null, 2));
+  console.log(out.text);
+}
+
 /** `tokenflow hooks` — install/uninstall the pre-push git hook that attaches a receipt note. */
 async function cmdHooks() {
   const { run } = await import('../src/commands/hooks.js');
@@ -1224,6 +1314,28 @@ async function cmdGuard() {
   if (out.stdout) process.stdout.write(out.stdout + '\n');
   if (out.stderr) process.stderr.write(out.stderr + '\n');
   process.exitCode = out.exitCode;
+}
+
+/** `tokenflow policy show|pull` — the effective guard policy, and the cached org ceiling. */
+async function cmdPolicy() {
+  const { run } = await import('../src/commands/policy.js');
+  const out = await run({ ...flags, action: argv[1] });
+  if (out.stdout) process.stdout.write(out.stdout + '\n');
+  if (out.stderr) process.stderr.write(out.stderr + '\n');
+  process.exitCode = out.exitCode;
+}
+
+/**
+ * `tokenflow mcp` — an MCP server on stdio, so the agent can read its own bill.
+ *
+ * stdout belongs to the JSON-RPC framing and to nothing else: one stray line
+ * there desynchronizes the client. Nothing on this path prints to it —
+ * `loadProviders()` reports a broken user adapter on stderr, and `serve()`
+ * logs to stderr too — so no output is captured or suppressed here.
+ */
+async function cmdMcp() {
+  const { serve } = await import('../src/commands/mcp.js');
+  await serve({ input: process.stdin, output: process.stdout, env: process.env, cwd: process.cwd() });
 }
 
 /** `tokenflow schedule` — install/remove the weekly digest LaunchAgent. */
@@ -1419,6 +1531,17 @@ async function cmdTeam() {
     const { run } = await import('../src/commands/team-serve.js');
     return run(flags);
   }
+  // `team check` asks a team server whether it is reachable, whether this
+  // machine's token is accepted, and whether it serves an org policy. It has
+  // no shared folder of its own either, so it also runs before the gate below.
+  if (argv[1] === 'check') {
+    const { run } = await import('../src/commands/team-check.js');
+    const out = await run(flags);
+    if (out.stdout) process.stdout.write(out.stdout + '\n');
+    if (out.stderr) process.stderr.write(out.stderr + '\n');
+    process.exitCode = out.exitCode;
+    return;
+  }
   const cfg = loadConfig();
   if (!cfg.sync?.enabled || !cfg.sync?.dir) {
     console.error(`${C.red}Team view reads the shared sync folder.${C.r}
@@ -1433,11 +1556,22 @@ Enable multi-machine sync first — every team member points at the SAME folder:
 Then run \`tokenflow sync\` on each machine and \`tokenflow team\` here.`);
     return;
   }
-  const { aggregate, renderText } = await import('../src/core/team.js');
+  const { aggregate, renderText, readDailyLines } = await import('../src/core/team.js');
   const dir = cfg.sync.dir.replace(/^~(?=$|\/)/, os.homedir());
+  const from = typeof flags.from === 'string' ? flags.from : null;
+  const to = typeof flags.to === 'string' ? flags.to : null;
+  if (flags.focus) {
+    const { focusRowsFromDaily } = await import('../src/export/focus.js');
+    // The raw ledger lines, not aggregate()'s trend: that one is capped at the
+    // last 28 days for rendering, which would silently truncate an export.
+    const rows = focusRowsFromDaily(readDailyLines(dir, { from, to }));
+    const file = await writeFocusCsv(rows);
+    console.log(`${C.g}✓${C.r} ${file}  ${C.dim}${int(rows.length)} machine-days · FOCUS-shaped, every figure a local estimate${C.r}`);
+    return;
+  }
   const t = aggregate(dir, {
-    from: typeof flags.from === 'string' ? flags.from : null,
-    to: typeof flags.to === 'string' ? flags.to : null,
+    from,
+    to,
     includeAnonymous: !!flags['include-anonymous'],
   });
   if (flags.json) { console.log(JSON.stringify(t, null, 2)); return; }
@@ -1563,6 +1697,9 @@ function help(code = 0) {
     tokenflow export --csv          current view as CSV
     tokenflow export --csv --all    every normalized record
     tokenflow export --html         one self-contained offline dashboard file
+    tokenflow export --focus [--out <dir>]
+                                   FOCUS-shaped CSV, one row per branch receipt,
+                                   for a FinOps tool that already reads FOCUS
 
   ${C.b}Intelligence${C.r}
     tokenflow models-compare        cost/request, tokens/request, cache-hit% per model
@@ -1574,8 +1711,17 @@ function help(code = 0) {
     tokenflow digest --deliver      build the weekly digest and send via configured channels
     tokenflow schedule --install --at "Monday 09:00"   weekly digest via launchd
     tokenflow schedule --status     is the digest schedule installed?
+    tokenflow tickets               spend per ticket key, from branch names and merged PR titles
+                                   (--top <n>, --csv, --json)
     tokenflow team                  per-developer usage from the shared sync folder
+    tokenflow team --focus [--out <dir>]
+                                   FOCUS-shaped CSV, one row per machine-day
     tokenflow team serve            self-hosted team server for the folder-sync rollups (--host --port --token --dir; non-loopback host needs a token)
+    tokenflow team serve --github-app-id <id> --github-key-file <f.pem> --github-webhook-secret <s>
+                                   also receive your OWN GitHub App: a receipt comment and a
+                                   budget check run on every pull request (--github-api-url for
+                                   GitHub Enterprise, --github-notes-ref to read another notes ref)
+    tokenflow team check            is the team server reachable, is this token accepted, does it serve a policy
     tokenflow diagnostics           version, providers, store freshness, feature states
 
   ${C.b}Receipts & guard${C.r}
@@ -1599,6 +1745,11 @@ function help(code = 0) {
                                    effective guard policy for a directory, and each value's source
     tokenflow guard --install --codex [--apply]
                                    wire up Codex CLI's notify hook (warns only, never blocks)
+    tokenflow policy show [--cwd <dir>] [--json]
+                                   the effective policy: personal, then repo, then the org ceiling
+    tokenflow policy pull [--force] fetch the org policy from your team server and cache it
+    tokenflow mcp                   MCP server on stdio, so the agent can read its own bill
+                                   (four read-only tools; add it to your agent's MCP config)
 
   ${C.b}Sync (optional, off by default)${C.r}
     tokenflow sync                  push this machine's daily rollups + show merged view

@@ -263,9 +263,14 @@ export function mountPalette(ctx) {
     saveRecent(recent);
   }
 
-  /** Refocus `target` if it is still in the document, else the active tab button, so focus never lands on `<body>`. */
+  /**
+   * Refocus `target` if it is still in the document and is not `<body>` itself
+   * (the palette was opened with nothing focused), else the active navigation
+   * item, so focus never lands nowhere after a jump.
+   */
   function restoreFocus(target) {
-    const t = target && document.body.contains(target) ? target : (ctx.activeTabButton && ctx.activeTabButton());
+    const usable = target && target !== document.body && document.body.contains(target);
+    const t = usable ? target : (ctx.activeTabButton && ctx.activeTabButton());
     if (t && typeof t.focus === 'function') t.focus();
   }
 

@@ -235,11 +235,12 @@ short brief, and the per-turn cost drops.</span></code></pre>
       <p class="lede">The receipts need your transcripts and your repository on the same disk. That is exactly why nothing leaves it.</p>
     </div>
     <ul class="facts" data-reveal-group>
-      <li data-reveal><b>No HTTP client anywhere in the codebase.</b> One grep proves it. The server binds to 127.0.0.1 only.</li>
+      <li data-reveal><b>No telemetry, no account, no upload by default.</b> The dashboard binds to 127.0.0.1 only. Every network path there is goes to an address you chose: a folder you sync, a team server you run, your own git remote.</li>
       <li data-reveal><b>Adapters read counts and discard content.</b> The schema has nowhere to put a prompt, a diff or a file.</li>
       <li data-reveal><b>Zero runtime dependencies.</b> A tool that reads your session logs is the wrong place for four hundred transitive packages.</li>
       <li data-reveal><b>Multi-machine sync is a folder you already own.</b> iCloud, Dropbox, Syncthing, a git repo. Daily totals only, off by default.</li>
       <li data-reveal><b>Team names are opt-in per person.</b> A developer appears by name only if they set it themselves.</li>
+      <li data-reveal><b>The GitHub App is yours, not ours.</b> Your App, your server, our code. A receipt is read from your repository, posted back to it, and dropped. There is no hosted TokenFlow service to hold anything.</li>
       <li data-reveal><b>Even this page loads no third-party fonts.</b> The faces are served from the same place as the page.</li>
     </ul>
   </div>
@@ -261,7 +262,12 @@ short brief, and the per-turn cost drops.</span></code></pre>
 
     <h2 style="margin-top:72px" data-reveal>Everything else it already does.</h2>
     <dl class="more" data-reveal-group style="margin-top:24px">
-      <div data-reveal><dt>Twenty dashboard views</dt><dd>Overview with the three insights that matter, receipts, session anatomy, live, providers, models, interfaces, time patterns, peaks, efficiency, cache health, cost with coverage, what-if, productivity, rhythm, compare, compare branches, explorer, annotations, data health.</dd></div>
+      <div data-reveal><dt>Twenty-one dashboard views</dt><dd>Overview with the three insights that matter, receipts, tickets, session anatomy, live, providers, models, interfaces, time patterns, peaks, efficiency, cache health, cost with coverage, what-if, productivity, rhythm, compare, compare branches, explorer, annotations, data health. In a left sidebar grouped by topic, because twenty-one no longer fit a tab strip.</dd></div>
+      <div data-reveal><dt>A budget check on every pull request</dt><dd>The receipt a push already attached as a git note becomes one PR comment and a status check. Run it as a GitHub Action, or host your own GitHub App on your own <code>tokenflow team serve</code>. We host nothing and store nothing.</dd></div>
+      <div data-reveal><dt>Cost per ticket</dt><dd>Every branch that named the same Jira, Linear or GitHub key, added up across repositories. A branch that names no key stays unattributed rather than guessed into a ticket.</dd></div>
+      <div data-reveal><dt>A FOCUS-shaped export</dt><dd><code>export --focus</code> writes the FinOps FOCUS column names, so these estimates can sit beside a real cloud bill in a tool that already reads FOCUS. Still an estimate at list price, and every row says so.</dd></div>
+      <div data-reveal><dt>An MCP server</dt><dd>Four read-only tools over stdio, so the agent spending the money can read its own bill: what this branch has cost, the caps in force here, recent totals, the monthly budget. No socket, no network.</dd></div>
+      <div data-reveal><dt>Org policy</dt><dd>A cap your team publishes on a server you run, cached locally and applied as a ceiling: it can lower a cap, never raise one. The guard reads the cache and never waits on the network.</dd></div>
       <div data-reveal><dt>A native menu bar app</dt><dd>Spend today, capacity meters with reset countdowns, forecasts with stated confidence, anomaly alerts, per-provider and per-model rows. Swift, not Electron.</dd></div>
       <div data-reveal><dt>Honest cost</dt><dd>A versioned price table with a source for every rate. Service tiers applied as multipliers. Unpriced models show as unknown, never as $0.</dd></div>
       <div data-reveal><dt>Three skins, both modes</dt><dd>Aurora, Terminal and Editorial in dark and light. Series colours belong to the mode, so switching skin never changes what a colour means.</dd></div>
@@ -275,7 +281,7 @@ short brief, and the per-turn cost drops.</span></code></pre>
   <div class="wrap">
     <div class="section-head" data-reveal><h2 id="faq-h">Fair questions.</h2></div>
     <div class="faq" data-reveal>
-      <details><summary>Is my data sent anywhere?</summary><p>No. There is no HTTP client in the codebase. Adapters read token counts and metadata and discard prompt text, source code and file contents. Everything lives in ~/.tokenflow, which you can back up or delete.</p></details>
+      <details><summary>Is my data sent anywhere?</summary><p>Not unless you send it. There is no telemetry and no hosted service. Adapters read token counts and metadata and discard prompt text, source code and file contents, and everything lives in ~/.tokenflow, which you can back up or delete. The paths that can leave the machine are all opt-in and all point at an address you chose: a folder you already sync, a team server you run, your own git remote for receipt notes, and a policy pull from that same team server. The MCP server is local stdio with no socket at all.</p></details>
       <details><summary>How is a receipt bounded?</summary><p>By branch and by merge. A pull request owns the turns on its branch up to the merge, including work done before it was opened. Turns after the merge are reported beside it. Sessions on a detached HEAD are reported as unattributed, never guessed.</p></details>
       <details><summary>Can I trust the cost estimates?</summary><p>Every built-in rate records its source URL and fetch date. Service tiers are applied as multipliers per request. Models without a published rate show blank with a reason, and every total states how many turns it priced.</p></details>
       <details><summary>Does the guard need anything installed on a server?</summary><p>No. It is a Claude Code hook that runs on your machine, reads the live transcript incrementally, and prints its verdict. With no thresholds declared it never blocks.</p></details>

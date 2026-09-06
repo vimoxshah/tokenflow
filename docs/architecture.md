@@ -180,11 +180,36 @@ Every chart ships a **table twin** toggled per card, so no value is reachable on
 
 ## Privacy by construction
 
-The product makes no network call on its own. The only outbound HTTP is the opt-in
-`tokenflow sync --to`, which posts your two sync files to a team server you run, and the GitHub
-Action, which runs in CI. Nothing for telemetry, pricing, or updates. The server binds to loopback and refuses non-GET requests from a foreign origin without a
-token. Adapters read token counts and metadata and discard content; the schema has nowhere to put
-a prompt. SQLite sources are read from a temp snapshot so a live editor is never disturbed.
+Nothing for telemetry, pricing, or updates: the product never calls anywhere on its own account.
+Adapters read token counts and metadata and discard content; the schema has nowhere to put a
+prompt. SQLite sources are read from a temp snapshot so a live editor is never disturbed. The
+local dashboard binds to loopback and refuses non-GET requests from a foreign origin without a
+token.
+
+Every network path there is, in full. Each one is off until you turn it on, and each one goes to
+an address you chose.
+
+**Outbound, only when you opt in:**
+
+| Path | Where it goes | What it carries |
+|---|---|---|
+| Folder sync (`sync.enabled`) | a folder you already sync (iCloud, Dropbox, Syncthing) | daily totals, and a branch/PR cost ledger unless `sync.receipts: false`. Not HTTP at all: this is a file write |
+| `sync --to <url>` / `sync.to` | the team server you run | the same two files, behind a bearer token |
+| Receipt notes (`tokenflow hooks install`) | your own git remote | `refs/notes/tokenflow`, pushed alongside the branch you were already pushing |
+| `policy pull`, and the refresh that keeps its cache warm | `GET <sync.to>/api/policy` on your team server | nothing but the request; it only reads |
+| `team check` | `/health` and `/api/policy` on your team server | nothing but the request |
+| Digest delivery (`delivery:`) | your Telegram chat, mail server, or webhook | the digest you generated |
+| Map location (`map.showMyLocation`) | one IP geolocation lookup, cached | nothing about your usage |
+
+**Inbound, only on a server the customer runs:** `tokenflow team serve` accepts rollups pushed by
+`sync --to`, and, when a GitHub App is configured on it, deliveries at `POST /github/webhook`
+verified by GitHub's signature over the raw body. We host nothing and receive nothing: that
+process runs on the customer's own machine, and it keeps no copy of a receipt it posts back.
+
+**Neither:** `tokenflow mcp` is local stdio, with no socket and no network call. Building a ticket
+URL is string work and never contacts the tracker. `tokenflow receipt --gh` shells out to the
+GitHub CLI you already authenticated, rather than calling the API itself. The GitHub Action runs
+in CI, on GitHub's runner, against GitHub's own API.
 
 ## Team-readiness without team infrastructure
 
