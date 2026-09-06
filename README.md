@@ -13,6 +13,23 @@
 
 ![Overview — Aurora dark](docs/media/overview-aurora-dark.png)
 
+<p align="center"><em>Every screenshot here is the real dashboard on synthetic demo data, which is
+why each one carries its own DEMO DATA banner. Run <code>npm run demo</code> and you get this exact
+page.</em></p>
+
+<p align="center">
+  <img src="docs/media/filters-aurora-dark.png" width="49%" alt="One filter bar: a date button, a Filter button and a removable chip">
+  &nbsp;
+  <img src="docs/media/palette-aurora-dark.png" width="49%" alt="The command palette, grouped by section with an icon on every row">
+</p>
+<p align="center"><em>Left: filtering is a date button, a <code>+ Filter</code> button and chips for
+whatever is on. Picking two models narrows every number on the page, and the insight at the top
+rewrites itself. Right: the command palette, grouped, with your recents on an empty query.</em></p>
+
+![Tickets — Editorial light](docs/media/tickets-editorial-light.png)
+<p align="center"><em>Cost per ticket. Every branch that named the same Jira, Linear or GitHub key,
+added up across repositories. A branch that names no key stays unattributed rather than guessed.</em></p>
+
 <p align="center">
   <img src="docs/media/architecture-hero.svg" alt="TokenFlow architecture: local logs → engine → dashboard, menu bar, CLI" width="100%">
 </p>
