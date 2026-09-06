@@ -3,288 +3,305 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TokenFlow — see where your AI tokens actually go</title>
-<meta name="description" content="Local-first, provider-agnostic analytics for the AI tokens you spend across Claude Code, Codex, OpenCode, Cline and Cursor. Zero dependencies. Nothing leaves your machine.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1017'/%3E%3Cpath d='M6 22 L12 14 L17 18 L26 8' stroke='%238f9dff' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<meta name="color-scheme" content="dark">
+<title>TokenFlow. The cost of every pull request.</title>
+<meta name="description" content="TokenFlow prices the coding-agent logs already on your machine. A receipt for every branch, a brake for the session that blows the budget. Local-first, MIT, zero dependencies.">
+<meta property="og:title" content="TokenFlow. The cost of every pull request.">
+<meta property="og:description" content="Receipts for every branch and a guard that acts mid-session, computed from the agent logs on your own machine. Nothing leaves it.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234a5ae0'/%3E%3Cpath d='M7 22V13M13 22V8M19 22V16M25 22V11' stroke='white' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="motion.css">
-<link rel="stylesheet" href="extras.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
-<canvas id="bg-3d" aria-hidden="true"></canvas>
 
-<nav><div class="wrap">
-  <a class="brand" href="#">
-    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#171c27"/><path d="M6 22 L12 14 L17 18 L26 8" stroke="#8f9dff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    TokenFlow
-  </a>
-  <div class="navlinks">
-    <a href="#features">Features</a><a href="#intelligence">Intelligence</a><a href="#install">Install</a><a href="#depth">Under the hood</a><a href="#usp">Why</a><a href="#map">Global</a>
-    <a href="#how">How it works</a>
-    <a href="#sources">Sources</a><a href="https://github.com/vimoxshah/tokenflow" target="_blank" rel="noopener noreferrer">GitHub</a>
-  </div>
-</div></nav>
-
-<div class="wrap">
-<header>
-  <div class="hero-grid">
-    <div>
-      <span class="eyebrow"><span class="dot"></span>v1.0 · local-first · MIT · zero dependencies</span>
-      <h1>Know where every AI token goes.</h1>
-      <p class="sub">TokenFlow reads the logs your tools already write and turns them into honest
-      analytics across Claude Code, Codex, OpenCode, Cursor and more. Zero dependencies.
-      Nothing leaves your machine.</p>
-      <div class="cta">
-        <a class="btn btn-primary" id="download-btn" href="https://github.com/vimoxshah/tokenflow/releases/latest" target="_blank" rel="noopener noreferrer">
-          <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Z"/></svg>
-          Download for macOS
-        </a>
-        <a class="btn btn-ghost" href="/tokenflow/demo/" target="_blank" rel="noopener noreferrer">
-          <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM112,176,80,144l11.31-11.31L112,153.37l52.69-52.68L176,112Z"/></svg>
-          Try the live demo
-        </a>
-        <a class="btn btn-ghost" href="#features">Explore features</a>
-      </div>
-      <p class="proof-line">145 tests on every push · macOS, Linux, Windows · no API keys, no telemetry</p>
+<nav class="nav" aria-label="Primary">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <span class="mark" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 32 32"><path d="M7 22V13M13 22V8M19 22V16M25 22V11" stroke="#fff" stroke-width="3.2" stroke-linecap="round" fill="none"/></svg></span>
+      TokenFlow
+    </a>
+    <div class="navlinks">
+      <a href="#receipts">Receipts</a>
+      <a href="#guard">Guard</a>
+      <a href="#how">How it works</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#install" class="keep">Install</a>
+      <a href="https://github.com/vimoxshah/tokenflow" class="keep" target="_blank" rel="noopener noreferrer">GitHub</a>
     </div>
-    <div id="hero-visual"><!-- animated SVG dashboard injected by hero.js --></div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Local-first. MIT. Zero dependencies.</span>
+      <h1 class="display">The cost of every pull request.</h1>
+      <p class="lede">TokenFlow prices the coding-agent logs already on your machine. A receipt for every branch, a brake for the session that blows the budget.</p>
+      <div class="cta">
+        <a class="btn primary" href="demo/#tab=receipts">Open the live demo</a>
+        <a class="btn" href="#install">Install in one line</a>
+      </div>
+    </div>
+
+    <figure class="receipt" data-reveal aria-label="A real AI cost receipt">
+      <div class="receipt-kicker">AI cost receipt</div>
+      <div class="receipt-title">
+        <code>PR #476</code>
+        <span class="small muted">+6,269 / -99 lines</span>
+      </div>
+      <div class="receipt-amount">$1,291<small>estimated spend, up to the merge</small></div>
+      <div class="split" role="img" aria-label="92 percent re-sent context, 8 percent fresh work"><i class="ctx" style="width:92%"></i><i class="work"></i></div>
+      <div class="split-legend"><span><i class="sw ctx"></i>92% re-sent context</span><span><i class="sw work"></i>8% fresh work</span></div>
+      <dl class="kv">
+        <dt>Sessions</dt><dd>4</dd>
+        <dt>Turns</dt><dd>5,488</dd>
+        <dt>Subagent turns</dt><dd>62%</dd>
+        <dt>Models</dt><dd>Opus 5, Fable 5</dd>
+        <dt>Cost per 100 lines</dt><dd>$20.28</dd>
+        <dt>vs median branch</dt><dd>87×</dd>
+        <dt>Largest prompt</dt><dd>1.11M tokens</dd>
+      </dl>
+      <figcaption class="receipt-foot"><b>A real receipt</b> from the author's own logs, priced with the shipped table. Branch and repository names withheld. No prompt or code content was read.</figcaption>
+    </figure>
   </div>
 </header>
-</div>
-<script src="hero.js"></script>
 
-<section id="features"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Features</p>
-    <h2>Everything a token dashboard should do. And the parts most skip.</h2>
+<section aria-labelledby="findings-h">
+  <div class="wrap">
+    <h2 id="findings-h" class="sr">Three findings from nine weeks of agent logs</h2>
+    <div class="findings" data-reveal-group>
+      <div class="finding" data-reveal>
+        <div class="big">86<small>%</small></div>
+        <p>of $26.7K went to re-sending context. Cache reads and writes are the cheap path per token, so this is the price of long sessions, not waste.</p>
+        <span class="caveat">Nine weeks, one developer, priced with the shipped table.</span>
+      </div>
+      <div class="finding" data-reveal>
+        <div class="big">93<small>%</small></div>
+        <p>of spend sat in the top 1% of sessions. Across 22,698 sessions the median cost two cents.</p>
+        <span class="caveat">Spend follows a power law. Averages hide it.</span>
+      </div>
+      <div class="finding" data-reveal>
+        <div class="big">15<small>×</small></div>
+        <p>The median turn costs $0.01 for the first fifty turns and $0.15 after that.</p>
+        <span class="caveat">Per-request sources only.</span>
+      </div>
+    </div>
   </div>
-  <div class="grid grid-4" id="feature-grid">
-    <div class="card reveal"><p class="metric">12+</p>
-      <h3>Analytics views</h3><p>Daily series, composition, provider and model intelligence, interfaces, hour and weekday patterns, calendar heatmap, peaks, efficiency ratios and more.</p></div>
-    <div class="card reveal"><p class="metric">$ est + $ real</p>
-      <h3>Honest cost</h3><p>Estimated cost from a versioned price table with sources printed, cross-checked against measured gateway costs where they exist.</p></div>
-    <div class="card reveal"><p class="metric">5h</p>
-      <h3>Session blocks</h3><p>Claude and Codex style five hour session windows modelled from your activity, with reset countdowns right in the menu bar.</p>
-      <figure class="menubar-shots">
-        <img src="docs/media/menubar-light.png" alt="TokenFlow menu bar popover — light" loading="lazy">
-        <img src="docs/media/menubar-dark.png" alt="TokenFlow menu bar popover — dark" loading="lazy">
-        <figcaption>The native macOS popover — by provider, by source (Claude Code, OpenCode, Hermes…), by model — plus an appearance toggle.</figcaption>
-      </figure></div>
-    <div class="card reveal"><p class="metric">ETA</p>
-      <h3>Limits and forecasts</h3><p>Declare caps in config and get capacity meters, burn rates, exhaustion ETAs, linear forecasts with stated confidence, and anomaly alerts with arithmetic shown.</p></div>
-    <div class="card reveal"><p class="metric">r = ?</p>
-      <h3>Work correlations</h3><p>Pearson correlation between token spend and git activity, labelled as correlation with n stated, never dressed up as productivity.</p></div>
-    <div class="card reveal"><p class="metric">1 file</p>
-      <h3>Offline export</h3><p>The whole dashboard inlines into one HTML file: CSS, chart code and data. Opens from disk forever, no server needed.</p></div>
-    <div class="card reveal"><p class="metric">Δ compare</p>
-      <h3>Period compare</h3><p>Diff any two time windows metric by metric, plus first-seen models, streaks and milestone tracking.</p></div>
-    <div class="card reveal"><p class="metric">3 skins</p>
-      <h3>Aurora · Terminal · Editorial</h3><p>Each in dark and light, colour-blind validated per mode so switching themes never changes what a colour means.</p></div>
-  </div>
-</div></section>
+</section>
 
-<section id="depth"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Under the hood</p>
-    <h2>How deep does it go?</h2>
-    <p class="subhead">Every layer is built for honesty: adapters that only read, accounting that
-    never double counts, prices with receipts, and tests that enforce all of it.</p>
+<section aria-labelledby="curve-h">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <h2 id="curve-h">A turn gets fifteen times dearer after turn fifty.</h2>
+      <p class="lede">Every turn re-sends the conversation so far. Past a point, most of what you pay for is the conversation, not the answer. That step is where a brake belongs.</p>
+    </div>
+    <div class="chart-card" data-reveal>
+      <div class="chart-head">
+        <h3>Median cost of a turn, by how deep into the session it runs</h3>
+        <p class="small muted">146,373 priced turns from Claude Code, Codex and OpenCode. Hermes reports whole sessions and is excluded.</p>
+      </div>
+      <svg id="marginal-chart" viewBox="0 0 720 250" role="img" aria-labelledby="mc-title mc-desc">
+        <title id="mc-title">Median cost per turn by turn index</title>
+        <desc id="mc-desc">Turns one to fifty: one cent. Fifty-one to two hundred: fifteen cents. Two hundred one to one thousand: fourteen cents. Over one thousand: twelve cents.</desc>
+        <line class="axis" x1="40" y1="200" x2="700" y2="200" stroke-width="1"/>
+        <g class="mc-bar-g">
+          <rect class="mc-bar" x="70" y="189.3" width="120" height="10.7" rx="4"/>
+          <rect class="mc-bar hot" x="235" y="40" width="120" height="160" rx="4"/>
+          <rect class="mc-bar" x="400" y="50.7" width="120" height="149.3" rx="4"/>
+          <rect class="mc-bar" x="565" y="72" width="120" height="128" rx="4"/>
+        </g>
+        <text class="val" x="130" y="178" text-anchor="middle">$0.01</text>
+        <text class="val hot" x="295" y="30" text-anchor="middle">$0.15</text>
+        <text class="val" x="460" y="40" text-anchor="middle">$0.14</text>
+        <text class="val" x="625" y="62" text-anchor="middle">$0.12</text>
+        <text x="130" y="222" text-anchor="middle">turns 1 to 50</text>
+        <text x="295" y="222" text-anchor="middle">51 to 200</text>
+        <text x="460" y="222" text-anchor="middle">201 to 1,000</text>
+        <text x="625" y="222" text-anchor="middle">over 1,000</text>
+        <text x="130" y="240" text-anchor="middle">n = 55,939</text>
+        <text x="295" y="240" text-anchor="middle">n = 15,717</text>
+        <text x="460" y="240" text-anchor="middle">n = 31,152</text>
+        <text x="625" y="240" text-anchor="middle">n = 43,565</text>
+      </svg>
+      <p class="chart-note">Turns carrying more than 200K prompt tokens were 34% of turns and 75% of their spend. Reproduce with <code>tokenflow receipt --sessions</code>.</p>
+    </div>
   </div>
-  <div class="card reveal" style="padding:8px;">
-    <img src="architecture-hero.svg" alt="TokenFlow architecture: local logs → engine → dashboard, menu bar, CLI" style="width:100%;display:block;" loading="lazy">
-  </div>
-  <div class="grid grid-4" style="margin-top:16px;">
-    <div class="card reveal"><p class="metric">10</p><h3>Adapters</h3><p>Anthropic, Codex, OpenCode, Hermes, Cline, Cursor, gateway overlays, git, generic CSV/JSONL/SQLite import — incremental and resumable at the byte offset.</p></div>
-    <div class="card reveal"><p class="metric">145</p><h3>Tests + lint invariants</h3><p>Cache-bucket exclusivity, stream dedup, null-vs-zero semantics and pricing rules are asserted on every push across three OSes.</p></div>
-    <div class="card reveal"><p class="metric">12</p><h3>Analytics views</h3><p>KPIs, composition, provider/model intelligence, time patterns, peaks, efficiency, cost with coverage, correlations, compare, explorer, data health.</p></div>
-    <div class="card reveal"><p class="metric">3</p><h3>Surfaces</h3><p>A loopback web dashboard, a native Swift menu bar app with capacity forecasting, and a scriptable CLI — all reading the same pre-aggregated cube.</p></div>
-  </div>
-</div></section>
+</section>
 
-<section id="usp"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Why TokenFlow</p>
-    <h2>Built for correctness first. That is the whole point.</h2>
-    <p class="subhead">Most token dashboards sum whatever they find. On real data that inflates
-    usage by orders of magnitude. TokenFlow was built backwards from the mistakes, and every fix
-    is enforced by tests.</p>
+<section id="receipts" aria-labelledby="receipts-h">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <span class="eyebrow">Receipts</span>
+      <h2 id="receipts-h">What did this branch cost?</h2>
+      <p class="lede">Every turn is attributed to the branch checked out when it ran. Branches join to merged pull requests by name. The result is a number your team can argue with.</p>
+    </div>
+    <div class="rules-grid">
+      <div class="rules" data-reveal>
+        <div class="rule"><span class="n">1</span><p><b>A PR owns the turns up to its merge</b>, including the work done before it was opened. That work is how the PR came to exist.</p></div>
+        <div class="rule"><span class="n">2</span><p><b>Turns after the merge sit beside the receipt, never inside it.</b> They are follow-up on a checkout that kept the old branch name.</p></div>
+        <div class="rule"><span class="n">3</span><p><b>Long-lived branches are flagged.</b> A receipt for <code>main</code> is a receipt for a period, not for one change.</p></div>
+      </div>
+      <div class="confession" data-reveal>
+        <b>Rule two came from a mistake.</b> The first draft of this page said a 102-line fix cost $2,499. It cost $16. The other $2,483 ran on the same branch over the six days after it merged, and no console showed the difference. The receipt does now.
+      </div>
+    </div>
+    <div data-reveal>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>PR</th><th>Lines</th><th>To merge</th><th>Per 100 lines</th><th>Sessions</th><th>Turns</th><th>Subagent</th><th>After merge</th></tr></thead>
+            <tbody>
+              <tr><td>#476</td><td>+6,269 / -99</td><td class="lead">$1,291</td><td>$20.28</td><td>4</td><td>5,488</td><td>62%</td><td>$7</td></tr>
+              <tr><td>#430</td><td>+11,649 / -256</td><td class="lead">$596</td><td>$5.01</td><td>1</td><td>4,356</td><td>87%</td><td>$12</td></tr>
+              <tr><td>#300</td><td>+5,910 / -343</td><td class="lead">$366</td><td>$5.85</td><td>1</td><td>1,663</td><td>84%</td><td>$2</td></tr>
+              <tr><td>#389</td><td>+11,298 / -813</td><td class="lead">$203</td><td>$1.68</td><td>1</td><td>638</td><td>6%</td><td>$17</td></tr>
+              <tr><td>#478</td><td>+101 / -1</td><td class="lead">$16</td><td>$16.07</td><td>2</td><td>32</td><td>0%</td><td class="hot">$2,483</td></tr>
+              <tr><td>#339</td><td>943</td><td class="lead">$0.41</td><td>$0.04</td><td>1</td><td>3</td><td>0%</td><td>none</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="table-note">Six of 86 merged pull requests from one repository. Median PR $16.20. Across all of them, 46% of what those branches cost was spent after the merge and belongs to no PR. The $0.41 row is more likely under-attributed than cheap: Codex sessions carry no branch yet.</p>
+    </div>
+    <figure class="shot" data-reveal>
+      <img src="docs/media/receipts-aurora-dark.png" alt="The Receipts view of the TokenFlow dashboard: spend per repository and branch with context share, sessions, turns, subagent share and rank against the repository median" loading="lazy" width="2880" height="2600">
+      <figcaption>The Receipts view on synthetic demo data. Click a branch for its receipt and copy it as a pull-request comment.</figcaption>
+    </figure>
   </div>
-  <div class="grid grid-4">
-    <div class="card usp reveal"><p class="metric">45×</p>
-      <h3>Streaming done right</h3><p>Streaming logs re-report growing usage. Summing them read one real day as 82.8B tokens instead of 1.8B. TokenFlow collapses each monotonic run to its maximum, verified against an independent gateway billing log.</p></div>
-    <div class="card usp reveal"><p class="metric">4 ≠ ∞</p>
-      <h3>Tokens that add up</h3><p>Fresh input, cache read, cache write and output are mutually exclusive buckets summing to the total. Cache refresh and reasoning are subsets, never added twice. Vendors disagree about input; both conventions are handled.</p></div>
-    <div class="card usp reveal"><p class="metric">null ≠ 0</p>
-      <h3>Missing is not zero</h3><p>A source that does not report a field stores null, not zero. Sums skip nulls and carry a not-available counter, so averages are never dragged down by data that does not exist.</p></div>
-    <div class="card usp reveal"><p class="metric">0 deps</p>
-      <h3>Auditable by design</h3><p>No runtime dependencies, no network client anywhere in the codebase, server bound to loopback only. One grep proves it. Your raw logs never leave the machine.</p></div>
-  </div>
-  <div class="chart-strip card reveal" id="chart-strip"><!-- comparison SVG injected --></div>
-</div></section>
+</section>
 
-<section id="map"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Global activity</p>
-    <h2>The shape of your AI activity.</h2>
-    <p class="subhead">Local logs contain no request IPs, so TokenFlow never invents geography.
-    The map places each provider you actually used on its vendor-published datacenter regions —
-    and shows your own location only if you explicitly opt in with
-    <code>map.showMyLocation</code>. Nothing is captured per request; nothing is published.</p>
-  </div>
-  <div class="card reveal" id="worldmap" style="padding:8px;"></div>
-</div></section>
+<section id="guard" aria-labelledby="guard-h">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <span class="eyebrow">Guard</span>
+      <h2 id="guard-h">A brake that works while the session is still running.</h2>
+      <p class="lede">A Claude Code hook reads the live transcript, prices it with the same table, and warns or blocks against caps you declared. Nothing is invented: with no caps set it only informs.</p>
+    </div>
+    <div class="guard-grid">
+      <div data-reveal>
+<pre><code><span class="c"># declare what you want guarded</span>
+tokenflow guard --set warnCostUsd=25,maxCostUsd=200
+tokenflow guard --set warnContextTokens=200000
 
-<section id="tagline" class="tagline-sec"><div class="wrap">
-  <p class="tagline">Your AI usage tells a story. TokenFlow reads it honestly.</p>
-</div></section>
+<span class="c"># then, mid-session, the hook says:</span>
+<span class="k">TokenFlow guard:</span> session spend $61.48 passed the
+warning level of $25.00; the prompt now carries
+492K tokens (warning level 200K).
+<span class="s">Most of each turn now pays to re-send earlier
+context. Compact, or start a fresh session with a
+short brief, and the per-turn cost drops.</span></code></pre>
+        <p class="table-note">Runs once per prompt and before each subagent is spawned, the two moments a session's cost curve bends. A cap that is reached blocks the next tool call with the reason on screen.</p>
+      </div>
+      <div data-reveal>
+        <div class="caps">
+          <div class="cap-row"><span class="lbl">$50</span><span class="who">82 sessions over the cap</span><span class="amt">$18.8K<small>70% of spend above it</small></span></div>
+          <div class="cap-row"><span class="lbl">$100</span><span class="who">52 sessions</span><span class="amt">$15.6K<small>58%</small></span></div>
+          <div class="cap-row"><span class="lbl">$200</span><span class="who">32 sessions</span><span class="amt">$11.4K<small>43%</small></span></div>
+          <div class="cap-row"><span class="lbl">$500</span><span class="who">12 sessions</span><span class="amt">$5.7K<small>21%</small></span></div>
+        </div>
+        <p class="table-note">Dollars above each per-session cap in the author's nine weeks. An upper bound on what a guard could have held back, not a saving: some of that work would have happened anyway in a fresh session.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-<section id="how"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">How it works</p>
-    <h2>Three commands, no configuration.</h2>
+<section id="how" aria-labelledby="how-h">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <h2 id="how-h">Three commands. No account, no key, no upload.</h2>
+    </div>
+    <div class="steps" data-reveal-group>
+      <div class="step" data-reveal>
+        <h3>Detect</h3>
+        <p>Each adapter looks in the conventional place for its own logs: Claude Code, Codex, OpenCode, Hermes, Cline, Cursor, gateways, git. Nothing scans your disk.</p>
+        <div class="cmd"><code>tokenflow setup</code><button class="copy" data-copy="npx @vimoxshah/tokenflow@latest setup" type="button">Copy</button></div>
+      </div>
+      <div class="step" data-reveal>
+        <h3>Ingest</h3>
+        <p>Every file resumes at its byte offset. Streaming re-reports collapse to their maximum, cache buckets stay exclusive, and a missing field stays missing instead of becoming zero.</p>
+        <div class="cmd"><code>tokenflow refresh</code><button class="copy" data-copy="tokenflow refresh" type="button">Copy</button></div>
+      </div>
+      <div class="step" data-reveal>
+        <h3>Read</h3>
+        <p>A dashboard at loopback, a native menu bar app, receipts per branch, a guard for the session you are in, and one self-contained HTML file that opens anywhere, offline.</p>
+        <div class="cmd"><code>tokenflow up</code><button class="copy" data-copy="tokenflow up" type="button">Copy</button></div>
+      </div>
+    </div>
   </div>
-  <div class="steps reveal">
-    <div class="step"><span class="step-num">1</span><div>
-      <h3>Detect what you already have</h3>
-      <p><code>npm run setup</code> asks each adapter to find its own logs in conventional
-      locations. Nothing is discovered by scanning your disk.</p></div></div>
-    <div class="step"><span class="step-num">2</span><div>
-      <h3>Ingest incrementally</h3>
-      <p><code>tokenflow refresh</code> resumes each file at a byte offset. Unchanged files are
-      skipped entirely, so the second run takes seconds.</p></div></div>
-    <div class="step"><span class="step-num">3</span><div>
-      <h3>Open the dashboard</h3>
-      <p><code>npm start</code> serves everything at loopback:7799, or exports one self-contained
-      HTML file that opens anywhere, offline forever.</p></div></div>
-  </div>
-</div></section>
+</section>
 
-<section id="install"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Install</p>
-    <h2>Up and running in under a minute.</h2>
+<section id="privacy" aria-labelledby="privacy-h">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <h2 id="privacy-h">Privacy by construction, not by policy.</h2>
+      <p class="lede">The receipts need your transcripts and your repository on the same disk. That is exactly why nothing leaves it.</p>
+    </div>
+    <ul class="facts" data-reveal-group>
+      <li data-reveal><b>No HTTP client anywhere in the codebase.</b> One grep proves it. The server binds to 127.0.0.1 only.</li>
+      <li data-reveal><b>Adapters read counts and discard content.</b> The schema has nowhere to put a prompt, a diff or a file.</li>
+      <li data-reveal><b>Zero runtime dependencies.</b> A tool that reads your session logs is the wrong place for four hundred transitive packages.</li>
+      <li data-reveal><b>Multi-machine sync is a folder you already own.</b> iCloud, Dropbox, Syncthing, a git repo. Daily totals only, off by default.</li>
+      <li data-reveal><b>Team names are opt-in per person.</b> A developer appears by name only if they set it themselves.</li>
+      <li data-reveal><b>Even this page loads no third-party fonts.</b> The faces are served from the same place as the page.</li>
+    </ul>
   </div>
-  <div class="steps reveal" style="grid-template-columns:1fr;">
-    <div class="step"><span class="step-num">⌘</span><div>
-      <h3>macOS menu-bar app (Homebrew)</h3>
-      <p><code>brew tap vimoxshah/tap https://github.com/vimoxshah/tokenflow</code><br>
-      <code>brew install --cask tokenflow</code></p></div></div>
-    <div class="step"><span class="step-num">›_</span><div>
-      <h3>CLI + dashboard, any platform (npm)</h3>
-      <p><code>npx @vimoxshah/tokenflow@latest setup</code></p></div></div>
-    <div class="step"><span class="step-num">↓</span><div>
-      <h3>Or grab the DMG</h3>
-      <p>Download from the
-      <a href="https://github.com/vimoxshah/tokenflow/releases/latest">latest release</a>.</p></div></div>
-  </div>
-</div></section>
+</section>
 
-<section id="intelligence"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Intelligence</p>
-    <h2>It doesn't just count. It tells you things.</h2>
-  </div>
-  <div class="cards reveal">
-    <div class="card"><h3>Weekly digest</h3>
-      <p>Your AI week — requests, tokens, cost, peak day, week-over-week spikes — generated on a
-      launchd schedule and delivered to your Telegram, inbox, or webhook. Opt-in per channel;
-      always archived locally.</p></div>
-    <div class="card"><h3>Budget alerts</h3>
-      <p>Set a monthly cap once. TokenFlow projects month-end spend from your real velocity and
-      warns you <em>before</em> you cross it — approaching, projected-over, and actual-over states,
-      each alerting exactly once.</p></div>
-    <div class="card"><h3>Model comparison</h3>
-      <p>Which model actually costs you what? Cost per request, tokens per request, cache-hit
-      rate — computed from your own transcripts, never vendor marketing.</p></div>
-    <div class="card"><h3>Prompt analytics</h3>
-      <p>Strictly opt-in. Prompts become one-way hashes grouped into categories — code review,
-      debugging, docs — so you see where the money goes without ever storing what you typed.</p></div>
-    <div class="card"><h3>Multi-machine sync</h3>
-      <p>Laptop plus desktop? Sync daily totals through any folder you already share
-      (iCloud, Dropbox, Syncthing). Daily numbers only — never prompts or code. Off by default.</p></div>
-    <div class="card"><h3>Team view</h3>
-      <p>Per-developer usage from the same shared folder — but a name shows up only if that
-      developer chose to publish it (<code>sync.developerName</code>). Anonymous machines stay in
-      team totals, out of per-person rows. Opt-in per person, by design.</p></div>
-    <div class="card"><h3>Diagnostics</h3>
-      <p><code>tokenflow diagnostics</code> shows version, providers, data freshness, and every
-      feature state locally. Nothing is transmitted; sharing an export is always your call.</p></div>
-  </div>
-</div></section>
+<section id="install" aria-labelledby="install-h">
+  <div class="wrap">
+    <div class="section-head" data-reveal>
+      <h2 id="install-h">Install in one line.</h2>
+      <p class="lede">macOS gets the menu bar app. Everything else gets the CLI and the dashboard. Both are the same engine.</p>
+    </div>
+    <div class="install" data-reveal>
+      <div class="install-row"><span class="lbl">macOS, Homebrew</span><div class="cmd"><code>brew tap vimoxshah/tap https://github.com/vimoxshah/tokenflow</code><button class="copy" data-copy="brew tap vimoxshah/tap https://github.com/vimoxshah/tokenflow" type="button">Copy</button></div></div>
+      <div class="install-row"><span class="lbl"></span><div class="cmd"><code>brew install --cask tokenflow</code><button class="copy" data-copy="brew install --cask tokenflow" type="button">Copy</button></div></div>
+      <div class="install-row"><span class="lbl">Any platform, npm</span><div class="cmd"><code>npx @vimoxshah/tokenflow@latest setup</code><button class="copy" data-copy="npx @vimoxshah/tokenflow@latest setup" type="button">Copy</button></div></div>
+      <div class="install-row"><span class="lbl">macOS, direct</span><div class="cmd"><code>TokenFlow.dmg from the <a href="https://github.com/vimoxshah/tokenflow/releases/latest" target="_blank" rel="noopener noreferrer">latest release</a></code></div></div>
+    </div>
+    <p class="table-note" style="margin-top:20px">Needs Node 22.5 or later. The app is unsigned, so macOS asks once: right-click, Open, Open.</p>
 
-<section id="sources"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Sources</p>
-    <h2>It speaks to what you already use.</h2>
+    <h2 style="margin-top:72px" data-reveal>Everything else it already does.</h2>
+    <dl class="more" data-reveal-group style="margin-top:24px">
+      <div data-reveal><dt>Twenty dashboard views</dt><dd>Overview with the three insights that matter, receipts, session anatomy, live, providers, models, interfaces, time patterns, peaks, efficiency, cache health, cost with coverage, what-if, productivity, rhythm, compare, compare branches, explorer, annotations, data health.</dd></div>
+      <div data-reveal><dt>A native menu bar app</dt><dd>Spend today, capacity meters with reset countdowns, forecasts with stated confidence, anomaly alerts, per-provider and per-model rows. Swift, not Electron.</dd></div>
+      <div data-reveal><dt>Honest cost</dt><dd>A versioned price table with a source for every rate. Service tiers applied as multipliers. Unpriced models show as unknown, never as $0.</dd></div>
+      <div data-reveal><dt>Three skins, both modes</dt><dd>Aurora, Terminal and Editorial in dark and light. Series colours belong to the mode, so switching skin never changes what a colour means.</dd></div>
+      <div data-reveal><dt>Digests and budgets</dt><dd>A weekly digest to your own Telegram, inbox or webhook. A monthly budget with projected-overrun alerts that fire once.</dd></div>
+      <div data-reveal><dt>One-file export</dt><dd>The whole dashboard, receipts included, in a single HTML file that opens from disk with no server.</dd></div>
+    </dl>
   </div>
-  <div class="tablewrap card reveal" style="padding:8px 16px;">
-  <table>
-    <tr><td>Claude Code / Agent SDK</td><td class="src">~/.claude*/projects/**</td>
-        <td class="gives">full per-request tokens including long TTL cache writes</td></tr>
-    <tr><td>Codex CLI / IDE / Desktop</td><td class="src">~/.codex/sessions/**</td>
-        <td class="gives">per-turn tokens, OpenAI inclusive input handled correctly</td></tr>
-    <tr><td>OpenCode</td><td class="src">opencode.db</td>
-        <td class="gives">per-request tokens plus gateway routing</td></tr>
-    <tr><td>Hermes</td><td class="src">~/.hermes/state.db</td>
-        <td class="gives">per session per model tokens and measured cost</td></tr>
-    <tr><td>Cline</td><td class="src">sessions dir</td>
-        <td class="gives">activity only; missing token counts stay missing, never zero</td></tr>
-    <tr><td>Cursor</td><td class="src">ai-code-tracking.db</td>
-        <td class="gives">AI authored edits with per commit attribution</td></tr>
-    <tr><td>Gateways</td><td class="src">e.g. Headroom JSONL</td>
-        <td class="gives">measured cost as overlay records, excluded from token totals</td></tr>
-    <tr><td>Anything else</td><td class="src">CSV · JSONL · SQLite</td>
-        <td class="gives">a saved field mapping, no adapter needed</td></tr>
-  </table>
+</section>
+
+<section aria-labelledby="faq-h">
+  <div class="wrap">
+    <div class="section-head" data-reveal><h2 id="faq-h">Fair questions.</h2></div>
+    <div class="faq" data-reveal>
+      <details><summary>Is my data sent anywhere?</summary><p>No. There is no HTTP client in the codebase. Adapters read token counts and metadata and discard prompt text, source code and file contents. Everything lives in ~/.tokenflow, which you can back up or delete.</p></details>
+      <details><summary>How is a receipt bounded?</summary><p>By branch and by merge. A pull request owns the turns on its branch up to the merge, including work done before it was opened. Turns after the merge are reported beside it. Sessions on a detached HEAD are reported as unattributed, never guessed.</p></details>
+      <details><summary>Can I trust the cost estimates?</summary><p>Every built-in rate records its source URL and fetch date. Service tiers are applied as multipliers per request. Models without a published rate show blank with a reason, and every total states how many turns it priced.</p></details>
+      <details><summary>Does the guard need anything installed on a server?</summary><p>No. It is a Claude Code hook that runs on your machine, reads the live transcript incrementally, and prints its verdict. With no thresholds declared it never blocks.</p></details>
+      <details><summary>Why does macOS warn on first launch?</summary><p>The app is unsigned because there is no Apple Developer account behind this free project. Right-click the app, choose Open, then Open again. The gate appears once.</p></details>
+    </div>
   </div>
-</div></section>
+</section>
 
-<section id="faq"><div class="wrap">
-  <div class="section-head reveal">
-    <p class="kicker">Questions</p>
-    <h2>Fair questions, straight answers.</h2>
+<section class="final" aria-labelledby="final-h">
+  <div class="wrap" data-reveal>
+    <h2 id="final-h">Point it at your logs. Know what a pull request costs.</h2>
+    <p class="lede" style="margin-top:16px">Free and open source under MIT. Your tokens never leave your machine.</p>
+    <div class="cta">
+      <a class="btn primary" href="demo/#tab=receipts">Open the live demo</a>
+      <a class="btn" href="#install">Install in one line</a>
+    </div>
   </div>
-  <details class="faq-item reveal"><summary>Is my data sent anywhere?</summary>
-    <p>No. There is no HTTP client in the codebase at all. Adapters read token counts and
-    metadata and discard prompt text, source code and file contents. Everything lives in
-    ~/.tokenflow which you can back up or delete.</p></details>
-  <details class="faq-item reveal"><summary>Why does macOS warn on first launch?</summary>
-    <p>The app is unsigned because there is no Apple Developer account behind this free project.
-    Right click the app, choose Open, then Open again. That gate appears once only.</p></details>
-  <details class="faq-item reveal"><summary>Does the menu bar app need the terminal?</summary>
-    <p>No. The DMG build embeds everything it needs and can drive refresh, watcher and dashboard
-    itself. The CLI path exists for people who prefer it and for Linux and Windows.</p></details>
-  <details class="faq-item reveal"><summary>What about tools that report no tokens?</summary>
-    <p>Sources like Cline get activity metrics only. Missing token fields stay null rather than
-    zero, so averages are never dragged toward zero by data that does not exist.</p></details>
-  <details class="faq-item reveal"><summary>Can I trust the cost estimates?</summary>
-    <p>Every built-in rate records its source URL and fetch date. Service tiers are applied as
-    multipliers per request. Models without a published rate show blank with a reason.</p></details>
-</div></section>
+</section>
 
-<section class="final"><div class="wrap reveal">
-  <h2>Point it at your logs. Know your numbers.</h2>
-  <p>Free and open source under MIT. Your tokens never leave your machine.</p>
-  <div class="cta">
-    <a class="btn btn-primary" href="https://github.com/vimoxshah/tokenflow/releases/latest" target="_blank" rel="noopener noreferrer">Download for macOS</a>
-    <a class="btn btn-ghost" href="/tokenflow/demo/" target="_blank" rel="noopener noreferrer">Try the live demo</a>
-    <a class="btn btn-ghost" href="https://github.com/vimoxshah/tokenflow#readme" target="_blank" rel="noopener noreferrer">Read the docs</a>
+<footer>
+  <div class="wrap">
+    <span>TokenFlow is released under the <a href="https://github.com/vimoxshah/tokenflow/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>. Copyright 2026 Vimox Shah and contributors.</span>
+    <span><a href="https://github.com/vimoxshah/tokenflow" target="_blank" rel="noopener noreferrer">GitHub</a> · <a href="https://github.com/vimoxshah/tokenflow/blob/main/docs/getting-started.md" target="_blank" rel="noopener noreferrer">Docs</a></span>
   </div>
-</div></section>
+</footer>
 
-<footer><div class="wrap" style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-  <span>TokenFlow — released under the <a href="https://github.com/vimoxshah/tokenflow/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>. Copyright © 2026 Vimox Shah and Tokenflow contributors.</span>
-  <span><a href="https://github.com/vimoxshah/tokenflow" target="_blank" rel="noopener noreferrer">GitHub</a> ·
-        <a href="https://github.com/vimoxshah/tokenflow/releases" target="_blank" rel="noopener noreferrer">Releases</a> ·
-        <a href="https://github.com/vimoxshah/tokenflow/blob/main/docs/getting-started.md" target="_blank" rel="noopener noreferrer">Docs</a></span>
-</div></footer>
-
-<script src="charts.js"></script>
-<script src="worldmap.js"></script>
-<script src="three-bg.js"></script>
-<script src="main.js"></script>
+<script src="main.js" defer></script>
 </body>
 </html>
