@@ -21,6 +21,8 @@ import * as charts from './charts.js';
 import { VIEWS } from './views/index.js';
 import { mountPalette } from './palette.js';
 import { maybeShowFirstRun } from './first-run.js';
+import { icon, ICON_NAMES } from './components/icons.js';
+import { attachTooltip } from './components/tooltip.js';
 
 const SNAPSHOT = typeof window !== 'undefined' && !!window.__TOKENFLOW_BUNDLE__;
 
@@ -98,6 +100,43 @@ const TAB_GROUPS = [
   ['Time', ['time', 'peaks', 'whatif']],
   ['Data', ['explorer', 'annotations', 'health']],
 ];
+
+/**
+ * Tab id -> icon name in ./components/icons.js, verified one-for-one against
+ * every built-in tab and every id named in TAB_GROUPS: overview, receipts,
+ * tickets, cost, branches, compare, anatomy, live, productivity, rhythm,
+ * providers, models, interfaces, efficiency, cache, time, peaks, whatif,
+ * explorer, annotations and health each have a same-named glyph.
+ *
+ * Kept as an explicit table rather than using a tab id directly as an icon
+ * name: the icon set and the tab list are maintained by different people, and
+ * a rename on either side must fail here in one obvious place, not as a
+ * blank icon discovered weeks later.
+ * @type {Record<string,string>}
+ */
+const TAB_ICONS = {
+  overview: 'overview', receipts: 'receipts', tickets: 'tickets', cost: 'cost',
+  branches: 'branches', compare: 'compare', anatomy: 'anatomy', live: 'live',
+  productivity: 'productivity', rhythm: 'rhythm', providers: 'providers',
+  models: 'models', interfaces: 'interfaces', efficiency: 'efficiency',
+  cache: 'cache', time: 'time', peaks: 'peaks', whatif: 'whatif',
+  explorer: 'explorer', annotations: 'annotations', health: 'health',
+};
+/** Drawn for a tab id TAB_ICONS does not name, or names an icon that no longer
+ * exists: a view a plugin registers at runtime must never render blank. */
+const TAB_ICON_FALLBACK = 'more-horizontal';
+
+/**
+ * The icon name to draw for a tab id, guarding both ends: an id missing from
+ * TAB_ICONS, and a mapped name the icon set no longer carries.
+ * @param {string} id
+ * @returns {string} one of ICON_NAMES
+ */
+function tabIcon(id) {
+  const name = TAB_ICONS[id];
+  return name && ICON_NAMES.includes(name) ? name : TAB_ICON_FALLBACK;
+}
+
 // Declared here, above boot(): the snapshot boots synchronously at module end,
 // and a binding below that call would still be in its temporal dead zone.
 const SIDEBAR_DEFAULT_W = 248;
@@ -106,6 +145,29 @@ const SIDEBAR_MAX_W = 420;
 const SIDEBAR_RAIL_W = 56;
 /** Sidebar chrome state. `w` and `collapsed` persist with the other prefs; `drawerOpen` is per load. */
 const sideState = { w: SIDEBAR_DEFAULT_W, collapsed: false, drawerOpen: false };
+/**
+ * Which `collapsed` value #side-toggle's icon and the nav items' tooltips
+ * were last built for, so applySidebarState (called on every pointermove
+ * while dragging the resizer) only rebuilds them on the one call where
+ * collapsed actually flipped, not dozens of times a drag.
+ * @type {boolean|null}
+ */
+let sideCollapsedRendered = null;
+/** detach() for #side-toggle's current tooltip, so a rebuild removes the old one first. */
+let toggleTooltipDetach = null;
+/**
+ * detach() functions for every tooltip syncNavTooltips() attached to a nav
+ * item. renderSidebar rebuilds #tabs from scratch on every tab switch, and
+ * attachTooltip adds a capture-phase `window` scroll listener per call that
+ * only its own detach() removes. Without this, switching tabs a thousand
+ * times would leave a thousand dead listeners closed over discarded nodes.
+ * Declared here, above boot() at the bottom of this file, for the same
+ * temporal-dead-zone reason SIDEBAR_DEFAULT_W and `palette` are: boot() calls
+ * initSidebar() -> applySidebarState() -> syncNavTooltips() synchronously,
+ * before the rest of the module's top-level bindings would otherwise run.
+ * @type {(() => void)[]}
+ */
+let sideTooltipDetachers = [];
 
 /**
  * Registered views that are safe to mount: a unique id that does not collide
@@ -198,7 +260,7 @@ function injectViewStyles() {
  * file and fail to load from file://. Injecting by script, the same way
  * injectViewStyles() does, avoids that entirely.
  */
-const OWN_STYLES = ['./styles/palette.css', './styles/first-run.css'];
+const OWN_STYLES = ['./styles/palette.css', './styles/first-run.css', './styles/sidebar.css', './styles/components.css'];
 let ownStylesInjected = false;
 function injectOwnStyles() {
   if (SNAPSHOT || ownStylesInjected) return;
@@ -550,34 +612,6 @@ function goToTab(id) {
 }
 
 /**
- * Two letters per tab for the collapsed rail: initials of the first two words,
- * else the first two letters. When two labels would share a monogram, the
- * later one takes its first letter plus the next unused consonant, so
- * Providers and Productivity never both read "PR".
- * @param {{id:string,label:string}[]} tabs
- * @returns {Map<string,string>} tab id to monogram
- */
-function tabMonograms(tabs) {
-  const used = new Set();
-  const out = new Map();
-  for (const t of tabs) {
-    const label = String(t.label);
-    const words = label.split(/\s+/).filter(Boolean);
-    let m = (words.length >= 2 ? words[0][0] + words[1][0] : label.slice(0, 2)).toUpperCase();
-    if (used.has(m)) {
-      const rest = label.slice(1).replace(/[^a-z]/gi, '');
-      for (const ch of rest) {
-        const cand = (label[0] + ch).toUpperCase();
-        if (!used.has(cand) && !/[AEIOU]/.test(ch.toUpperCase())) { m = cand; break; }
-      }
-    }
-    used.add(m);
-    out.set(t.id, m);
-  }
-  return out;
-}
-
-/**
  * The sidebar navigation: every tab, grouped by TAB_GROUPS, with anything the
  * groups do not name under "More views" so a newly registered view always has
  * a place. Also sets the page title in the header to the active view's label.
@@ -585,10 +619,13 @@ function tabMonograms(tabs) {
 function renderSidebar() {
   const nav = document.getElementById('tabs');
   if (!nav) return;
+  // The old anchors are about to be discarded; syncNavTooltips() at the end
+  // of this function detaches their tooltips (and everything else's stale
+  // state) before attaching fresh ones, so there is exactly one place that
+  // clears sideTooltipDetachers, not two copies of the same loop.
   nav.textContent = '';
   const tabs = allTabs();
   const byId = new Map(tabs.map((t) => [t.id, t]));
-  const monograms = tabMonograms(tabs);
   const placed = new Set();
   const group = (/** @type {string} */ title, /** @type {{id:string,label:string}[]} */ items) => {
     if (!items.length) return;
@@ -596,10 +633,10 @@ function renderSidebar() {
     for (const t of items) {
       const active = S.tab === t.id;
       const a = el('a', {
-        class: 'side-item', href: `#tab=${t.id}`, title: t.label, 'data-tab': t.id,
+        class: 'side-item', href: `#tab=${t.id}`, 'aria-label': t.label, 'data-tab': t.id,
         'aria-current': active ? 'page' : null,
       }, [
-        el('span', { class: 'side-mono', 'aria-hidden': 'true', text: monograms.get(t.id) || '' }),
+        icon(tabIcon(t.id), { size: 16 }),
         el('span', { class: 'side-label', text: t.label }),
       ]);
       a.addEventListener('click', (ev) => {
@@ -619,6 +656,32 @@ function renderSidebar() {
   if (title) title.textContent = byId.get(S.tab)?.label || 'Tokenflow';
   const foot = document.getElementById('side-foot');
   if (foot) foot.textContent = S.bundle?.meta?.appVersion ? `v${S.bundle.meta.appVersion} · local-first` : '';
+  syncNavTooltips();
+}
+
+/**
+ * A nav item's own visible label already says its name in the expanded
+ * sidebar, so a hover tooltip repeating it there is noise, not help. The
+ * screenshot that caught this showed "Receipts" floating over "Tickets" a
+ * row down. The rail is the opposite: .side-label is display:none, and the
+ * icon is all there is, which is exactly where the task asked for a tooltip.
+ * So tooltips exist on nav items only while collapsed, added and removed from
+ * the same persistent anchor nodes as sideState.collapsed flips, rather than
+ * attached unconditionally forever.
+ *
+ * This is the one place sideTooltipDetachers gets cleared, so it is called
+ * after every renderSidebar() (the nav was just rebuilt from scratch, and the
+ * old anchors' tooltips need detaching too) and, from applySidebarState(),
+ * only on the one call where collapsed actually changed.
+ */
+function syncNavTooltips() {
+  for (const detach of sideTooltipDetachers) detach();
+  sideTooltipDetachers = [];
+  if (!sideState.collapsed) return;
+  document.querySelectorAll('#tabs .side-item').forEach((/** @type {HTMLElement} */ a) => {
+    const label = a.getAttribute('aria-label');
+    if (label) sideTooltipDetachers.push(attachTooltip(a, label));
+  });
 }
 
 function clampSidebarWidth(/** @type {number} */ w) {
@@ -637,8 +700,14 @@ function applySidebarState() {
     const label = sideState.collapsed ? 'Expand sidebar' : 'Collapse sidebar';
     toggle.setAttribute('aria-expanded', String(!sideState.collapsed));
     toggle.setAttribute('aria-label', label);
-    toggle.title = label;
-    toggle.textContent = sideState.collapsed ? '›' : '‹';
+    if (sideCollapsedRendered !== sideState.collapsed) {
+      sideCollapsedRendered = sideState.collapsed;
+      toggle.textContent = '';
+      toggle.appendChild(icon(sideState.collapsed ? 'chevron-right' : 'chevron-left', { size: 16 }));
+      if (toggleTooltipDetach) toggleTooltipDetach();
+      toggleTooltipDetach = attachTooltip(toggle, label);
+      syncNavTooltips();
+    }
   }
   const rz = document.getElementById('side-resizer');
   if (rz) rz.setAttribute('aria-valuenow', String(sideState.w));
@@ -672,8 +741,21 @@ function initSidebar(prefs) {
   applySidebarState();
   const toggle = document.getElementById('side-toggle');
   if (toggle) toggle.addEventListener('click', () => { sideState.collapsed = !sideState.collapsed; applySidebarState(); savePrefs(); });
+  // Both controls are icon-only in every state (the hamburger always, the
+  // search chip once its shortcut hint is hidden in the rail, see
+  // sidebar.css), and neither one's text ever changes, so one attachTooltip
+  // call at setup is enough: unlike the toggle, there is nothing to rebuild.
+  const search = document.getElementById('palette-chip');
+  if (search) {
+    search.prepend(icon('search', { size: 16 }));
+    attachTooltip(search, 'Search or jump to (⌘K)');
+  }
   const opener = document.getElementById('side-open');
-  if (opener) opener.addEventListener('click', () => setDrawer(true));
+  if (opener) {
+    opener.appendChild(icon('panel-left', { size: 16 }));
+    attachTooltip(opener, 'Open navigation');
+    opener.addEventListener('click', () => setDrawer(true));
+  }
   const scrim = document.getElementById('side-scrim');
   if (scrim) scrim.addEventListener('click', () => setDrawer(false));
   document.addEventListener('keydown', (ev) => {
