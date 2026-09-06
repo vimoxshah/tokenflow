@@ -27,6 +27,20 @@ import { mountFilterBar } from './filters.js';
 
 const SNAPSHOT = typeof window !== 'undefined' && !!window.__TOKENFLOW_BUNDLE__;
 
+/**
+ * The build this page was LOADED from, stamped into the HTML by the server.
+ *
+ * It is as old as the JavaScript running beside it, which is the point: a tab
+ * left open across an upgrade keeps this value while the API starts reporting
+ * the new one. Comparing the two is the only way the page can tell that its own
+ * code is stale, because every module was fetched once, at load, and `no-store`
+ * only helps a reload that never happened. A snapshot has no server to be out
+ * of step with, so the check does not apply there.
+ */
+const LOADED_BUILD = typeof document !== 'undefined'
+  ? (document.querySelector('meta[name="tokenflow-build"]')?.getAttribute('content') || null)
+  : null;
+
 const S = {
   bundle: null,
   view: null,
@@ -928,6 +942,42 @@ function renderBanners() {
     ]));
   }
   if (SNAPSHOT) box.appendChild(freshnessBar());
+  const stale = staleBuildBar();
+  if (stale) box.prepend(stale);
+}
+
+/**
+ * The bar shown when this page's code is older than the server's.
+ *
+ * Everything under /src is served `no-store`, so a reload always lands on the
+ * current build. A tab that is never reloaded is the gap: the menu bar app's
+ * Dashboard button focuses an existing tab rather than reloading it, so a page
+ * can keep running last week's modules against today's API for as long as the
+ * tab is open. The failure that produces is silent and confusing, because the
+ * page looks current and only some parts misbehave.
+ *
+ * Returns null when there is nothing to say: in a snapshot (no server to
+ * differ from), when the server did not stamp a build, and, deliberately, when
+ * either side reports the placeholder "dev" so that working from a checkout
+ * never nags.
+ *
+ * @returns {HTMLElement|null}
+ */
+function staleBuildBar() {
+  if (SNAPSHOT) return null;
+  const running = S.bundle?.meta?.appVersion || null;
+  if (!LOADED_BUILD || !running) return null;
+  if (LOADED_BUILD === 'dev' || running === 'dev') return null;
+  if (LOADED_BUILD === running) return null;
+
+  const bar = el('div', { class: 'banner warn' }, [
+    el('span', { class: 'badge', text: 'UPDATE' }),
+    el('span', { text: `This page is running TokenFlow ${LOADED_BUILD}, but ${running} is installed. Reload to pick up the new version.` }),
+  ]);
+  const reload = el('button', { class: 'btn sm', text: 'Reload' });
+  reload.addEventListener('click', () => window.location.reload());
+  bar.appendChild(reload);
+  return bar;
 }
 
 /**

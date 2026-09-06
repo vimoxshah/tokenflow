@@ -101,7 +101,7 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
       if (route) return await route.handler(req, res, url, routeContext(req, res));
 
       if (p === '/' || p === '/index.html') {
-        return sendFile(res, path.join(UI, 'index.html'));
+        return sendIndex(res, UI);
       }
       if (p.startsWith('/src/')) {
         const target = path.normalize(path.join(ROOT, p));
@@ -316,6 +316,47 @@ function json(res, obj, code = 200) {
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(s);
 }
+/**
+ * Serve the dashboard shell with the running build stamped into it.
+ *
+ * The modules under /src are served with `no-store`, so a RELOAD always gets
+ * current code. What no header can fix is a tab left open across an upgrade:
+ * its JavaScript stays in memory from the old build while the API answers with
+ * the new one, and the mismatch surfaces as parts of the page quietly not
+ * working. Stamping the build into the HTML gives the page something honest to
+ * compare against, since the meta tag is as old as the JavaScript beside it.
+ *
+ * A read failure falls back to the file as-is rather than 500ing: an
+ * un-stamped dashboard is worth more than no dashboard.
+ *
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} uiDir the directory holding index.html
+ */
+function sendIndex(res, uiDir) {
+  const file = path.join(uiDir, 'index.html');
+  fs.readFile(file, 'utf8', (err, html) => {
+    if (err) return send(res, 404, 'text/plain', 'not found');
+    const version = readAppVersion();
+    const stamped = html.replace(
+      /(<meta name="tokenflow-build" content=")[^"]*(">)/,
+      (_m, a, b) => a + version.replace(/"/g, '') + b,
+    );
+    send(res, 200, 'text/html; charset=utf-8', stamped);
+  });
+}
+
+/** The running package version, read once and remembered for the process's life. */
+let appVersionCache = null;
+function readAppVersion() {
+  if (appVersionCache) return appVersionCache;
+  try {
+    appVersionCache = JSON.parse(fs.readFileSync(path.join(rootDir(), 'package.json'), 'utf8')).version || 'dev';
+  } catch {
+    appVersionCache = 'dev';
+  }
+  return appVersionCache;
+}
+
 function sendFile(res, file) {
   fs.readFile(file, (err, buf) => {
     if (err) return send(res, 404, 'text/plain', 'not found');
