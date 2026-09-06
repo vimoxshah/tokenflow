@@ -118,7 +118,27 @@ export class ColorScale {
   static ALLPAIRS_LIMIT = 3;
 }
 
+let chartStylesLinked = false;
+/**
+ * Link this file's own stylesheet the first time a chart is built.
+ * app.js owns the static OWN_STYLES list that links palette.css and
+ * first-run.css, but charts.js is not on that list (app.js belongs to
+ * another stream), so it links its own sheet here instead, once, and
+ * never in a saved snapshot: html-snapshot.js's collectCss already inlines
+ * every file under src/ui/styles/ whether or not anything links it, so a
+ * live `<link>` there would just be a dead network request against a
+ * file:// URL.
+ */
+function ensureChartStyles() {
+  if (chartStylesLinked || typeof document === 'undefined') return;
+  chartStylesLinked = true;
+  if (typeof window !== 'undefined' && window.__TOKENFLOW_BUNDLE__) return;
+  if (document.querySelector('link[href$="styles/charts.css"]')) return;
+  document.head.appendChild(el('link', { rel: 'stylesheet', href: '/src/ui/styles/charts.css' }));
+}
+
 export function svg(tag, attrs = {}, kids = []) {
+  ensureChartStyles();
   const e = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined) continue;
@@ -129,6 +149,7 @@ export function svg(tag, attrs = {}, kids = []) {
 }
 
 export function el(tag, attrs = {}, kids = []) {
+  ensureChartStyles();
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined) continue;
@@ -247,6 +268,10 @@ export function niceTicks(min, max, count = 5) {
  * @param {string} [o.ariaLabel] accessible name for the <svg>
  * @param {boolean} [o.fillArea] shade the area under the line
  * @param {boolean} [o.endLabel] label the final value at the line's end
+ * @param {boolean} [o.directLabels] disable the automatic per-series name
+ *   label at the line's end (on by default for 2 to 4 non-stacked series)
+ * @param {string} [o.emptyText] message shown in place of the plot when
+ *   `data` has no buckets
  * @param {{id:string,date:string,text:string}[]} [o.annotations] overrides the
  *   module-level list set by `setAnnotations`; only a test needs this.
  */
@@ -258,6 +283,15 @@ export function timeSeries(o) {
   const data = o.data;
   const keys = o.keys.filter((k) => !k.hidden);
   const n = data.length;
+
+  // No buckets at all: skip the axis/scale maths entirely rather than let an
+  // empty hit layer's pointermove reach into data[0] (undefined) below.
+  if (n === 0) {
+    const root = svg('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': o.ariaLabel || 'time series' });
+    root.style.height = H + 'px';
+    root.appendChild(svg('text', { class: 'empty-state', x: W / 2, y: H / 2, 'text-anchor': 'middle' }, [txt(o.emptyText || 'No data for this range')]));
+    return root;
+  }
 
   const stacked = o.mode === 'stacked';
   let maxV = 0;
@@ -282,6 +316,16 @@ export function timeSeries(o) {
   const fmtY = o.fmtY || ((v) => String(v));
   const widestY = Math.max(0, ...ticks.map((t) => String(fmtY(t)).length)) * 6.6;
   M.l = Math.max(M.l, Math.ceil(widestY) + 18);
+  // Two to four non-stacked series get a direct label at the line's end, so
+  // identity never depends on tracing a colour back to the legend; past
+  // four it would be more clutter than signal, so the legend carries it
+  // alone. The right margin grows to fit the longest one (each truncated
+  // first, so one long metric name cannot swallow the plot).
+  const wantEndLabels = !stacked && keys.length >= 2 && keys.length <= 4 && o.directLabels !== false;
+  if (wantEndLabels) {
+    const widestLabel = Math.max(0, ...keys.map((k) => truncateLabel(k.label, 16).length)) * 6.2;
+    M.r = Math.max(M.r, Math.ceil(widestLabel) + 12);
+  }
   const iw = W - M.l - M.r;
 
   const root = svg('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': o.ariaLabel || 'time series' });
@@ -291,7 +335,7 @@ export function timeSeries(o) {
   const g = svg('g');
   for (const t of ticks) {
     g.appendChild(svg('line', { class: 'grid-line', x1: M.l, x2: W - M.r, y1: y(t), y2: y(t) }));
-    g.appendChild(svg('text', { class: 'tick', x: M.l - 8, y: y(t) + 3.5, 'text-anchor': 'end' }, [txt(o.fmtY(t))]));
+    g.appendChild(svg('text', { class: 'tick', x: M.l - 8, y: y(t) + 3.5, 'text-anchor': 'end' }, [txt(fmtY(t))]));
   }
   root.appendChild(g);
 
@@ -326,6 +370,9 @@ export function timeSeries(o) {
         class: 'series-line', d: linePath(upper, x, y),
         stroke: 'var(--surface-1)', 'stroke-width': 2,
       }));
+      // A path with a single "M" command (or a zero-width area) draws
+      // nothing, so a one-bucket range would otherwise be a blank plot.
+      if (n === 1) root.appendChild(svg('circle', { cx: x(0), cy: y(upper[0]), r: 5, fill: k.color }));
     }
   } else {
     for (const k of keys) {
@@ -337,6 +384,28 @@ export function timeSeries(o) {
         }));
       }
       root.appendChild(svg('path', { class: 'series-line', d: linePath(vals, x, y), stroke: k.color }));
+      if (n === 1) root.appendChild(svg('circle', { cx: x(0), cy: y(vals[0]), r: 5, fill: k.color }));
+    }
+    if (wantEndLabels && n) {
+      // Declutter: sort endpoints top-to-bottom and push any pair closer
+      // than minGap apart, so two close-valued series never print on top
+      // of each other.
+      const items = keys.map((k) => ({ color: k.color, label: truncateLabel(k.label, 16), y: y(data[n - 1][k.key] || 0) }));
+      items.sort((a, b) => a.y - b.y);
+      const minGap = 13;
+      for (let i = 1; i < items.length; i++) {
+        if (items[i].y - items[i - 1].y < minGap) items[i].y = items[i - 1].y + minGap;
+      }
+      const maxLabelY = M.t + ih - 2;
+      const overflow = items.length ? items[items.length - 1].y - maxLabelY : 0;
+      if (overflow > 0) for (const it of items) it.y -= overflow;
+      const lx = Math.min(x(n - 1) + 6, W - 2);
+      for (const it of items) {
+        root.appendChild(svg('text', {
+          class: 'tick series-end-label', x: lx, y: it.y + 3.5, 'text-anchor': 'start',
+          style: `fill: ${it.color}`,
+        }, [txt(it.label)]));
+      }
     }
   }
 
@@ -366,7 +435,7 @@ export function timeSeries(o) {
       root.appendChild(svg('text', {
         class: 'tick', x: lx, y: ly, 'text-anchor': 'end',
         style: 'fill: var(--text-secondary); font-size: 11px; font-weight: 600',
-      }, [txt(o.fmtY(lastVal))]));
+      }, [txt(fmtY(lastVal))]));
     }
   }
 
@@ -420,16 +489,17 @@ export function timeSeries(o) {
       const v = data[i][k.key];
       if (stacked) acc += Math.max(0, v || 0);
       const cy = stacked ? y(acc) : y(v || 0);
-      // surface ring keeps the dot legible where it crosses a line
-      dots.appendChild(svg('circle', { cx: x(i), cy, r: 4.5, fill: k.color, stroke: 'var(--surface-1)', 'stroke-width': 2 }));
-      rows.push({ color: k.color, name: k.label, value: v === null || v === undefined ? 'n/a' : o.fmtY(v) });
+      // surface ring keeps the dot legible where it crosses a line; 10px
+      // across so the hovered point reads as a deliberate marker, not a fleck
+      dots.appendChild(svg('circle', { cx: x(i), cy, r: 5, fill: k.color, stroke: 'var(--surface-1)', 'stroke-width': 2 }));
+      rows.push({ color: k.color, name: k.label, value: v === null || v === undefined ? 'n/a' : fmtY(v) });
     }
     for (const ov of o.overlays || []) {
       const v = ov.values[i];
       if (v === null || v === undefined) continue;
-      rows.push({ color: ov.color, name: ov.label, value: o.fmtY(v) });
+      rows.push({ color: ov.color, name: ov.label, value: fmtY(v) });
     }
-    if (stacked && keys.length > 1) rows.unshift({ color: null, name: 'Total', value: o.fmtY(tops[i]) });
+    if (stacked && keys.length > 1) rows.unshift({ color: null, name: 'Total', value: fmtY(tops[i]) });
     tooltip.show(tipBody(o.fmtXLong ? o.fmtXLong(data[i].key) : data[i].key, rows, o.tipNote), ev);
     if (brushing !== null) {
       const a = Math.min(x(brushing), x(i));
@@ -491,7 +561,42 @@ function txt(s) {
 
 // ---------------------------------------------------------------- bar chart --
 
-/** Vertical column chart with a 2px surface gap between adjacent bars. */
+/**
+ * A vertical bar's outline with only the top two corners rounded and the
+ * baseline flat. A rounded `<rect>` fakes this by drawing four round corners
+ * and covering the bottom two with a second flat rect, and that cover rect
+ * still shows as a rounded blob on a bar shorter than the corner radius.
+ * This draws the correct outline directly, at any height down to zero.
+ * @param {number} x left edge
+ * @param {number} y top edge
+ * @param {number} w bar width
+ * @param {number} h bar height
+ * @param {number} r corner radius, clamped to the bar's own half-width/height
+ * @returns {string} an SVG path `d` attribute, or '' for a zero-size bar
+ */
+export function roundedTopPath(x, y, w, h, r) {
+  if (h <= 0 || w <= 0) return '';
+  const rr = Math.max(0, Math.min(r, w / 2, h));
+  if (rr <= 0.01) return `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+  return `M${x} ${y + h}V${y + rr}Q${x} ${y} ${x + rr} ${y}H${x + w - rr}Q${x + w} ${y} ${x + w} ${y + rr}V${y + h}Z`;
+}
+
+/**
+ * Vertical column chart with a 2px surface gap between adjacent bars.
+ * @param {object} o
+ * @param {{label:string,value:number,color?:string,extra?:object[]}[]} o.data
+ * @param {(v:number)=>string} o.fmtY
+ * @param {(d:object)=>string} [o.fmtXLong] tooltip head; defaults to `d.label`
+ * @param {string} [o.valueLabel]
+ * @param {string} [o.tipNote]
+ * @param {(d:object, ev:Event)=>void} [o.onClick]
+ * @param {number} [o.height]
+ * @param {number} [o.width]
+ * @param {string} [o.ariaLabel]
+ * @param {string} [o.emptyText] message shown in place of the plot when
+ *   `data` is empty
+ * @returns {SVGSVGElement}
+ */
 export function columns(o) {
   const H = o.height || 220;
   const W = o.width || 1000;
@@ -500,6 +605,14 @@ export function columns(o) {
   const ih = H - M.t - M.b;
   const data = o.data;
   const n = data.length;
+
+  if (!n) {
+    const root = svg('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': o.ariaLabel || 'bar chart' });
+    root.style.height = H + 'px';
+    root.appendChild(svg('text', { class: 'empty-state', x: W / 2, y: H / 2, 'text-anchor': 'middle' }, [txt(o.emptyText || 'No data for this range')]));
+    return root;
+  }
+
   const max = Math.max(1, ...data.map((d) => d.value || 0));
   const { ticks, max: yMax } = niceTicks(0, max, 4);
   const band = iw / Math.max(1, n);
@@ -514,22 +627,27 @@ export function columns(o) {
   }
   data.forEach((d, i) => {
     const cx = M.l + band * i + band / 2;
-    const h = Math.max(0, ih - (y(d.value || 0) - M.t));
-    const bar = svg('rect', {
-      x: cx - bw / 2, y: y(d.value || 0), width: bw, height: Math.max(h, d.value ? 1.5 : 0),
-      fill: d.color || 'var(--series-1)', rx: Math.min(4, bw / 2), ry: 4,
+    const barY = y(d.value || 0);
+    const h = Math.max(0, ih - (barY - M.t), d.value ? 1.5 : 0);
+    const bar = svg('path', {
+      d: roundedTopPath(cx - bw / 2, y(0) - h, bw, h, 4),
+      fill: d.color || 'var(--series-1)',
     });
     root.appendChild(bar);
-    // square off the baseline end: the rounded rect's bottom corners are
-    // covered so the bar grows from a flat baseline
-    if (h > 5) root.appendChild(svg('rect', { x: cx - bw / 2, y: y(0) - 4, width: bw, height: 4, fill: d.color || 'var(--series-1)' }));
     const hitW = Math.max(24, band);
-    const hb = svg('rect', { class: 'hit', x: cx - hitW / 2, y: M.t, width: hitW, height: ih, 'pointer-events': 'all' });
-    hb.addEventListener('pointermove', (ev) => {
+    const hb = svg('rect', {
+      class: 'hit', x: cx - hitW / 2, y: M.t, width: hitW, height: ih, 'pointer-events': 'all',
+      tabindex: '0', role: 'img', 'aria-label': `${d.label}: ${o.fmtY(d.value)}`,
+    });
+    const showTip = (ev) => {
       bar.setAttribute('opacity', 0.78);
       tooltip.show(tipBody(o.fmtXLong ? o.fmtXLong(d) : d.label, [{ color: d.color || 'var(--series-1)', name: o.valueLabel || 'Tokens', value: o.fmtY(d.value) }, ...(d.extra || [])], o.tipNote), ev);
-    });
-    hb.addEventListener('pointerleave', () => { bar.removeAttribute('opacity'); tooltip.hide(); });
+    };
+    const hideTip = () => { bar.removeAttribute('opacity'); tooltip.hide(); };
+    hb.addEventListener('pointermove', showTip);
+    hb.addEventListener('pointerleave', hideTip);
+    hb.addEventListener('focus', () => { const r = hb.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.top }); });
+    hb.addEventListener('blur', hideTip);
     if (o.onClick) { hb.style.cursor = 'pointer'; hb.addEventListener('click', (ev) => o.onClick(d, ev)); }
     root.appendChild(hb);
     if (n <= 24 || i % Math.ceil(n / 12) === 0) {
@@ -545,10 +663,18 @@ export function columns(o) {
 /** DOM (not SVG) horizontal bars — cheaper, and text wraps/ellipsises properly. */
 export function hbars(rows, o = {}) {
   const box = el('div');
+  if (!rows.length) {
+    box.appendChild(el('div', { class: 'empty-state', text: o.emptyText || 'No data for this range' }));
+    return box;
+  }
   const max = Math.max(1, ...rows.map((r) => r.value || 0));
   for (const r of rows) {
     const w = ((r.value || 0) / max) * 100;
-    const row = el('div', { class: 'bar-row' + (o.onClick ? ' clickable' : '') }, [
+    const valueText = o.fmt ? o.fmt(r.value) : String(r.value);
+    const row = el('div', {
+      class: 'bar-row' + (o.onClick ? ' clickable' : ''),
+      tabindex: '0', role: 'img', 'aria-label': `${r.label}: ${valueText}`,
+    }, [
       el('span', { class: 'nm', text: r.label, title: r.title || r.label }),
       el('span', { class: 'track' }, [(() => {
         const f = el('span', { class: 'fill' });
@@ -556,11 +682,15 @@ export function hbars(rows, o = {}) {
         f.style.background = r.color || 'var(--series-1)';
         return f;
       })()]),
-      el('span', { class: 'vl', text: o.fmt ? o.fmt(r.value) : String(r.value) }),
+      el('span', { class: 'vl', text: valueText }),
     ]);
     if (o.onClick) row.addEventListener('click', (ev) => o.onClick(r, ev));
-    row.addEventListener('pointermove', (ev) => tooltip.show(tipBody(r.label, r.rows || [{ color: r.color, name: o.valueLabel || 'Tokens', value: o.fmt ? o.fmt(r.value) : r.value }]), ev));
-    row.addEventListener('pointerleave', () => tooltip.hide());
+    const showTip = (ev) => tooltip.show(tipBody(r.label, r.rows || [{ color: r.color, name: o.valueLabel || 'Tokens', value: valueText }]), ev);
+    const hideTip = () => tooltip.hide();
+    row.addEventListener('pointermove', showTip);
+    row.addEventListener('pointerleave', hideTip);
+    row.addEventListener('focus', () => { const rect = row.getBoundingClientRect(); showTip({ clientX: rect.right, clientY: rect.top }); });
+    row.addEventListener('blur', hideTip);
     box.appendChild(row);
   }
   return box;
@@ -580,6 +710,9 @@ export function donut(segments, o = {}) {
   root.style.flex = 'none';
   if (!total) {
     root.appendChild(svg('circle', { cx: R, cy: R, r: (R + r0) / 2, fill: 'none', stroke: 'var(--surface-3)', 'stroke-width': thick }));
+    root.appendChild(svg('text', {
+      x: R, y: R + 4, 'text-anchor': 'middle', class: 'empty-state',
+    }, [txt(o.emptyText || 'No data')]));
     return root;
   }
   // 2px surface gap between adjacent segments
@@ -589,18 +722,24 @@ export function donut(segments, o = {}) {
     const sweep = ((s.value || 0) / total) * 360;
     if (sweep <= 0) return;
     const a1 = a0 + sweep;
+    const share = ((s.value / total) * 100).toFixed(1);
     const p = svg('path', {
       d: ringSlice(R, R, r0, R, a0 + gapDeg / 2, Math.max(a0 + gapDeg / 2 + 0.01, a1 - gapDeg / 2)),
       fill: s.color || 'var(--series-1)',
+      tabindex: '0', role: 'img', 'aria-label': `${s.label}: ${o.fmt ? o.fmt(s.value) : s.value}, ${share}% share`,
     });
-    p.addEventListener('pointermove', (ev) => {
+    const showTip = (ev) => {
       p.setAttribute('opacity', 0.8);
       tooltip.show(tipBody(s.label, [
         { color: s.color, name: o.valueLabel || 'Tokens', value: o.fmt ? o.fmt(s.value) : s.value },
-        { color: null, name: 'Share', value: ((s.value / total) * 100).toFixed(1) + '%' },
+        { color: null, name: 'Share', value: share + '%' },
       ]), ev);
-    });
-    p.addEventListener('pointerleave', () => { p.removeAttribute('opacity'); tooltip.hide(); });
+    };
+    const hideTip = () => { p.removeAttribute('opacity'); tooltip.hide(); };
+    p.addEventListener('pointermove', showTip);
+    p.addEventListener('pointerleave', hideTip);
+    p.addEventListener('focus', () => { const r = p.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.top }); });
+    p.addEventListener('blur', hideTip);
     if (o.onClick) { p.style.cursor = 'pointer'; p.addEventListener('click', (ev) => o.onClick(s, ev)); }
     root.appendChild(p);
     a0 = a1;
@@ -641,16 +780,21 @@ export function compositionBar(segments, o = {}) {
   bar.style.cssText = 'display:flex;gap:2px;height:28px;border-radius:6px;overflow:hidden;background:var(--surface-3)';
   for (const s of segments) {
     if (!s.value) continue;
-    const seg = el('div');
+    const share = ((s.value / total) * 100).toFixed(1);
+    const seg = el('div', { tabindex: '0', role: 'img', 'aria-label': `${s.label}: ${o.fmt ? o.fmt(s.value) : s.value}, ${share}% share` });
     seg.style.cssText = `flex:${s.value} 1 0;background:${s.color};position:relative;cursor:${o.onClick ? 'pointer' : 'default'}`;
-    seg.addEventListener('pointermove', (ev) => {
+    const showTip = (ev) => {
       seg.style.filter = 'brightness(1.15)';
       tooltip.show(tipBody(s.label, [
         { color: s.color, name: o.valueLabel || 'Tokens', value: o.fmt ? o.fmt(s.value) : s.value },
-        { color: null, name: 'Share', value: ((s.value / total) * 100).toFixed(1) + '%' },
+        { color: null, name: 'Share', value: share + '%' },
       ]), ev);
-    });
-    seg.addEventListener('pointerleave', () => { seg.style.filter = ''; tooltip.hide(); });
+    };
+    const hideTip = () => { seg.style.filter = ''; tooltip.hide(); };
+    seg.addEventListener('pointermove', showTip);
+    seg.addEventListener('pointerleave', hideTip);
+    seg.addEventListener('focus', () => { const r = seg.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.top }); });
+    seg.addEventListener('blur', hideTip);
     if (o.onClick) seg.addEventListener('click', (ev) => o.onClick(s, ev));
     bar.appendChild(seg);
   }
@@ -676,7 +820,10 @@ export function calendarHeatmap(days, o = {}) {
   const byDate = new Map(days.map((d) => [d.date, d]));
   const first = days[0]?.date;
   const last = days[days.length - 1]?.date;
-  if (!first) return wrap;
+  if (!first) {
+    wrap.appendChild(el('div', { class: 'muted', text: o.emptyText || 'No activity recorded for this range' }));
+    return wrap;
+  }
 
   const start = shiftToMonday(first);
   const cols = [];
@@ -801,13 +948,22 @@ export function matrix(cells, o) {
       x: left + cell.col * cw + 1, y: top + cell.row * ch + 1,
       width: cw - 2, height: ch - 2, rx: 3,
       fill: idx < 0 ? 'var(--surface-3)' : SEQ[idx],
+      tabindex: '0', role: 'img', 'aria-label': `${cell.label}: ${o.fmt(v)}`,
     });
-    rect.addEventListener('pointermove', (ev) => {
+    const showTip = (ev) => {
       rect.setAttribute('stroke', 'var(--text-primary)');
       rect.setAttribute('stroke-width', '1.5');
       tooltip.show(tipBody(cell.label, [{ color: idx < 0 ? null : SEQ[idx], name: o.valueLabel || 'Tokens', value: o.fmt(v) }, ...(cell.extra || [])]), ev);
-    });
-    rect.addEventListener('pointerleave', () => { rect.removeAttribute('stroke'); tooltip.hide(); });
+    };
+    const hideTip = () => { rect.removeAttribute('stroke'); rect.removeAttribute('stroke-width'); tooltip.hide(); };
+    rect.addEventListener('pointermove', showTip);
+    rect.addEventListener('pointerleave', hideTip);
+    // Dense (up to ~170 cells): every cell is its own tab stop rather than a
+    // roving-tabindex grid, the same trade calendarHeatmap already makes at
+    // a larger scale. A future pass could add arrow-key roving if that ever
+    // proves too many stops in practice.
+    rect.addEventListener('focus', () => { const r = rect.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.top }); });
+    rect.addEventListener('blur', hideTip);
     if (o.onClick) { rect.style.cursor = 'pointer'; rect.addEventListener('click', (ev) => o.onClick(cell, ev)); }
     root.appendChild(rect);
   }
@@ -881,14 +1037,24 @@ export function scatter(points, o) {
     root.appendChild(c);
     // hit target of at least 24px, independent of the mark's own radius
     const hitR = Math.max(12, R(p.r));
-    const h = svg('circle', { cx: X(p.x), cy: Y(p.y), r: hitR, fill: 'transparent', 'pointer-events': 'all' });
-    h.addEventListener('pointermove', (ev) => {
+    const h = svg('circle', {
+      cx: X(p.x), cy: Y(p.y), r: hitR, fill: 'transparent', 'pointer-events': 'all',
+      tabindex: '0', role: 'img', 'aria-label': p.label || '',
+    });
+    const showTip = (ev) => {
       c.setAttribute('fill-opacity', 0.9);
       tooltip.show(tipBody(p.label, p.rows || []), ev);
-    });
-    h.addEventListener('pointerleave', () => { c.setAttribute('fill-opacity', 0.55); tooltip.hide(); });
+    };
+    const hideTip = () => { c.setAttribute('fill-opacity', 0.55); tooltip.hide(); };
+    h.addEventListener('pointermove', showTip);
+    h.addEventListener('pointerleave', hideTip);
+    h.addEventListener('focus', () => { const r = h.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.top }); });
+    h.addEventListener('blur', hideTip);
     if (o.onClick) { h.style.cursor = 'pointer'; h.addEventListener('click', (ev) => o.onClick(p, ev)); }
     root.appendChild(h);
+  }
+  if (!sorted.some((p) => p.x !== null && p.y !== null && isFinite(p.x) && isFinite(p.y))) {
+    root.appendChild(svg('text', { class: 'empty-state', x: M.l + iw / 2, y: M.t + ih / 2, 'text-anchor': 'middle' }, [txt(o.emptyText || 'No data for this range')]));
   }
   // label only the extremes, never every point. Labels are center-anchored,
   // so points near the left edge spill into the y-axis gutter and collide with
