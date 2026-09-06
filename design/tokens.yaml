@@ -1,0 +1,330 @@
+# TokenFlow design tokens — the single source every surface compiles from.
+#
+#   npm run design          compile → src/ui/styles.css (generated block),
+#                                     site/styles.css   (generated block),
+#                                     menubar/TokenFlow/DesignTokens.swift
+#   npm run design:check    compile in memory, diff against the files, run gates
+#
+# Roles, not values: --plane / --text-muted / --accent stay true when a skin
+# flips mode. Hex values are quoted because `#` starts a YAML comment.
+# Doctrine and the reasoning behind every rule: docs/design-system.md.
+
+version: 1
+name: tokenflow
+
+# ------------------------------------------------------------------ fonts ---
+# The dashboard and the menu bar stay on the platform's own faces: they ship
+# optical sizing and tracking tables, and the offline snapshot must open from
+# file:// with nothing to fetch. The landing page self-hosts its faces (below).
+fonts:
+  sans: "system-ui, -apple-system, 'Segoe UI', sans-serif"
+  mono: "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace"
+  serif: "'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif"
+
+# ------------------------------------------------------------------- type ---
+# Size-specific tracking and leading: large text tightens, small text opens.
+# One letter-spacing for every size is wrong somewhere.
+type:
+  micro:
+    size: 10.5
+    tracking: ".02em"
+    leading: 1.3
+  label:
+    size: 11.5
+    tracking: ".012em"
+    leading: 1.35
+  caption:
+    size: 12.5
+    tracking: ".004em"
+    leading: 1.4
+  body:
+    size: 13.5
+    tracking: "0"
+    leading: 1.45
+  title:
+    size: 15
+    tracking: "-.006em"
+    leading: 1.3
+  figure:
+    size: 25
+    tracking: "-.015em"
+    leading: 1.12
+  hero:
+    size: 42
+    tracking: "-.025em"
+    leading: 1.05
+  display:
+    size: 60
+    tracking: "-.03em"
+    leading: 1.0
+
+# ------------------------------------------------------------------ space ---
+# A 4-pt scale with the two half-steps the dense layouts actually use.
+space: [2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 32, 40, 56, 72]
+
+radius:
+  xs: 5
+  sm: 8
+  md: 12
+  lg: 16
+  pill: 999
+
+# ----------------------------------------------------------------- motion ---
+# Two tiers. `ui` governs the dashboard and menu bar: nothing over 300ms, press
+# feedback instant, no animation on keyboard-initiated actions. `narrative`
+# governs the landing page and other reading surfaces, where a reveal may take
+# a beat. Under prefers-reduced-motion every primitive degrades to an instant,
+# complete state — never to a half-state.
+motion:
+  ui:
+    press: 120ms
+    fast: 160ms
+    base: 220ms
+    slow: 300ms
+    ease-out: "cubic-bezier(.23, 1, .32, 1)"
+    ease-in-out: "cubic-bezier(.77, 0, .175, 1)"
+    ease-drawer: "cubic-bezier(.32, .72, 0, 1)"
+    stagger: 40ms
+    stagger-max: 6
+  narrative:
+    fast: 180ms
+    base: 320ms
+    slow: 700ms
+    ease: "cubic-bezier(.2, .7, .3, 1)"
+    ease-out: "cubic-bezier(.16, 1, .3, 1)"
+    stagger: 85ms
+    stagger-max: 7
+
+# ----------------------------------------------------------------- status ---
+# Reserved for state. Never a series colour, never themed, always paired with
+# an icon or a word. Values are the dataviz reference status palette.
+status:
+  good: "#0ca30c"
+  warning: "#fab219"
+  serious: "#ec835a"
+  critical: "#d03b3b"
+  # On light surfaces `warning` sits near series-4 (yellow) and `critical` near
+  # series-8 (red). Status is never drawn as a chart mark and always travels
+  # with an icon or a word, so the two can share a hue family without one
+  # impersonating the other. The compiler reports these as warnings, not passes.
+  relief:
+    light: [warning, critical]
+
+# ----------------------------------------------------------------- charts ---
+# Authored ramps, never derived. The categorical steps belong to the MODE, not
+# the skin, and were validated against every skin's chart surface, so a skin
+# restyles the room and never the data. Fixed order, assigned by entity: a
+# filter that removes a series must not repaint the survivors. Past eight,
+# fold into "Other".
+series:
+  dark:  ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+  # Slots documented under 3:1 on light chart surfaces. The relief ships with
+  # every chart: a table twin and direct labels, so colour never carries the
+  # value alone. The compiler warns on these instead of failing.
+  relief:
+    light: [3, 4, 5]
+
+# One hue, light → dark, for magnitude.
+sequential:
+  dark:  ["#184f95", "#1c5cab", "#256abf", "#2a78d6", "#3987e5", "#5598e7", "#86b6ef"]
+  light: ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#2a78d6", "#1c5cab", "#104281"]
+
+# Two hues and a neutral grey midpoint, for polarity (period compare, vs-median).
+# Never a hue at the midpoint.
+diverging:
+  dark:  ["#d95926", "#e39a78", "#6b7385", "#7fb0f0", "#3987e5"]
+  light: ["#eb6834", "#f2b28f", "#9aa2b3", "#8dbaf0", "#2a78d6"]
+
+# ------------------------------------------------------------------ skins ---
+# A skin restyles the room: surfaces, ink, borders, accent, density, the faces
+# used for headings and figures. It never touches the series steps above.
+# Hierarchy is carried by lightness, never by hue; the accent is an accent.
+skins:
+  aurora:
+    label: Aurora
+    note: "Indigo-slate, layered, luminous"
+    default: true
+    display: sans
+    figure: sans
+    density:
+      radius: 14
+      radius-sm: 9
+      pad-card: "14px 16px"
+      gap-grid: 14px
+      fig-scale: 1
+      sec-space: 26px
+      tracking-h: "-0.015em"
+    dark:
+      plane: "#0a0d14"
+      surface-1: "#111624"
+      surface-2: "#171d2e"
+      surface-3: "#1f2637"
+      text-primary: "#f3f6fc"
+      text-secondary: "#a7b2c9"
+      text-muted: "#7d879e"
+      grid: "#1e2436"
+      axis: "#2b3348"
+      border: "rgba(154, 172, 255, 0.11)"
+      border-strong: "rgba(154, 172, 255, 0.20)"
+      hairline: "rgba(154, 172, 255, 0.066)"
+      accent: "#8f9dff"
+      accent-solid: "#4a5ae0"
+      accent-ink: "#ffffff"
+      shadow: "0 1px 2px rgba(0, 0, 0, .45), 0 14px 40px rgba(4, 8, 20, .45)"
+      glow: "radial-gradient(1100px 460px at 8% -10%, rgba(94, 114, 255, .17), transparent 62%), radial-gradient(820px 420px at 92% -14%, rgba(25, 158, 112, .11), transparent 60%)"
+      hero-glow: "radial-gradient(460px 220px at 8% 0%, rgba(94, 114, 255, .22), transparent 72%)"
+    light:
+      plane: "#f5f7fc"
+      surface-1: "#ffffff"
+      surface-2: "#f1f4fa"
+      surface-3: "#e6eaf4"
+      text-primary: "#0d1220"
+      text-secondary: "#4b5468"
+      text-muted: "#6c7488"
+      grid: "#e4e8f1"
+      axis: "#c7cddb"
+      border: "rgba(13, 18, 32, 0.09)"
+      border-strong: "rgba(13, 18, 32, 0.17)"
+      hairline: "rgba(13, 18, 32, 0.054)"
+      accent: "#3d4dd6"
+      accent-solid: "#3d4dd6"
+      accent-ink: "#ffffff"
+      shadow: "0 1px 2px rgba(16, 24, 48, .06), 0 12px 32px rgba(16, 24, 48, .08)"
+      glow: "radial-gradient(1100px 460px at 8% -10%, rgba(94, 114, 255, .10), transparent 62%)"
+      hero-glow: "radial-gradient(420px 180px at 12% 0%, rgba(94, 114, 255, .09), transparent 70%)"
+
+  terminal:
+    label: Terminal
+    note: "Near-black, hairlines, mono"
+    display: mono
+    figure: mono
+    density:
+      radius: 5
+      radius-sm: 4
+      pad-card: "11px 13px"
+      gap-grid: 9px
+      fig-scale: 0.94
+      sec-space: 20px
+      tracking-h: "0.01em"
+    dark:
+      plane: "#06070a"
+      surface-1: "#0c0e13"
+      surface-2: "#11141a"
+      surface-3: "#171b22"
+      text-primary: "#eef2f6"
+      text-secondary: "#9aa4ad"
+      text-muted: "#737b85"
+      grid: "#171b22"
+      axis: "#262c34"
+      border: "rgba(255, 255, 255, 0.09)"
+      border-strong: "rgba(255, 255, 255, 0.16)"
+      hairline: "rgba(255, 255, 255, 0.054)"
+      accent: "#24d67e"
+      accent-solid: "#24d67e"
+      accent-ink: "#04140b"
+      shadow: "0 0 0 1px rgba(255, 255, 255, .05), 0 10px 26px rgba(0, 0, 0, .55)"
+      glow: "none"
+      hero-glow: "none"
+    light:
+      plane: "#f7f8f9"
+      surface-1: "#ffffff"
+      surface-2: "#f2f4f5"
+      surface-3: "#e8eaec"
+      text-primary: "#0a0c0f"
+      text-secondary: "#494f57"
+      text-muted: "#666d75"
+      grid: "#e8eaec"
+      axis: "#c9cdd2"
+      border: "rgba(10, 12, 15, 0.10)"
+      border-strong: "rgba(10, 12, 15, 0.18)"
+      hairline: "rgba(10, 12, 15, 0.06)"
+      accent: "#0b6b3d"
+      accent-solid: "#0b6b3d"
+      accent-ink: "#ffffff"
+      shadow: "0 0 0 1px rgba(10, 12, 15, .05), 0 8px 20px rgba(10, 12, 15, .07)"
+      glow: "none"
+      hero-glow: "none"
+
+  editorial:
+    label: Editorial
+    note: "Warm charcoal, serif figures"
+    display: serif
+    figure: serif
+    density:
+      radius: 8
+      radius-sm: 6
+      pad-card: "20px 22px"
+      gap-grid: 18px
+      fig-scale: 1.12
+      sec-space: 38px
+      tracking-h: "-0.005em"
+    dark:
+      plane: "#16130c"
+      surface-1: "#201c13"
+      surface-2: "#282318"
+      surface-3: "#322b1f"
+      text-primary: "#f8f4ec"
+      text-secondary: "#c4bcab"
+      text-muted: "#998f7d"
+      grid: "#262218"
+      axis: "#3a3529"
+      border: "rgba(255, 240, 214, 0.10)"
+      border-strong: "rgba(255, 240, 214, 0.18)"
+      hairline: "rgba(255, 240, 214, 0.06)"
+      accent: "#e0a852"
+      accent-solid: "#e0a852"
+      accent-ink: "#1a1409"
+      shadow: "0 1px 2px rgba(0, 0, 0, .4), 0 12px 34px rgba(20, 14, 4, .38)"
+      glow: "radial-gradient(900px 420px at 88% -12%, rgba(224, 168, 82, .11), transparent 60%)"
+      hero-glow: "none"
+    light:
+      plane: "#f9f6ef"
+      surface-1: "#fffdf8"
+      surface-2: "#f4f0e6"
+      surface-3: "#eae5d8"
+      text-primary: "#1a1712"
+      text-secondary: "#544e42"
+      text-muted: "#736c60"
+      grid: "#e8e2d4"
+      axis: "#cbc4b2"
+      border: "rgba(26, 23, 18, 0.10)"
+      border-strong: "rgba(26, 23, 18, 0.18)"
+      hairline: "rgba(26, 23, 18, 0.06)"
+      accent: "#8a5514"
+      accent-solid: "#8a5514"
+      accent-ink: "#ffffff"
+      shadow: "0 1px 2px rgba(60, 45, 20, .06), 0 12px 30px rgba(60, 45, 20, .08)"
+      glow: "radial-gradient(900px 420px at 88% -12%, rgba(224, 168, 82, .13), transparent 60%)"
+      hero-glow: "none"
+
+# ---------------------------------------------------------------- landing ---
+# The landing page is a single-world dark surface in the Aurora room, with the
+# instrument-panel voice of design-kit's `house-plex` pairing: a geometric
+# grotesque for display, IBM Plex Sans for body, and the same tabular Plex Mono
+# the receipts use for figures. A sans display is the default for a developer
+# tool; a serif would need a brand reason this product does not have. Faces are
+# self-hosted under site/fonts/ (OFL-1.1, copied from the design-kit cache); a
+# product that promises nothing leaves your machine does not load fonts from a
+# third party.
+landing:
+  world: aurora
+  mode: dark
+  pairing: house-plex
+  fonts:
+    display:
+      family: Space Grotesk
+      file: space-grotesk
+      weights: [500, 600, 700]
+      fallback: sans
+      tracking: "-.018em"
+    body:
+      family: IBM Plex Sans
+      file: ibm-plex-sans
+      weights: [400, 500, 600]
+      fallback: sans
+    mono:
+      family: IBM Plex Mono
+      file: ibm-plex-mono
+      weights: [400, 500, 600]
+      fallback: mono
