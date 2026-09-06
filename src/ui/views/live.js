@@ -526,7 +526,7 @@ function openLimitEditor(ctx) {
 
   const f = {};
   const field = (key, placeholder, type = 'text') => {
-    const input = el('input', { placeholder, type, 'aria-label': key });
+    const input = el('input', { class: 'tf-input', placeholder, type, 'aria-label': key });
     input.style.cssText = 'flex:1;min-width:90px';
     f[key] = input;
     return input;

@@ -171,7 +171,7 @@ function pickerCard(ctx) {
 
   const search = el('input', {
     type: 'search',
-    class: 'anatomy-search',
+    class: 'tf-input anatomy-search',
     placeholder: 'Filter by project, branch, date or model',
     'aria-label': 'Filter sessions',
     value: st.filter,
