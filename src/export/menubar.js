@@ -103,6 +103,27 @@ export function renderXbar(status, opt = {}) {
     }
   }
 
+  // ---- live sessions --------------------------------------------------------
+  // Older status.json files (written before this field existed) simply lack
+  // it, so this whole block is null-guarded rather than assumed present.
+  const live = status.liveSessions?.sessions || [];
+  if (live.length) {
+    lines.push('---');
+    lines.push(`Live now (${live.length}) | font-size=11`);
+    for (const s of live.slice(0, 3)) {
+      const glyph = GLYPH[s.guard?.level] || '';
+      const where = s.project || s.repository || s.branch || '';
+      lines.push(`${glyph}${s.model || 'session'}${where ? ` · ${where}` : ''}${s.costUsd != null ? ` · ${money(s.costUsd)}` : ''} | font-size=12`);
+    }
+  }
+
+  // ---- guard ------------------------------------------------------------
+  const guard = status.guard?.lastVerdict;
+  if (guard && guard.level !== 'ok') {
+    lines.push('---');
+    lines.push(`${GLYPH[guard.level] || ''}Guard: ${guard.reasons?.[0] || guard.level} | font-size=12`);
+  }
+
   // ---- freshness + actions ------------------------------------------------
   lines.push('---');
   const fr = status.freshness || {};

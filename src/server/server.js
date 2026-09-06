@@ -22,6 +22,7 @@ import { PROVIDER_REGIONS, resolveMyLocation } from '../core/geo.js';
 import { normalizeLimits } from '../analytics/capacity.js';
 import { streamRecordsCsv, exportFilename } from '../export/csv.js';
 import { writeJson, readJson } from '../core/store.js';
+import { ROUTES } from './routes/index.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -41,6 +42,44 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
   const authToken = token === false ? null : token || randomBytes(12).toString('base64url');
 
   let refreshing = false;
+  // The real port is only known after listen() when the caller asked for 0.
+  let boundPort = port;
+
+  // Paths the inline chain below owns. A registered route may not take one:
+  // registered routes are dispatched first, so the shadowing would be silent
+  // and would look nothing like "my new route is wrong".
+  const RESERVED = new Set([
+    '/', '/index.html', '/api/bundle', '/api/health', '/api/ping', '/api/providers',
+    '/api/records', '/api/live', '/api/geo', '/api/config', '/api/export.csv',
+    '/api/refresh', '/api/pricing', '/api/prefs',
+  ]);
+  for (const r of ROUTES) {
+    if (r && (RESERVED.has(r.path) || String(r.path || '').startsWith('/src/'))) {
+      console.warn(`routes: ${r.method} ${r.path} is a built-in path and will shadow it`);
+    }
+  }
+
+  /**
+   * The helpers a registered route handler gets. Built per request; config and
+   * paths are read lazily so a handler that never asks never pays.
+   */
+  function routeContext(req, res) {
+    let cfg = null;
+    let pth = null;
+    return {
+      json: (body, code) => json(res, body, code),
+      send: (code, type, body) => send(res, code, type, body),
+      sendFile: (file) => sendFile(res, file),
+      readBody: () => readBody(req),
+      get config() { return (cfg ||= loadConfig()); },
+      get paths() { return (pth ||= paths()); },
+      buildBundle,
+      queryRecords,
+      root: ROOT,
+      host,
+      get port() { return boundPort; },
+    };
+  }
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -53,6 +92,13 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
         const sameSite = !req.headers.origin || req.headers.origin === `http://${host}:${port}` || req.headers.origin === `http://localhost:${port}`;
         if (!sameSite && given !== authToken) return send(res, 403, 'text/plain', 'forbidden');
       }
+
+      // Registered routes, after the token check and before the inline chain,
+      // so a tab added under src/ui/views/ can ship its endpoint without this
+      // file growing a branch for it. See src/server/routes/index.js.
+      const route = ROUTES.find((r) => r && r.path === p
+        && String(r.method || 'GET').toUpperCase() === req.method);
+      if (route) return await route.handler(req, res, url, routeContext(req, res));
 
       if (p === '/' || p === '/index.html') {
         return sendFile(res, path.join(UI, 'index.html'));
@@ -227,7 +273,7 @@ export async function startServer({ port = 7799, host = '127.0.0.1', open = fals
   });
   // address() is `string` for a pipe/socket and AddressInfo for TCP.
   const bound = server.address();
-  const boundPort = typeof bound === 'object' && bound !== null ? bound.port : port;
+  boundPort = typeof bound === 'object' && bound !== null ? bound.port : port;
   const addr = `http://${host}:${boundPort}`;
   return { server, url: addr, token: authToken, close: () => new Promise((r) => server.close(r)) };
 }

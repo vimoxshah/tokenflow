@@ -1,0 +1,117 @@
+/* Session anatomy — the picker list, the subagent tree and the step line.
+   Charts here are SVG from charts.js and carry no styles of their own. */
+
+.anatomy-picker { padding: 6px 14px 14px; }
+
+.anatomy-search {
+  width: 100%;
+  max-width: 460px;
+}
+
+.anatomy-count { margin: 8px 0 2px; }
+
+.anatomy-rows {
+  display: flex;
+  flex-direction: column;
+  max-height: 330px;
+  overflow: auto;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.anatomy-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.7fr) minmax(90px, 1fr) minmax(90px, 1.1fr) 88px minmax(110px, 1.2fr) 64px 88px;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 6px;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  transition: background 140ms ease-out;
+}
+
+.anatomy-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.anatomy-row { cursor: pointer; }
+button.anatomy-row:hover { background: var(--surface-2); }
+button.anatomy-row:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+
+.anatomy-row.is-picked {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--series-1);
+}
+
+.anatomy-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-top: 0;
+  background: var(--surface-1);
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.anatomy-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.anatomy-id { font-size: 11.5px; }
+.anatomy-model { color: var(--text-muted); }
+
+.anatomy-loading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 14px;
+  color: var(--text-muted);
+}
+
+.anatomy-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--series-1);
+}
+
+.anatomy-error {
+  padding: 12px 14px;
+  color: var(--critical);
+}
+
+.anatomy-tree { padding: 4px 0 6px; }
+
+.anatomy-branch {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.anatomy-swatch {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+
+.anatomy-branch-name { font-weight: 600; }
+
+.anatomy-step { padding: 4px 14px 14px; }
+
+.anatomy-step-line {
+  margin: 6px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}

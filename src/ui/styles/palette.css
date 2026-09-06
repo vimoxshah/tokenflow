@@ -1,0 +1,85 @@
+/* Command palette (src/ui/palette.js). Keyboard-initiated UI: opened dozens
+   of times a day, so it never animates open or closed, and nothing in the
+   list transitions — the active row must jump under the arrow keys, not ease
+   into place. Token variables only, same as every other stylesheet here. */
+
+/* The base `dialog {}` / `dialog::backdrop {}` rules in styles.css carry a
+   220ms open/close transition meant for the mouse-driven export/pricing
+   modal. `transition: none` here has no `@starting-style` to interpolate
+   from, so this dialog and its backdrop simply appear and disappear. */
+dialog.palette-dialog,
+dialog.palette-dialog::backdrop {
+  transition: none;
+}
+
+dialog.palette-dialog {
+  margin-top: 12vh;
+  max-width: 640px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.palette-input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 14px 16px;
+  font-size: var(--fs-title);
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+.palette-input:focus,
+.palette-input:focus-visible {
+  outline: none;
+}
+
+.palette-list {
+  max-height: 50vh;
+  overflow: auto;
+  padding: 6px;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.palette-row.active {
+  background: var(--surface-2);
+}
+.palette-row-label {
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-row-group {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+}
+
+.palette-empty {
+  padding: 20px 16px;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  text-align: center;
+}
+
+/* The "⌘K" chip at the end of the tab bar. Placement (flex, and pushing to
+   the row's end) lives in styles.css's .tabbar .palette-chip rule; this only
+   adds the mono glyph styling. It reuses `.chip`'s own hover and press
+   feedback — that motion belongs to the chip being clicked, not to the
+   palette it opens, so it stays inside the general 300ms ceiling. */
+.palette-chip {
+  font-family: var(--mono);
+  letter-spacing: 0;
+}

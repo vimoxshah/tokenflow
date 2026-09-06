@@ -109,6 +109,29 @@ ratio, z-score — so you can check it rather than trust it. Notifications fire
 only for **same-day high-severity** anomalies; history replaying as alerts on
 a first run would be noise, so it doesn't happen.
 
+## Live status: sessions, receipts, guard, sparklines
+
+Alongside the totals above, `data/status.json` carries four sections built from a second,
+record-level scan of the store — the cube the rest of this file describes is pre-aggregated and
+carries no session id, branch, or per-turn guard verdict. All four anchor on `lastRefresh` (the
+store's last completed refresh), never the real clock, so a reader is only ever as current as the
+last refresh cycle said.
+
+| Section | What it carries |
+|---|---|
+| `liveSessions` | Up to 8 sessions with activity in the last 10 minutes of `lastRefresh`: source, model, project/repository/branch, turns, subagent turns, running cost, context tokens and share, and that session's own guard verdict. |
+| `receiptsToday` | The 3 highest-cost (repo, branch) pairs with spend dated `lastRefresh`'s day, plus the total across all of them. |
+| `guard` | The declared thresholds (from `~/.tokenflow/config.yaml`, overridden per repository by `.tokenflow/policy.yaml`) and the last guard verdict, with its `source`: `cache` when a session's own guard cache holds one, `derived` when it is inferred from the worst `liveSessions` entry instead (today the cache stores no verdict, so this is `derived` on every run). |
+| `sparklines` | 24 hourly token/cost buckets per source, covering the 24 hours up to `lastRefresh`. |
+
+### The Live tab
+
+The dashboard's **Live** tab (a registered view, `src/ui/views/live.js`) renders these same four
+sections, polling `/api/live` every 30 seconds while the tab is open. Nothing on it animates
+toward a number it was not given: every value is the last thing `data/status.json` said, and it
+changes only when that file changes. In an offline snapshot the tab shows the numbers captured at
+export time and hides the controls (like "Manage limits") that need a live server.
+
 ## Menu bar — TokenFlow.app (native, macOS)
 
 TokenFlow ships its own menu bar application: a ~370 KB native binary compiled
@@ -137,11 +160,19 @@ tokenflow menubar --app --login-item
 
 - header: live/watcher badge + data freshness ("live · data updated just now")
 - Today / Week / Month rows — tokens, requests, estimated cost
+- **Live, as of `<time>`** — up to 3 sessions active in the last 10 minutes, each with a
+  context gauge, its own guard-coloured dot, and running cost
+- **Today's receipts** — the day's top 3 (repo, branch) pairs by spend, and the total
+- **Guard** — the declared caps, the last verdict, and two buttons: **Raise cost cap** and
+  **Clear caps**, both of which write through `tokenflow guard --set` (never by editing
+  `config.yaml` directly) and then run one refresh cycle so the popover reflects the change
 - Today by provider — inline share bars (▰▱), tokens and cost per provider
 - Today by source — the app that wrote the log (claude-code, opencode,
   hermes, git…). Provider attribution names the model's vendor, so Hermes
   traffic appears under each model's vendor there; this section shows it as
   "hermes"
+- **Last 24 hours by source** — a small sparkline per source, tokens and cost, drawn only
+  when its data is present so an older status file shows exactly what it always showed
 - Top models today — token and cost leaders per model
 - Capacity — a real meter per declared limit with %, exhaustion ETA and reset
   countdown; "first projected hit" callout when one will cross before reset
@@ -149,11 +180,20 @@ tokenflow menubar --app --login-item
 - Alerts — high-severity anomalies with their arithmetic
 - Actions — `Refresh now` (⌘R, runs a watch cycle), `Open Dashboard`,
   `Start/Stop watcher`, `Quit`
+- **Density** — Comfortable or Compact, a persisted preference that tightens row spacing
+  and type size for a laptop screen
+- **Shortcut** — a global keyboard shortcut that toggles the popover from any app,
+  persisted and re-registered immediately on change
 - Appearance button (◐) — cycles system → light → dark; persisted across
   launches in `defaults` under `appearanceOverride`
 
 Dark/light follows the appearance override (◐ button, persisted) or the system
 appearance when set to follow; all figures use monospaced digits.
+
+**Transient guard alert.** When a live session's guard level rises to warn or block since the
+last load, a small card slides in from the status item to announce it — never on the first load,
+and never on a recovery back down, so it only ever interrupts for something new. One card at a
+time; clicking it opens the popover on the section that explains why.
 
 ## Menu bar — other platforms (SwiftBar/xbar text protocol)
 

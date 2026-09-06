@@ -1,0 +1,100 @@
+/* Live view — severity chips for the anomaly list.
+   Moved verbatim from src/ui/styles.css so the tab carries its own styles.
+   The #fff is the existing on-critical text colour, the same literal
+   .badge.demo uses; there is no token for it in design/tokens.yaml. */
+
+.sev-high { color: #fff; background: var(--critical); border-color: transparent; font-weight: 640; }
+.sev-warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.sev-info { color: var(--text-muted); }
+
+/* ---------------------------------------------------------- right now ----
+   The four sections fed by data/status.json. Every class is prefixed
+   `live-` because all view stylesheets load together in every mode.
+   Colours come from the token variables only: --accent for the context
+   gauge, and the three status colours for the guard level and nothing
+   else. */
+
+.live-sessions {
+  display: grid; gap: calc(var(--gap-grid) - 4px);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.live-session { display: flex; flex-direction: column; gap: 8px; }
+.live-session-head { display: flex; align-items: flex-start; gap: 10px; }
+.live-session-where { min-width: 0; flex: 1; }
+.live-session-project {
+  font-size: var(--fs-title); letter-spacing: var(--tr-title); line-height: var(--lh-title);
+  font-weight: 600; overflow-wrap: anywhere;
+}
+.live-session-branch, .live-session-meta, .live-session-note { margin: 0; overflow-wrap: anywhere; }
+.live-session-meta { font-family: var(--mono); }
+
+.live-stat { display: flex; align-items: baseline; gap: 10px; }
+.live-k {
+  color: var(--text-muted); font-size: var(--fs-label); letter-spacing: var(--tr-label);
+  min-width: 54px;
+}
+.live-v { font-variant-numeric: tabular-nums; }
+.live-est { margin-left: 6px; }
+
+/* The guard chip. Status colours mark status, so they live here and on
+   nothing else in this tab. */
+.live-guard { white-space: nowrap; }
+.live-guard-ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+.live-guard-warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.live-guard-block { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, transparent); font-weight: 640; }
+
+/* The context gauge. The fill is --accent at every level: how full a context
+   window is is a quantity, not a verdict, and the guard chip already says
+   whether it is a problem. No transition on the width — the fill may only
+   show a value the status file gave it, never a sweep toward one. */
+.live-gauge { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.live-gauge-top { display: flex; align-items: baseline; gap: 10px; }
+.live-gauge-value { font-variant-numeric: tabular-nums; margin-left: auto; }
+.live-gauge-track {
+  height: 6px; border-radius: var(--radius-pill); background: var(--surface-2);
+  border: 1px solid var(--border); overflow: hidden;
+}
+.live-gauge-fill { height: 100%; background: var(--accent); border-radius: var(--radius-pill); }
+.live-gauge-foot { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.live-gauge-scale { margin-left: auto; }
+
+/* Today's receipts. One grid so the money column lines up with the total. */
+.live-receipts { display: flex; flex-direction: column; }
+.live-receipt {
+  display: grid; gap: 10px; align-items: baseline; padding: 8px 0;
+  grid-template-columns: minmax(0, 1fr) auto 84px 92px;
+  border-top: 1px solid var(--border);
+}
+.live-receipt:first-child { border-top: 0; }
+.live-receipt-repo { font-weight: 600; overflow-wrap: anywhere; }
+.live-receipt-where p, .live-receipt-where .hint { margin: 0; }
+.live-receipt-cost { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.live-receipt-n { font-variant-numeric: tabular-nums; text-align: right; margin: 0; }
+.live-receipt-total { border-top: 1px solid var(--border-strong); font-weight: 600; }
+
+/* Guard card. */
+.live-guard-body { display: flex; flex-direction: column; gap: 6px; }
+.live-sub {
+  color: var(--text-muted); font-size: var(--fs-label); letter-spacing: var(--tr-label);
+  text-transform: uppercase; margin-top: 8px;
+}
+.live-guard-body .live-sub:first-child { margin-top: 0; }
+.live-caps { display: flex; flex-direction: column; gap: 2px; }
+.live-cap { display: flex; align-items: baseline; gap: 10px; }
+.live-cap .live-k { min-width: 190px; }
+.live-verdict { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.live-verdict-id { overflow-wrap: anywhere; }
+.live-none, .live-reason, .live-source { margin: 0; }
+.live-cmd {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; margin: 0; overflow: auto; font-size: 11.5px; line-height: 1.55;
+}
+
+/* Sparklines: one small chart per source, side by side. */
+.live-sparks {
+  display: grid; gap: calc(var(--gap-grid) - 4px);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+.live-spark { display: flex; flex-direction: column; gap: 6px; }
+.live-spark-foot { margin: 0; font-variant-numeric: tabular-nums; }

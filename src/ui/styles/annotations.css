@@ -1,0 +1,40 @@
+/* Annotations tab: the list of marked days and the add form. */
+
+.annotations-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.annotations-row:first-child {
+  border-top: none;
+}
+
+.annotations-date {
+  min-width: 96px;
+  color: var(--text-muted);
+}
+
+.annotations-text {
+  flex: 1;
+}
+
+.annotations-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.annotations-note-fld {
+  flex: 1;
+  min-width: 220px;
+}
+
+.annotations-error {
+  color: var(--critical);
+  width: 100%;
+  margin: 0;
+}

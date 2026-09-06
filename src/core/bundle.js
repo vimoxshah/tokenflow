@@ -13,9 +13,48 @@ import { Store, readJson } from './store.js';
 import { paths, loadConfig } from './config.js';
 import { summarizeQuality } from './validate.js';
 import { tzOffsetMinutes } from './schema.js';
-import { PRICING_TABLE_VERSION, PRICING_SOURCES, TIER_MULTIPLIERS } from './pricing.js';
+import { PRICING_TABLE_VERSION, PRICING_SOURCES, TIER_MULTIPLIERS, buildPriceBook } from './pricing.js';
+import { decodeRecord } from './store.js';
+import { MEASUREMENT } from './schema.js';
+import { createReceiptBuilder } from '../analytics/receipt.js';
+import { makeRepoResolver } from './repo.js';
+import { readAnnotations } from './annotations.js';
 
-export function buildBundle({ config = loadConfig() } = {}) {
+/**
+ * Receipts for the whole store, attributed per repository and branch. A full
+ * record scan costs seconds on a large store, so the result is cached against
+ * the store's refresh stamp and streamed through the builder rather than
+ * materialized. Shipped in the bundle so the offline snapshot has them too.
+ */
+let receiptsCache = { key: null, value: null };
+export function buildReceiptsForStore(store, pricing) {
+  const key = `${store.state.lastRefresh || ''}|${store.state.records || ''}|${JSON.stringify(pricing || {})}`;
+  if (receiptsCache.key === key) return receiptsCache.value;
+  const t0 = Date.now();
+  const builder = createReceiptBuilder({ book: buildPriceBook(pricing || {}), repoOf: makeRepoResolver() });
+  store.scanRecords((o) => {
+    if (o.ms !== MEASUREMENT.PRIMARY) return;
+    builder.add(decodeRecord(o));
+  });
+  const r = builder.finish();
+  const value = {
+    ...r,
+    computedAt: new Date().toISOString(),
+    computeMs: Date.now() - t0,
+    // The dashboard shows the whole store; the PR join stays a CLI concern
+    // (`tokenflow receipt --gh`) until cached PR lists exist.
+    scope: 'store',
+  };
+  receiptsCache = { key, value };
+  return value;
+}
+
+/**
+ * @param {{config?:object, receipts?:boolean}} [opt] `receipts: false` skips the
+ *   whole-store receipt scan; the watcher's status snapshot and one-line CLI
+ *   summaries never read them, so they should not pay seconds for them.
+ */
+export function buildBundle({ config = loadConfig(), receipts = true } = {}) {
   const store = new Store();
   const p = paths();
   const cube = store.cube();
@@ -85,6 +124,10 @@ export function buildBundle({ config = loadConfig() } = {}) {
     // against the same cube every other surface reads.
     limits: Array.isArray(config.limits) ? config.limits : [],
     health,
+    receipts: receipts ? buildReceiptsForStore(store, pricing) : null,
+    // User-marked calendar days ("switched to Opus 5"), drawn on every daily
+    // chart. A missing annotations.json yields an empty list, never a throw.
+    annotations: readAnnotations().items,
   };
 }
 

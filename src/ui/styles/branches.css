@@ -1,0 +1,99 @@
+/* Compare branches — a diverging bar per metric, A on the left, B on the
+   right, coloured from the --div-1..5 ramp so "A costs more" and "B costs
+   more" read as mirror images around a neutral parity centre.
+
+   Note: docs/ui-views.md lists --hairline as a surface token and src/ui/views
+   /live.js uses it, but no --hairline custom property is ever defined in the
+   generated block at the top of src/ui/styles.css (checked design/tokens.yaml
+   and scripts/design-build.js too — it isn't produced anywhere). This view
+   uses --border for the same subtle-divider role instead of depending on the
+   undefined variable; see the handoff report for the flagged discrepancy. */
+
+.branches-select-row {
+  display: flex; gap: 18px; flex-wrap: wrap; padding: 2px 14px 14px;
+}
+.branches-side {
+  display: flex; flex-direction: column; gap: 6px; min-width: 230px; flex: 1;
+}
+.branches-side-label {
+  font-size: var(--fs-label); letter-spacing: var(--tr-label); color: var(--text-muted);
+  text-transform: uppercase;
+}
+.branches-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+.branches-fields select { flex: 1; min-width: 140px; }
+
+.branches-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 14px 12px;
+}
+.branches-head-name {
+  font-family: var(--mono); font-size: var(--fs-title); color: var(--text-primary);
+}
+.branches-head-vs { color: var(--text-muted); font-size: var(--fs-caption); }
+
+.branches-axis {
+  display: flex; align-items: center; gap: 10px; padding: 2px 14px 8px;
+}
+.branches-axis-spacer { width: 168px; flex: none; }
+.branches-axis-ends { width: 64px; flex: none; }
+.branches-axis-track { position: relative; flex: 1; height: 14px; }
+.branches-axis-tick {
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-size: var(--fs-micro); color: var(--text-muted); white-space: nowrap;
+}
+.branches-axis-tick:first-child { transform: translateX(0); }
+.branches-axis-tick:last-child { transform: translateX(-100%); }
+
+.branches-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 14px;
+  border-top: 1px solid var(--border);
+}
+.branches-row:first-child { border-top: none; }
+.branches-row-label {
+  width: 168px; flex: none; font-size: var(--fs-caption); color: var(--text-secondary);
+}
+.branches-bar { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.branches-end {
+  width: 64px; flex: none; font-size: var(--fs-caption); color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.branches-end-a { text-align: right; }
+.branches-end-b { text-align: left; }
+.branches-track {
+  position: relative; flex: 1; display: flex; height: 14px;
+  background: var(--surface-2); border-radius: var(--radius-xs); overflow: hidden;
+}
+.branches-half { position: relative; width: 50%; height: 100%; display: flex; }
+.branches-half-a { justify-content: flex-end; }
+.branches-half-b { justify-content: flex-start; }
+.branches-fill { height: 100%; transition: width var(--dur-slow) var(--ease-out); }
+.branches-centre {
+  position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+  background: var(--border-strong); pointer-events: none;
+}
+
+.branches-legend {
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  padding: 8px 14px 2px; font-size: var(--fs-caption); color: var(--text-secondary);
+}
+.branches-swatch {
+  display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+  vertical-align: middle; margin-right: 6px;
+}
+
+.branches-side-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;
+}
+.branches-side-card {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 12px 14px;
+}
+.branches-side-card h4 {
+  margin: 0 0 6px; font-size: var(--fs-caption); font-weight: 600; color: var(--text-primary);
+  font-family: var(--mono);
+}
+.branches-side-card p {
+  margin: 0 0 6px; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-secondary);
+}
+.branches-side-card p:last-child { margin-bottom: 0; }
+
+.branches-foot { padding: 2px 14px 0; }

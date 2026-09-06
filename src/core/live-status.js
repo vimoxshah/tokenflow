@@ -19,10 +19,13 @@ import { buildBundle } from './bundle.js';
 import { computeView } from '../analytics/index.js';
 import { filterCube, filterSessions, indexCube, rank, finalize, sumRows, weekStart, addDays } from '../analytics/aggregate.js';
 import { loadConfig, paths, ensureDirs } from './config.js';
-import { readJson } from './store.js';
+import { readJson, Store, decodeRecord } from './store.js';
 import { compact, usd, countdown } from './units.js';
 import { detectMilestones } from '../analytics/milestones.js';
 import { lockIsLive, readLock } from './watch-lock.js';
+import { evaluateGuard, createReceiptBuilder } from '../analytics/receipt.js';
+import { buildPriceBook } from './pricing.js';
+import { MEASUREMENT } from './schema.js';
 
 // Formatting adapters over the shared units.js formatters (which the browser
 // bundle also uses): null means "nothing to show", never "—", never 0.
@@ -57,7 +60,7 @@ function usageSlice(m, extra = {}) {
  */
 export function buildLiveStatus(opt = {}) {
   const config = opt.config || loadConfig();
-  const b = opt.bundle || buildBundle({ config });
+  const b = opt.bundle || buildBundle({ config, receipts: false });
   const nowMs = opt.nowMs ?? Date.now();
   const v = computeView(b, {});
   const ix = indexCube(b.cube);
@@ -208,6 +211,19 @@ export function buildLiveStatus(opt = {}) {
   const ageMs = lastRefresh ? Math.max(0, nowMs - new Date(lastRefresh).getTime()) : null;
   const staleAfterMs = (config.watch?.staleAfterSeconds ?? 600) * 1000;
 
+  // A second, record-level pass: the cube above is pre-aggregated and carries
+  // no session id, branch or per-turn guard verdict, so live sessions,
+  // today's receipts, guard state and sparklines are derived straight from
+  // the store's shard files rather than from `b.cube`.
+  const recent = buildRecentActivity({
+    pricing: b.pricing,
+    guardPolicy: config.guard || {},
+    referenceMs: lastRefresh ? new Date(lastRefresh).getTime() : nowMs,
+    lastRefresh,
+    today,
+    tzOffsetMinutes,
+  });
+
   return {
     schema: STATUS_SCHEMA,
     generatedAt: new Date(nowMs).toISOString(),
@@ -253,6 +269,10 @@ export function buildLiveStatus(opt = {}) {
     })),
     firstSeen: v.firstSeen,
     insights: v.insights.slice(0, 3).map((i) => ({ icon: i.icon, text: i.text })),
+    liveSessions: recent.liveSessions,
+    receiptsToday: recent.receiptsToday,
+    guard: recent.guard,
+    sparklines: recent.sparklines,
   };
 }
 
@@ -276,6 +296,211 @@ function trimLimitState(s) {
     burn: s.burn,
     etaHours: s.etaHours, etaVia: s.etaVia,
     resetsAtMs: s.resetsAtMs, resetsInMs: s.resetsInMs,
+  };
+}
+
+// ------------------------------------------------------- recent activity ----
+
+/** Sessions "live" within this many minutes of `asOf` show up in `liveSessions`. */
+const LIVE_WINDOW_MINUTES = 10;
+/** Hourly sparkline depth. */
+const SPARK_HOURS = 24;
+/** `liveSessions.sessions` is capped here — a menu bar row, not a table. */
+const MAX_LIVE_SESSIONS = 8;
+
+/** `YYYY-MM` shard key a UTC instant falls into, in a timezone `offsetMinutes` east of UTC. */
+function monthKeyOf(ms, offsetMs) {
+  return new Date(ms + offsetMs).toISOString().slice(0, 7);
+}
+
+/**
+ * Start-of-local-hour instant (as a UTC epoch ms) containing `ms`, in a
+ * timezone `offsetMs` (== tzOffsetMinutes*60000) east of UTC. Like the
+ * hour-granular windows above, this is a fixed-offset approximation — a
+ * timezone whose offset changes (DST) mid-window is not modelled.
+ */
+function hourStartMs(ms, offsetMs) {
+  return Math.floor((ms + offsetMs) / 3600000) * 3600000 - offsetMs;
+}
+
+const GUARD_LEVEL_RANK = { ok: 0, warn: 1, block: 2 };
+
+/**
+ * Most recently modified guard-cache file's verdict, if the cache stores one.
+ *
+ * As of this writing `tokenflow guard`'s cache (`$TOKENFLOW_HOME/guard/*.json`,
+ * see `src/commands/guard.js`) persists `{offset, state, records, updated}` —
+ * no verdict — so this always falls through to `null` today; the read stays
+ * here so a future cache format that adds one is picked up without a change
+ * here, and `lastVerdict.source` tells a reader which path produced it.
+ * @returns {{level:string, sessionId:string|null, at:string|null, reasons:string[], source:'cache'}|null}
+ */
+function readGuardCacheVerdict() {
+  const dir = path.join(paths().root, 'guard');
+  let files;
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return null; }
+  let latest = null;
+  let latestMtime = -1;
+  for (const f of files) {
+    let st;
+    try { st = fs.statSync(path.join(dir, f)); } catch { continue; }
+    if (st.mtimeMs > latestMtime) { latestMtime = st.mtimeMs; latest = f; }
+  }
+  if (!latest) return null;
+  const data = readJson(path.join(dir, latest), null);
+  if (!data || !data.verdict) return null;
+  const v = data.verdict;
+  return {
+    level: v.level ?? 'ok',
+    sessionId: v.sessionId ?? data.records?.[0]?.session_id ?? null,
+    at: data.updated ?? null,
+    reasons: Array.isArray(v.reasons) ? v.reasons : [],
+    source: 'cache',
+  };
+}
+
+/**
+ * Live sessions, today's receipts, guard state and hourly sparklines.
+ *
+ * A second, record-level scan of the store (the cube `buildLiveStatus` reads
+ * above is pre-aggregated and has no session id, branch or per-turn guard
+ * verdict). Restricted to the shards the window can touch — current +
+ * previous month by `referenceMs`, plus `today`'s month if a stale
+ * `lastRefresh` has drifted away from it — and within those shards, to
+ * records timestamped in the last `SPARK_HOURS` hours (sessions + sparklines)
+ * or dated `today` in the dataset timezone (receipts).
+ *
+ * "Live" and every `asOf` here anchor on `referenceMs` (the store's last
+ * refresh, falling back to the current clock only when it has never
+ * refreshed) rather than the real clock: a reader of this file is only ever
+ * as current as the last completed refresh, and the field name says so
+ * rather than quietly assuming "now".
+ *
+ * @param {{pricing:object, guardPolicy:object, referenceMs:number,
+ *   lastRefresh:string|null, today:string, tzOffsetMinutes:number}} opt
+ */
+export function buildRecentActivity(opt) {
+  const { pricing, guardPolicy, referenceMs, lastRefresh, today, tzOffsetMinutes: tzOff } = opt;
+  const offsetMs = (tzOff || 0) * 60000;
+  const book = buildPriceBook(pricing || {});
+  const store = new Store();
+
+  const firstBucket = hourStartMs(referenceMs, offsetMs) - (SPARK_HOURS - 1) * 3600000;
+  const liveCutoffMs = referenceMs - LIVE_WINDOW_MINUTES * 60000;
+  const months = [...new Set([
+    monthKeyOf(firstBucket, offsetMs),
+    monthKeyOf(referenceMs, offsetMs),
+    today.slice(0, 7),
+  ])];
+
+  /** @type {Map<string, {tokens:number[], cost:number[]}>} */
+  const perSource = new Map();
+  const sessions = new Map();
+  const receiptBuilder = createReceiptBuilder({
+    book,
+    repoOf: (rec) => {
+      const raw = rec.repository || rec.project;
+      return raw ? path.basename(raw) : null;
+    },
+  });
+
+  store.scanRecords((o) => {
+    if (o.ms !== MEASUREMENT.PRIMARY) return;
+    const ts = Date.parse(o.ts);
+    if (!Number.isFinite(ts)) return;
+    if (o.d === today) receiptBuilder.add(decodeRecord(o));
+
+    if (ts < firstBucket || ts > referenceMs) return;
+    const src = o.so || 'unknown';
+    let sp = perSource.get(src);
+    if (!sp) { sp = { tokens: new Array(SPARK_HOURS).fill(0), cost: new Array(SPARK_HOURS).fill(0) }; perSource.set(src, sp); }
+    const idx = Math.round((hourStartMs(ts, offsetMs) - firstBucket) / 3600000);
+    if (idx >= 0 && idx < SPARK_HOURS) {
+      sp.tokens[idx] += (o.in || 0) + (o.ou || 0) + (o.cr || 0) + (o.cw || 0);
+      if (o.co !== null && o.co !== undefined && o.cb !== 'measured') sp.cost[idx] += o.co;
+    }
+
+    if (!o.s) return; // no session id: still in the sparklines/receipts above, never a "live session"
+    let e = sessions.get(o.s);
+    if (!e) { e = { records: [], maxTs: -Infinity }; sessions.set(o.s, e); }
+    e.records.push(decodeRecord(o));
+    if (ts > e.maxTs) e.maxTs = ts;
+  }, { months });
+
+  // ---- live sessions ----------------------------------------------------
+  const liveEntries = [...sessions.entries()]
+    .filter(([, e]) => e.maxTs >= liveCutoffMs)
+    .sort((a, b) => b[1].maxTs - a[1].maxTs)
+    .slice(0, MAX_LIVE_SESSIONS);
+
+  const liveSessionsList = liveEntries.map(([sid, e]) => {
+    const recs = e.records.slice().sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+    const last = recs[recs.length - 1];
+    const v = evaluateGuard(recs, guardPolicy || {}, book);
+    return {
+      sessionId: sid,
+      source: last.source ?? null,
+      provider: last.provider ?? null,
+      model: last.model ?? null,
+      project: last.project ?? null,
+      repository: last.repository ? path.basename(last.repository) : null,
+      branch: last.git_branch ?? null,
+      startedAt: v.first,
+      lastActivityAt: v.last,
+      turns: v.turns,
+      subagentTurns: v.subagentTurns,
+      costUsd: v.cost,
+      coverage: v.coverage,
+      contextTokens: v.contextTokens,
+      contextShare: v.contextShare,
+      guard: { level: v.level, reasons: v.reasons, declared: v.declared },
+    };
+  });
+
+  // ---- today's receipts ---------------------------------------------------
+  const receipts = receiptBuilder.finish();
+  const items = [];
+  for (const R of receipts.repos) {
+    for (const br of R.branches) items.push({ repo: R.repo, branch: br.key, costUsd: br.cost, turns: br.turns, sessions: br.sessions });
+    if (R.unattributed.turns > 0) {
+      items.push({ repo: R.repo, branch: null, costUsd: R.unattributed.cost, turns: R.unattributed.turns, sessions: R.unattributed.sessions });
+    }
+  }
+  items.sort((a, b) => (b.costUsd ?? -1) - (a.costUsd ?? -1));
+
+  // ---- guard ----------------------------------------------------------------
+  const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+  const gp = guardPolicy || {};
+  const policy = {
+    warnCostUsd: numOrNull(gp.warnCostUsd),
+    maxCostUsd: numOrNull(gp.maxCostUsd),
+    warnContextTokens: numOrNull(gp.warnContextTokens),
+    maxContextTokens: numOrNull(gp.maxContextTokens),
+    warnMarginalUsd: numOrNull(gp.warnMarginalUsd),
+  };
+  const declared = Object.values(policy).some((val) => val !== null);
+
+  /** @type {{level:string, sessionId:string|null, at:string|null, reasons:string[], source:'cache'|'derived'}|null} */
+  let lastVerdict = readGuardCacheVerdict();
+  if (!lastVerdict) {
+    let worst = null;
+    for (const s of liveSessionsList) {
+      if (!worst || GUARD_LEVEL_RANK[s.guard.level] > GUARD_LEVEL_RANK[worst.guard.level]) worst = s;
+    }
+    lastVerdict = worst
+      ? { level: worst.guard.level, sessionId: worst.sessionId, at: worst.lastActivityAt, reasons: worst.guard.reasons, source: 'derived' }
+      : null;
+  }
+
+  return {
+    liveSessions: { asOf: lastRefresh, windowMinutes: LIVE_WINDOW_MINUTES, sessions: liveSessionsList },
+    receiptsToday: { asOf: lastRefresh, totalCostUsd: receipts.totals.cost, items: items.slice(0, 3) },
+    guard: { policy, declared, lastVerdict },
+    sparklines: {
+      hours: Array.from({ length: SPARK_HOURS }, (_, i) => new Date(firstBucket + i * 3600000).toISOString()),
+      bySource: Object.fromEntries([...perSource].map(([k, v]) => [k, v.tokens])),
+      costBySource: Object.fromEntries([...perSource].map(([k, v]) => [k, v.cost.map((n) => Math.round(n * 100) / 100)])),
+    },
   };
 }
 

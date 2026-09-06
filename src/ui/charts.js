@@ -19,6 +19,82 @@ export const SERIES_VARS = [
 export const OTHER_COLOR = 'var(--text-muted)';
 export const SEQ = ['var(--seq-1)', 'var(--seq-2)', 'var(--seq-3)', 'var(--seq-4)', 'var(--seq-5)', 'var(--seq-6)', 'var(--seq-7)'];
 
+// ------------------------------------------------------------- annotations --
+
+/**
+ * Day annotations every daily time-series chart overlays. Views must not
+ * import app.js, and app.js never learns about a view's data, so this is a
+ * module-level list rather than a per-call prop: the Annotations view calls
+ * `setAnnotations` after it loads (or reloads) the file, and every chart
+ * rendered afterwards — on any tab — picks up the current list. A saved
+ * snapshot seeds it at load time from the embedded bundle, since there is no
+ * "after it loads" moment there; a live dashboard starts empty until the
+ * Annotations tab has been visited at least once in the session.
+ */
+let currentAnnotations = (typeof window !== 'undefined' && Array.isArray(window.__TOKENFLOW_BUNDLE__?.annotations))
+  ? window.__TOKENFLOW_BUNDLE__.annotations
+  : [];
+
+/**
+ * Set the annotations drawn on every daily time-series chart from here on.
+ * @param {{id:string,date:string,text:string}[]} list
+ */
+export function setAnnotations(list) {
+  currentAnnotations = Array.isArray(list) ? list : [];
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function daysBetweenIso(a, b) {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+}
+
+/**
+ * True when `data` is a calendar-day series: its first two buckets are
+ * exactly one day apart. A week or month bucket also has a date-shaped key
+ * (the start of the period), so key format alone cannot tell daily from
+ * weekly/monthly — only the spacing between buckets can.
+ */
+function isDailyAxis(data) {
+  if (!data || !data.length || !ISO_DATE_RE.test(data[0].key)) return false;
+  if (data.length === 1) return true;
+  return ISO_DATE_RE.test(data[1].key) && daysBetweenIso(data[0].key, data[1].key) === 1;
+}
+
+/**
+ * Map annotations onto x-axis bucket indices for a daily time-series chart.
+ * An annotation whose date falls outside [first bucket, last bucket] is
+ * dropped; a chart whose axis is not daily (week/month buckets) yields no
+ * markers at all, since there is no single bucket a day maps onto.
+ * @param {{key:string}[]} data bucket rows, ascending by key
+ * @param {{id:string,date:string,text:string}[]} annotations
+ * @returns {{index:number, annotation:object}[]}
+ */
+export function annotationMarkers(data, annotations) {
+  if (!isDailyAxis(data) || !annotations || !annotations.length) return [];
+  const first = data[0].key;
+  const last = data[data.length - 1].key;
+  const out = [];
+  for (const a of annotations) {
+    if (!a || !a.date || a.date < first || a.date > last) continue;
+    let i = daysBetweenIso(first, a.date);
+    if (i < 0 || i >= data.length || data[i].key !== a.date) {
+      // The series has a gap for this exact day (e.g. a non-contiguous
+      // fill): fall back to the first bucket at or after the date so the
+      // marker still lands inside the visible range instead of vanishing.
+      i = data.findIndex((d) => d.key >= a.date);
+      if (i === -1) i = data.length - 1;
+    }
+    out.push({ index: i, annotation: a });
+  }
+  return out;
+}
+
+function truncateLabel(s, max) {
+  const str = String(s ?? '');
+  return str.length > max ? `${str.slice(0, Math.max(0, max - 1))}…` : str;
+}
+
 /**
  * Stable colour assignment: a key always gets the same slot for the lifetime
  * of the page, so a filter that removes series 2 leaves series 3's colour
@@ -171,6 +247,8 @@ export function niceTicks(min, max, count = 5) {
  * @param {string} [o.ariaLabel] accessible name for the <svg>
  * @param {boolean} [o.fillArea] shade the area under the line
  * @param {boolean} [o.endLabel] label the final value at the line's end
+ * @param {{id:string,date:string,text:string}[]} [o.annotations] overrides the
+ *   module-level list set by `setAnnotations`; only a test needs this.
  */
 export function timeSeries(o) {
   const H = o.height || 300;
@@ -290,6 +368,23 @@ export function timeSeries(o) {
         style: 'fill: var(--text-secondary); font-size: 11px; font-weight: 600',
       }, [txt(o.fmtY(lastVal))]));
     }
+  }
+
+  // marked days: a dashed hairline in --text-muted, never a series colour, so
+  // an annotation never reads as "another data series".
+  const marks = annotationMarkers(data, o.annotations || currentAnnotations);
+  for (const { index, annotation } of marks) {
+    const ax = x(index);
+    root.appendChild(svg('line', {
+      class: 'annot-mark', x1: ax, x2: ax, y1: M.t, y2: M.t + ih,
+      stroke: 'var(--text-muted)', 'stroke-width': 1, 'stroke-dasharray': '4 3',
+    }));
+    const label = svg('text', {
+      class: 'annot-label', x: Math.min(ax + 4, W - M.r), y: M.t + 10, 'text-anchor': 'start',
+      style: 'fill: var(--text-muted); font-size: 10px',
+    }, [txt(truncateLabel(annotation.text, 24))]);
+    label.appendChild(svg('title', {}, [txt(annotation.text)]));
+    root.appendChild(label);
   }
 
   // ---- hover layer: crosshair snapping to the nearest X -------------------
