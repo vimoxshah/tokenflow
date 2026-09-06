@@ -163,3 +163,57 @@ test('effectiveGuardPolicy: with no cwd and no config.guard, every key is defaul
     assert.equal(eff.sources[k], 'default');
   }
 });
+
+// ------------------------------------------------------- loadRepoPolicy: receipt ---
+//
+// `receipt.maxCostUsd` / `receipt.maxCostPer100Lines` are a contract with the
+// Action and App streams (docs/policy.md) — parsed and validated here with
+// the same "reported, never thrown" posture as `guard:`, but never merged
+// into `effectivePolicy()` (see test/policy-org.test.js).
+
+test('loadRepoPolicy: parses a receipt block alongside guard, and rejects an unknown receipt key', () => {
+  const root = makeRepo();
+  writePolicy(root, [
+    'guard:',
+    '  maxCostUsd: 50',
+    'receipt:',
+    '  maxCostUsd: 25',
+    '  maxCostPer100Lines: 2.5',
+    '  bogusReceiptKey: 1',
+    '',
+  ].join('\n'));
+
+  const p = loadRepoPolicy(root);
+  assert.equal(p.found, true);
+  assert.equal(p.guard.maxCostUsd, 50);
+  assert.equal(p.receipt.maxCostUsd, 25);
+  assert.equal(p.receipt.maxCostPer100Lines, 2.5);
+  assert.match(p.errors.find((e) => /bogusReceiptKey/.test(e)), /unknown receipt key "bogusReceiptKey"/);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('loadRepoPolicy: an invalid receipt value is reported and left out, the rest of the block still applies', () => {
+  const root = makeRepo();
+  writePolicy(root, [
+    'receipt:',
+    '  maxCostUsd: -10',
+    '  maxCostPer100Lines: "a lot"',
+    '',
+  ].join('\n'));
+
+  const p = loadRepoPolicy(root);
+  assert.deepEqual(p.receipt, {});
+  assert.equal(p.errors.length, 2);
+  assert.match(p.errors.find((e) => /maxCostUsd/.test(e)), /receipt\.maxCostUsd must be a positive number/);
+  assert.match(p.errors.find((e) => /maxCostPer100Lines/.test(e)), /receipt\.maxCostPer100Lines must be a positive number/);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('loadRepoPolicy: no policy.yaml means an empty receipt block too', () => {
+  const root = makeRepo();
+  const p = loadRepoPolicy(root);
+  assert.deepEqual(p.receipt, {});
+  fs.rmSync(root, { recursive: true, force: true });
+});

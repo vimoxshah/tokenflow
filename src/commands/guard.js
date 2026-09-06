@@ -26,25 +26,30 @@
  *     the prompt) with stderr as the reason. Stop and SessionStart are never
  *     blocked here: preventing a session from stopping is not a saving.
  *
- * Nothing is invented: with no `guard:` thresholds in config or in a repo's
- * `.tokenflow/policy.yaml` (src/core/policy.js — a cap that travels with the
- * repository, and wins over the personal config) the hook is informational
- * and never blocks. Incremental: the transcript's byte offset and open
- * streaming groups are remembered per session under $TOKENFLOW_HOME/guard/,
- * so a 500 MB transcript is read once, not per tool call.
+ * Nothing is invented: with no `guard:` thresholds in config, in a repo's
+ * `.tokenflow/policy.yaml`, or in a cached org policy (src/core/policy.js's
+ * `effectivePolicy()` — personal < repo < org, the org applied only as a
+ * ceiling that lowers a cap, never raises one) the hook is informational and
+ * never blocks. The org layer is read from its local cache ONLY: this hook
+ * never makes a network call, no matter how stale that cache is — see
+ * `tokenflow policy pull` and docs/policy.md. Incremental: the transcript's
+ * byte offset and open streaming groups are remembered per session under
+ * $TOKENFLOW_HOME/guard/, so a 500 MB transcript is read once, not per tool
+ * call.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import url from 'node:url';
-import { loadConfig, saveConfig, merge, paths } from '../core/config.js';
+import { loadConfig, saveConfig, merge, paths, homeDir } from '../core/config.js';
 import { readJson, writeJson } from '../core/store.js';
 import { buildPriceBook } from '../core/pricing.js';
 import { BUILTIN_MODEL_RULES } from '../core/model-map.js';
 import { enrich, walk } from '../core/ingest.js';
 import { getProvider } from '../core/registry.js';
 import { evaluateGuard, renderGuard } from '../analytics/receipt.js';
-import { GUARD_KEYS, effectiveGuardPolicy } from '../core/policy.js';
+import { GUARD_KEYS, effectivePolicy } from '../core/policy.js';
+import { show as policyShow, renderShow as renderPolicyShow } from './policy.js';
 import { notify } from '../core/notify.js';
 
 export { GUARD_KEYS };
@@ -133,11 +138,11 @@ function mergeReplayed(kept, records) {
  * `evaluateGuard` is pure and knows nothing about where a threshold came
  * from. This reproduces its own `>=` comparisons (max checked before warn,
  * same order: cost, context, marginal) against the SAME numbers the verdict
- * already carries, purely to find out which keys fired — then appends one
- * reason when any of those keys came from a repo's `.tokenflow/policy.yaml`
- * rather than the user's own config.
+ * already carries, purely to find out which keys fired — then appends a
+ * reason for any that came from a repo's `.tokenflow/policy.yaml` and/or the
+ * cached org policy, rather than the user's own config.
  * @param {ReturnType<typeof evaluateGuard>} verdict
- * @param {ReturnType<typeof effectiveGuardPolicy>} eff
+ * @param {ReturnType<typeof effectivePolicy>} eff
  */
 function annotateSource(verdict, eff) {
   const p = eff.policy;
@@ -148,11 +153,27 @@ function annotateSource(verdict, eff) {
   else if (p.warnContextTokens !== null && verdict.contextTokens !== null && verdict.contextTokens >= p.warnContextTokens) fired.push('warnContextTokens');
   if (p.warnMarginalUsd !== null && verdict.marginalCostPerTurn !== null && verdict.marginalCostPerTurn >= p.warnMarginalUsd) fired.push('warnMarginalUsd');
 
+  // Which declared key fired, and which layer it came from. `hookOutput` reads
+  // this to tell the user how to get past the cap: `guard --set` writes the
+  // personal config and cannot raise a cap the org ceiling already lowered.
+  /** @type {Record<string,'personal'|'repo'|'org'|'default'>} */
+  const firedSources = {};
+  for (const k of fired) firedSources[k] = eff.sources[k];
+
+  const reasons = [...verdict.reasons];
   const repoKeys = fired.filter((k) => eff.sources[k] === 'repo');
-  if (!repoKeys.length) return verdict;
-  const label = repoKeys.length > 1 ? `caps ${repoKeys.join(', ')}` : `cap ${repoKeys[0]}`;
-  const note = eff.note ? `: ${eff.note}` : '';
-  return { ...verdict, reasons: [...verdict.reasons, `${label} from .tokenflow/policy.yaml${note}`] };
+  if (repoKeys.length) {
+    const label = repoKeys.length > 1 ? `caps ${repoKeys.join(', ')}` : `cap ${repoKeys[0]}`;
+    const note = eff.note ? `: ${eff.note}` : '';
+    reasons.push(`${label} from .tokenflow/policy.yaml${note}`);
+  }
+  const orgKeys = fired.filter((k) => eff.sources[k] === 'org');
+  if (orgKeys.length) {
+    const label = orgKeys.length > 1 ? `caps ${orgKeys.join(', ')}` : `cap ${orgKeys[0]}`;
+    const src = eff.org && eff.org.meta && eff.org.meta.source ? ` (${eff.org.meta.source})` : '';
+    reasons.push(`${label} from the org policy${src}, a ceiling your team declared, lower than the personal/repo value`);
+  }
+  return { ...verdict, reasons, firedSources };
 }
 
 /**
@@ -177,8 +198,9 @@ export function evaluateSession(payload, opt = {}) {
   const kept = resume ? resume.records : [];
   const all = mergeReplayed(kept, records);
   // Claude Code sends `cwd` in the hook payload (see the module doc above);
-  // a repo's `.tokenflow/policy.yaml` at that cwd wins over ~/.tokenflow/config.yaml.
-  const eff = effectiveGuardPolicy({ cwd: payload.cwd, config });
+  // a repo's `.tokenflow/policy.yaml` at that cwd wins over ~/.tokenflow/config.yaml,
+  // and a cached org ceiling (never fetched here — see core/policy.js) wins over both.
+  const eff = effectivePolicy({ cwd: payload.cwd, home: homeDir(), config });
   const verdict = annotateSource(evaluateGuard(all, eff.policy, book), eff);
 
   if (useCache) {
@@ -263,6 +285,11 @@ export async function evaluateCodexNotify(payload, opt = {}) {
 
     const config = opt.config || loadConfig();
     const book = opt.book || buildPriceBook(readJson(paths().pricing, {}));
+    // Resolved once, up front, before any `await` below: TOKENFLOW_HOME could
+    // in principle change between calls, and every env-derived path this
+    // function touches (the cache file, and later the org policy cache) must
+    // agree on which home they mean.
+    const home = homeDir();
     const cacheFile = path.join(guardDir(), `codex-${threadId.replace(/[^\w.-]/g, '_')}.json`);
     const useCache = opt.cache !== false;
     const cached = useCache ? readJson(cacheFile, null) : null;
@@ -300,7 +327,7 @@ export async function evaluateCodexNotify(payload, opt = {}) {
 
     const kept = resume ? resume.records : [];
     const all = mergeReplayed(kept, fresh);
-    const eff = effectiveGuardPolicy({ cwd, config });
+    const eff = effectivePolicy({ cwd, home, config });
     const verdict = annotateSource(evaluateGuard(all, eff.policy, book), eff);
 
     // Persist the cache before notifying: notify() is fire-and-forget by
@@ -375,9 +402,31 @@ export function applyCodexInstall(opt = {}) {
   return { applied: true, line, configPath };
 }
 
+/** The two keys that can raise `level` to 'block'; a warn* key never stops a tool call. */
+const BLOCKING_KEYS = ['maxCostUsd', 'maxContextTokens'];
+
+/**
+ * How to get past the cap that just blocked — which depends on WHERE that cap
+ * came from. `tokenflow guard --set` writes the personal config only, and
+ * `effectivePolicy()` applies the org value as a ceiling (src/core/policy.js),
+ * so raising a personal number can never lift an org cap. Pointing someone at
+ * a command that changes nothing is worse than saying so.
+ * @param {ReturnType<typeof evaluateGuard> & {firedSources?:Record<string,string>}} v
+ * @returns {string}
+ */
+function capHint(v) {
+  const sources = v.firedSources || {};
+  const fromOrg = BLOCKING_KEYS.filter((k) => sources[k] === 'org');
+  if (fromOrg.length) {
+    const subject = fromOrg.length > 1 ? `${fromOrg.join(' and ')} come` : `${fromOrg[0]} comes`;
+    return `${subject} from your org policy, a ceiling your team declared: \`tokenflow guard --set\` writes your own config and cannot raise it. Ask whoever maintains the team server, or see docs/policy.md.`;
+  }
+  return 'Raise the cap with `tokenflow guard --set maxCostUsd=<n>` or clear it with `tokenflow guard --set maxCostUsd=`.';
+}
+
 /**
  * Translate a verdict into what a Claude Code hook must print and how it must exit.
- * @param {ReturnType<typeof evaluateGuard>} v
+ * @param {ReturnType<typeof evaluateGuard> & {firedSources?:Record<string,string>}} v
  * @param {string|null} eventName hook_event_name from the payload
  * @returns {{exitCode:number, stdout:string|null, stderr:string|null}}
  */
@@ -389,7 +438,7 @@ export function hookOutput(v, eventName) {
     return {
       exitCode: 2,
       stdout: null,
-      stderr: `${headline}${advice} Raise the cap with \`tokenflow guard --set maxCostUsd=<n>\` or clear it with \`tokenflow guard --set maxCostUsd=\`.`,
+      stderr: `${headline}${advice} ${capHint(v)}`,
     };
   }
   const out = {
@@ -481,16 +530,11 @@ export function run(flags = {}) {
     return { stdout: ['guard thresholds:', ...lines].join('\n'), stderr: null, exitCode: 0 };
   }
   if (flags.policy) {
+    // Same computation `tokenflow policy show` uses — kept in one place
+    // (src/commands/policy.js) so the two views can never drift apart.
     const cwd = typeof flags.cwd === 'string' ? path.resolve(flags.cwd) : process.cwd();
-    const eff = effectiveGuardPolicy({ cwd, config: loadConfig() });
-    const lines = [
-      `guard policy for ${cwd}`,
-      eff.repoRoot ? `  repository        ${eff.repoRoot}` : '  repository        (none found above this directory)',
-      ...GUARD_KEYS.map((k) => `  ${k.padEnd(18)} ${eff.policy[k] === null ? '—' : eff.policy[k]}  [${eff.sources[k]}]`),
-    ];
-    if (eff.note) lines.push(`  note              ${eff.note}`);
-    for (const e of eff.errors) lines.push(`  ! ${e}`);
-    return { stdout: lines.join('\n'), stderr: null, exitCode: 0 };
+    const eff = policyShow({ cwd, config: loadConfig() });
+    return { stdout: renderPolicyShow(eff, cwd), stderr: null, exitCode: 0 };
   }
   if (typeof flags['codex-notify'] === 'string') {
     let payload;
