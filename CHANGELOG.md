@@ -82,13 +82,29 @@ content, and nothing here is hosted by us.
   left sidebar holds every view, grouped by topic (Spend, Sessions, Models,
   Time, Data, and "More views" for anything a registered module adds), and the
   content takes the rest of the width. The sidebar collapses to a rail of
-  two-letter monograms with the full name as a tooltip, resizes by dragging its
+  icons with the full name as a tooltip, resizes by dragging its
   edge (or with the arrow keys on the handle; double-click resets), and
   remembers both settings with the other preferences. Below 900 pixels it is a
   drawer opened from the header. The search row at the top of the sidebar
   replaces the "⌘K" chip and opens the same command palette. The header now
   shows the active view's name. This replaces the two-row tab wrap from 1.2.0,
   which broke down as soon as a real dataset showed every tab.
+- **A component layer, so controls stop looking like browser defaults.** The design tokens were
+  always there; what was missing was anything built on them, so every control fell through to the
+  browser's own styling. There is now a popover, a listbox with search and full keyboard
+  operation, an action menu, a tooltip, a date range picker and a 45 icon set, all vanilla and all
+  drawing every colour, size and easing from the same tokens. One focus ring is applied once,
+  globally, on `:focus-visible`. See the Components section of docs/design-system.md.
+- **The command palette reads like a palette.** Commands are grouped under headings, every row has
+  an icon, the characters that matched your query are highlighted, and the active row shows the
+  Enter key. Opening it with nothing typed lists what you ran recently instead of an empty box.
+  Searching also got stricter: a query used to match a command's hidden keywords letter by letter
+  across word boundaries, so "rec" returned all three skins. Keywords now match as whole text.
+- **Charts say what they mean.** Hovering a line chart draws a crosshair and names every series at
+  that point; bars, cells and slices have their own tooltips and answer the keyboard as well as the
+  pointer. Stacked segments and neighbouring bars are separated by a small gap so two categories
+  never read as one shape, charts with two to four lines label them at the end of the line, and a
+  chart with no data says so instead of drawing empty axes.
 - **A blocked session is told how to actually unblock itself.** When the guard blocks on a cap that
   came from the org ceiling, the message no longer suggests `tokenflow guard --set`, which writes
   your own config and cannot lift a ceiling. It names the org policy and points at docs/policy.md
