@@ -3,6 +3,27 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.2 — 2026-09-06
+
+The three interface defects 1.3.1 listed as known and left open.
+
+### Fixed
+
+- **Home and End jump the command palette to the first and last command.** They previously did
+  nothing at all, while every other list in the app answers them. In a filter box in front of a
+  list they move the list, not the text caret.
+- **Escape dismisses a tooltip from wherever focus is.** The handler was bound to the element the
+  tooltip belongs to, and a tooltip is almost always opened by hovering, so that element rarely
+  has focus and never saw the key. One listener on the document, alive only while a tooltip is on
+  screen or counting down, is the only placement that works.
+- **The date button and the header no longer state different end dates.** "All data" resolved to
+  the dataset's today rather than to its last day with records, so on a store whose newest record
+  is older than today the button claimed a date no record reached, while the coverage line beside
+  it read the real one. The range now ends at the last day the store has, which is what "all
+  data" says and what the function's own documentation already promised. The rows matched are
+  unchanged, because there was never anything after that date to match. Relative ranges still
+  count back from today, which is the whole point of passing it.
+
 ## 1.3.1 — 2026-09-06
 
 Interface fixes found by driving the dashboard with real mouse and keyboard input, which is
