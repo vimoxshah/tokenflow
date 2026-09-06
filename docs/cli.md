@@ -4,8 +4,11 @@
 tokenflow <command> [flags]
 ```
 
-Every command is safe to run repeatedly, writes only inside `$TOKENFLOW_HOME` (default
-`~/.tokenflow`), and makes no network requests.
+Every command is safe to run repeatedly and writes only inside `$TOKENFLOW_HOME` (default
+`~/.tokenflow`). Nothing makes a network request unless you configured one: `sync --to`,
+`policy pull` (and the cache refresh `refresh` runs for it), `team check`, and `digest --deliver`
+all talk to a server you named yourself, and none of them opens a socket when you have not.
+`mcp` is local stdio only. See the Privacy section of the [README](../README.md).
 
 Global flags: `--json`, `--quiet`, `--debug`, `--help`, `--version`.
 
@@ -89,6 +92,12 @@ tokenflow refresh --provider anthropic --full
 tokenflow refresh --budget 30           # then run it again
 ```
 
+After a successful ingest, `refresh` also refreshes the cached org policy when it has gone stale
+(`GET <sync.to>/api/policy`, at most once an hour). That is the only network call this command can
+make, it happens only when `sync.to` is set, and a server that is down is ignored: a failed pull
+never fails an ingest, and the previously cached policy stays exactly as it was. See
+[policy.md](policy.md).
+
 **Why `--full` can refuse.** A full re-ingest drops the stored records for the sources in
 scope and rebuilds them from the source logs. That is only safe if those logs are reachable.
 Run the same command on another machine, inside a sandbox, or after the log directory has
@@ -165,6 +174,7 @@ tokenflow receipt --sessions                   # where the money goes across ses
 tokenflow receipt --sessions --cap 25,100,500  # dollars above each candidate per-session cap
 tokenflow receipt --from 2026-06-01 --top 30 --automated '^release/'   # flag automated PRs
 tokenflow receipt --json                       # everything, machine-readable
+tokenflow receipt --repo ~/code/api --branch feat/x --json   # one portable receipt.v1 document
 tokenflow receipt --csv > receipts.csv          # one row per branch, every repository
 tokenflow receipt --branch feat/x --svg r.svg --png r.png   # a shareable receipt card
 ```
@@ -189,6 +199,38 @@ writes a shareable card built from a single branch or PR receipt (`--branch` or 
 to also render a PNG through a local Chromium/Chrome (the SVG is still written if none is found).
 Every colour on the card comes from `design/tokens.yaml`, so it matches the configured skin and
 mode. See [exports-and-budgets.md](exports-and-budgets.md).
+
+`--json` on a single receipt (`--branch` or `--pr`) prints the portable **receipt.v1** document
+described in [receipt-schema.md](receipt-schema.md): the same shape the pre-push hook attaches as
+a git note and the Action and the self-hosted App read back, including the branch's `ticket` and
+the `verdict` against any `receipt:` caps that repository committed. `headSha` needs a checkout to
+resolve, so it is `null` unless `--repo` named a path. Without `--branch` or `--pr`, `--json` is
+still the whole cross-repository result, unchanged.
+
+### `tickets`
+Spend grouped by the ticket key in a branch name, or in a merged pull request's title when the
+branch name has none. Built from the same receipts `tokenflow receipt` builds, so a ticket's cost
+always agrees with the sum of its branches.
+
+```bash
+tokenflow tickets                 # every ticket, most expensive first
+tokenflow tickets --top 10        # narrow the printed table
+tokenflow tickets --from 2026-08-01 --to 2026-08-31
+tokenflow tickets --csv > tickets.csv
+tokenflow tickets --json
+```
+
+Matching is a convention, not a guarantee: a branch that names no key stays in the
+`(unattributed)` row rather than being guessed into a ticket. Which shape is looked for, and
+whether each key becomes a link, comes from the `tickets:` block in `config.yaml`
+(`system`, `baseUrl`, `pattern`) - see [configuration.md](configuration.md) and
+[tickets.md](tickets.md). Building a ticket URL is pure string work; nothing here ever calls
+your tracker.
+
+`--csv` writes one row per ticket (`system, key, costUsd, share, turns, sessions, repos,
+branches, first, last`), plus a final `(unattributed)` row when there is spend with no key.
+
+The dashboard shows the same numbers on its **Tickets** tab.
 
 ### `week`
 "Your AI week": spend this calendar week (Monday through today) against last week, context share,
@@ -261,6 +303,46 @@ See [guard-codex.md](guard-codex.md) for the policy file shape and the Codex `no
 
 ---
 
+### `policy`
+The guard policy actually in force, and the cached org ceiling behind it. Three layers: your own
+config (`personal`), the repository's committed `.tokenflow/policy.yaml` (`repo`, which wins key by
+key), and an org policy your team publishes on its team server (`org`, applied only as a ceiling:
+it can lower an effective cap, never raise one).
+
+```bash
+tokenflow policy show                 # the effective policy here, and each value's source
+tokenflow policy show --cwd ~/code/api --json
+tokenflow policy pull                 # fetch GET <sync.to>/api/policy and cache it
+tokenflow policy pull --force         # ignore the one-hour cache TTL
+```
+
+`pull` is the only part of this command that touches the network, and it needs `sync.to` in
+`config.yaml`. The guard hook never fetches: it reads the cache `pull` last wrote, so a session is
+never blocked waiting on a server. `tokenflow refresh` refreshes that cache when it has gone stale,
+which is what keeps it current without anyone remembering to. A failed pull keeps the cache it
+already had, rather than replacing a good policy with nothing.
+
+`tokenflow guard --policy` prints the same view. See [policy.md](policy.md).
+
+---
+
+### `mcp`
+An MCP server on stdio, so the agent spending the money can read its own bill. Four read-only
+tools: `tokenflow_receipt` (what this branch has cost), `tokenflow_policy` (the caps in force here
+and where each came from), `tokenflow_usage` (totals for the last N days and the top models), and
+`tokenflow_budget` (the monthly cap and where this month stands).
+
+```bash
+tokenflow mcp        # speaks newline-delimited JSON-RPC 2.0 on stdin/stdout
+```
+
+You do not run this by hand; you name it in your agent's MCP configuration and the agent starts it.
+Local stdio only: it opens no socket and makes no network request. stdout carries JSON-RPC and
+nothing else, and every diagnostic goes to stderr, because one stray line on stdout desynchronizes
+the client. See [mcp.md](mcp.md).
+
+---
+
 ### `hooks`
 Installs a `pre-push` git hook that attaches a receipt to the pushed commit as a git note under
 `refs/notes/tokenflow`, so the receipt travels with the code instead of living only on this
@@ -293,15 +375,24 @@ Enable or disable an adapter in `config.yaml`.
 | `--from` / `--to` / `--provider` / `--model` / `--client` / `--interface` / `--project` | filter the export |
 | `--html [file]` | one self-contained offline dashboard file |
 | `--maxRecords <n>` | records embedded in the HTML snapshot (default 20,000) |
+| `--focus` | FOCUS-shaped CSV, one row per branch receipt; name `tokenflow-focus-YYYY-MM-DD.csv` |
 | `--out <dir>` | output directory when no filename is given |
 
 ```bash
 tokenflow export --csv --from 2026-03-14 --provider anthropic
 tokenflow export --csv --all
 tokenflow export --html ~/Desktop/tokenflow.html
+tokenflow export --focus --out ~/Desktop      # for a FinOps tool that already reads FOCUS
 ```
 
 Missing values are written as empty cells, never as `0`.
+
+`--focus` maps this machine's own estimates onto the column names of the FinOps FOCUS
+specification, so they can sit beside a real cloud bill in a tool that already ingests
+FOCUS-shaped CSVs. One row per branch receipt; the resource is `<repo>#<branch>`; the ticket, when
+a branch names one, travels in `Tags`. Every dollar is still a local estimate at list price, never
+an invoice, which is why FOCUS's four cost columns all carry the same number. `--from` / `--to`
+narrow the window. See [focus-export.md](focus-export.md).
 
 ---
 
@@ -332,8 +423,15 @@ once any machine has pushed one.
 ```bash
 tokenflow team                    # aggregated view from the shared sync folder
 tokenflow team --json             # machine-readable
+tokenflow team --focus            # FOCUS-shaped CSV, one row per machine-day
 tokenflow team serve              # self-hosted server: same aggregate, over HTTP
+tokenflow team check              # is that server reachable, and is this token accepted?
 ```
+
+`--focus` exports the shared folder's raw daily rollup lines, one FOCUS row per machine-day, to
+`tokenflow-focus-YYYY-MM-DD.csv` in `--out <dir>` (the working directory by default). The resource
+is the machine, not a branch, because that ledger carries no repository detail by design.
+`--from` / `--to` narrow the window. See [focus-export.md](focus-export.md).
 
 `team serve` runs one process on a machine the team owns (LAN or Docker) so every machine can push
 with `sync --to` instead of writing into a shared folder.
@@ -344,6 +442,41 @@ with `sync --to` instead of writing into a shared folder.
 | `--port` | `7790` | bind port |
 | `--dir` | `<TOKENFLOW_HOME>/team` | where uploaded rollups are stored |
 | `--token` | — (falls back to `TOKENFLOW_TEAM_TOKEN`) | shared bearer token |
+
+The same process can also receive **your own** GitHub App, so every pull request gets a receipt
+comment and a "TokenFlow spend" check run without anything of yours passing through a service
+somebody else operates. All three of the first flags below must be set before
+`POST /github/webhook` answers anything but `404`.
+
+| Flag | Environment variable | Meaning |
+|---|---|---|
+| `--github-app-id <id>` | `TOKENFLOW_GH_APP_ID` | the App id from its settings page |
+| `--github-key-file <f.pem>` | `TOKENFLOW_GH_PRIVATE_KEY_FILE` | the App's private key, read from disk at start |
+| `--github-webhook-secret <s>` | `TOKENFLOW_GH_WEBHOOK_SECRET` | the secret GitHub signs each delivery with |
+| `--github-api-url <url>` | `TOKENFLOW_GH_API_URL` | `https://api.github.com` by default; a GitHub Enterprise Server is `https://<host>/api/v3` |
+| `--github-notes-ref <ref>` | none | which notes ref to read receipts from (`tokenflow` by default) |
+
+```bash
+tokenflow team serve --host 0.0.0.0 --token "$TOKENFLOW_TEAM_TOKEN" \
+  --github-app-id 424242 \
+  --github-key-file /etc/tokenflow/app.pem \
+  --github-webhook-secret "$TOKENFLOW_GH_WEBHOOK_SECRET"
+```
+
+`/github/webhook` is authenticated by GitHub's own signature over the raw body, not by the team
+token, because GitHub cannot send one. `GET /github/health` reports whether the App is configured
+without revealing any of it. Never put a secret on the command line on a shared machine; the
+environment variables exist for that. See [github-app.md](github-app.md).
+
+`team check` calls `/health` twice (once without the token, once with it) and `/api/policy` once,
+then reports whether the server is reachable, whether this machine's token was accepted, whether
+an org policy is being served, and what to fix. It exits `1` when the server is unreachable or the
+token was rejected, and `0` otherwise, since an absent org policy is a fact rather than a failure.
+
+```bash
+tokenflow team check                                  # uses sync.to and sync.token from config
+tokenflow team check --url http://tf.lan:7790 --token abc123
+```
 
 See [team-server.md](team-server.md) for the auth model and routes.
 

@@ -108,6 +108,13 @@ ui:
   defaultRange: all             # all | 7d | 30d | 90d | mtd
   defaultFrom: null             # e.g. "2026-03-14" — a floor for the default view only
 
+# How a branch name (or a merged PR's title) is turned into a ticket key, and
+# whether that key becomes a link. All three fields are optional.
+tickets:
+  system: null                   # jira | linear | github | other | null (detect structurally)
+  baseUrl: null                  # e.g. https://acme.atlassian.net - no baseUrl means no link
+  pattern: null                  # your own regex; when set it alone decides a match
+
 # Optional, off by default. See the `sync` and `budgets` sections below.
 sync:
   enabled: false
@@ -230,6 +237,55 @@ A key declared there wins over `~/.tokenflow/config.yaml`, key by key; a key dec
 `null` (informational only). `tokenflow guard --policy [--cwd <dir>]` shows the effective value
 for each key and which file it came from. `note` is optional and shown beside a triggered
 warning/block and beside `guard --policy`'s output. See [guard-codex.md](guard-codex.md).
+
+### Org policy: a cap your team declares, applied as a ceiling
+
+A third layer sits above the personal config and the repository file: a `policy.yaml` your team
+publishes on the team server named by `sync.to`. `tokenflow policy pull` fetches it and caches it
+at `<TOKENFLOW_HOME>/policy/org.yaml`; `tokenflow refresh` refreshes that cache when it has gone
+stale, at most once an hour.
+
+The org layer is a **ceiling**: for each guard key it can only lower the effective cap, never raise
+one, and a key it does not declare leaves the personal or repository value untouched. There is
+nothing to configure locally beyond `sync.to` (and `sync.token` when the server requires one). The
+guard hook never fetches, only reads that cache, so a session is never blocked waiting on a
+server, however stale the cache is.
+
+```bash
+tokenflow policy show     # the effective value for every key, and which layer it came from
+tokenflow policy pull     # refresh the cache now
+```
+
+See [policy.md](policy.md).
+
+### `tickets`: how a branch name names a ticket
+
+Read by `tokenflow tickets`, by the dashboard's Tickets tab, and by every receipt (the `ticket`
+field of a receipt.v1 note). All three fields are optional; with none set, a ticket key is still
+detected structurally and simply carries no link.
+
+```yaml
+tickets:
+  system: jira                      # jira | linear | github | other | null
+  baseUrl: https://acme.atlassian.net
+  pattern: null                     # e.g. "(PROJ-[0-9]+)" - your own regex wins when set
+```
+
+- **`system`** decides which built-in shape is looked for and how a URL is built:
+  `jira` gives `<baseUrl>/browse/<KEY>`, `linear` gives `<baseUrl>/issue/<KEY>`, `github` gives
+  `<baseUrl>/issues/<n>`. With `system: null` both shapes are tried: a GitHub-style reference
+  (`#123`, `gh-123`, `issue-123`, `issues/123`) is unambiguous and is reported as `github`, and a
+  letters-dash-digits key is reported as `other`, because without a declared system there is no way
+  to tell Jira from Linear.
+- **`baseUrl`** is the only thing that turns a key into a link. Without it every ticket's `url` is
+  `null`. Building a URL is string work: nothing here ever calls your tracker.
+- **`pattern`** is your own regular expression, matched case-insensitively. When it is set it alone
+  decides a match: the first capture group is the key, or the whole match when it has no group. An
+  invalid pattern is treated as no match rather than thrown, so a typo cannot break every receipt.
+
+Matching is a convention, not a guarantee, and the built-in shape needs at least two letters and
+two digits (`ENG-42`), which is what keeps `UTF-8` from reading as a ticket. See
+[tickets.md](tickets.md).
 
 ### `sources.otel.paths` — OpenTelemetry (GenAI) file exports
 

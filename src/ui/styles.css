@@ -246,7 +246,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* ---------------------------------------------------------------- layout -- */
-.wrap { max-width: 1680px; margin: 0 auto; padding: 0 20px 72px; }
+.wrap { max-width: 1800px; margin: 0 auto; padding: 0 24px 72px; }
 
 /* A translucent material: content scrolls under it, and the blur + saturation
    keep the header legible over any chart. Frostier when the user asks for it. */
@@ -261,7 +261,7 @@ header.top {
   header.top { background: var(--plane); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 .top-inner {
-  max-width: 1680px; margin: 0 auto; padding: 14px 20px 12px;
+  max-width: 1800px; margin: 0 auto; padding: 14px 24px 12px;
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
 }
 .brand { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -294,7 +294,7 @@ header.top {
 }
 /* Feedback lives on the press, not the release: the interface heard you. */
 .btn:active { transform: scale(.97); }
-.btn:focus-visible, .chip:focus-visible, nav.tabs button:focus-visible, select:focus-visible,
+.btn:focus-visible, .chip:focus-visible, .side-item:focus-visible, .side-search:focus-visible, .side-toggle:focus-visible, select:focus-visible,
 input:focus-visible, .theme-row:focus-visible, .ms-row:focus-visible, table.tbl tbody tr:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
@@ -430,23 +430,99 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 11px; co
 }
 .sec-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
-/* The tab bar wraps to a second (or third) row rather than scrolling: with
-   twenty-plus tabs registered across several views, every tab and the ⌘K
-   chip stay visible with no clipped label at any width, and the active tab
-   never needs a scrollIntoView() call to stay on screen. */
-.tabbar { display: flex; align-items: flex-end; gap: 8px; border-bottom: 1px solid var(--border); margin-top: 4px; }
-nav.tabs { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; min-width: 0; }
-.tabbar .palette-chip { flex: none; margin-bottom: 6px; }
-nav.tabs button {
-  appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
-  color: var(--text-muted); font: inherit; font-size: var(--fs-body); letter-spacing: var(--tr-body); padding: 9px 12px;
-  cursor: pointer; white-space: nowrap;
+/* ------------------------------------------------------------- app shell -- */
+/* Sidebar + main, as a grid. The sidebar width is a variable app.js sets from
+   the saved preference (56px when collapsed to the rail); it never animates,
+   so dragging the handle tracks the pointer 1:1. */
+.app { display: grid; grid-template-columns: var(--sidebar-w, 248px) minmax(0, 1fr); min-height: 100dvh; }
+.side {
+  position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; min-width: 0;
+  background: color-mix(in srgb, var(--surface-1) 72%, var(--plane));
+  border-right: 1px solid var(--border);
+}
+.side-head { display: flex; align-items: center; gap: 8px; padding: 14px 10px 8px 16px; }
+.side-brand {
+  display: flex; align-items: center; gap: 9px; flex: 1 1 auto; min-width: 0;
+  color: var(--text-primary); text-decoration: none; font-weight: 600; font-size: 15px; letter-spacing: var(--tr-body);
+}
+.side-brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-toggle {
+  appearance: none; background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+  color: var(--text-muted); font: inherit; font-size: 17px; line-height: 1; width: 28px; height: 28px; cursor: pointer; flex: none;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.side-toggle:hover { color: var(--text-primary); background: var(--surface-2); }
+.side-toggle:active { transform: scale(.96); }
+.side-search {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 12px 8px; padding: 7px 10px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-muted); font: inherit; font-size: var(--fs-body); letter-spacing: var(--tr-body); text-align: left; min-width: 0; cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
-@media (hover: hover) and (pointer: fine) {
-  nav.tabs button:hover { color: var(--text-primary); }
+.side-search:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.side-search:active { transform: scale(.98); }
+.side-search-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-search kbd {
+  font-family: var(--mono); font-size: 11px; color: var(--text-muted); flex: none;
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; background: var(--surface-2);
 }
-nav.tabs button[aria-selected=true] { color: var(--text-primary); border-bottom-color: var(--accent); }
+.side-nav { flex: 1 1 auto; overflow-y: auto; padding: 0 8px 12px; scrollbar-width: thin; }
+.side-group {
+  font-size: var(--fs-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--text-muted);
+  padding: 14px 10px 4px; white-space: nowrap; overflow: hidden;
+}
+.side-item {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-sm);
+  color: var(--text-secondary); text-decoration: none; font-size: var(--fs-body); letter-spacing: var(--tr-body);
+  white-space: nowrap; min-width: 0;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .side-item:hover { color: var(--text-primary); background: var(--surface-2); }
+}
+.side-item:active { transform: scale(.98); }
+.side-item[aria-current=page] { color: var(--text-primary); background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+.side-label { overflow: hidden; text-overflow: ellipsis; }
+.side-mono { display: none; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .04em; width: 28px; text-align: center; flex: none; }
+.side-foot {
+  padding: 10px 16px 14px; font-size: 11.5px; color: var(--text-muted); border-top: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.side-resizer { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 1; }
+.side-resizer:hover, .side-resizer:focus-visible, body.resizing .side-resizer {
+  background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none;
+}
+body.resizing { cursor: col-resize; user-select: none; }
+.side-open { display: none; }
+
+/* The collapsed rail keeps every destination reachable: two-letter monograms
+   with the full label as a tooltip, plus the search button as its shortcut. */
+@media (min-width: 900px) {
+  .app.collapsed .side-label, .app.collapsed .side-group, .app.collapsed .side-brand-name,
+  .app.collapsed .side-search-label, .app.collapsed .side-foot, .app.collapsed .side-resizer { display: none; }
+  .app.collapsed .side-mono { display: inline-block; }
+  .app.collapsed .side-head { flex-direction: column; gap: 6px; padding: 14px 0 8px; }
+  .app.collapsed .side-brand { flex: none; }
+  .app.collapsed .side-search { justify-content: center; margin: 2px 8px 8px; padding: 7px 0; }
+  .app.collapsed .side-nav { padding: 6px 8px 12px; }
+  .app.collapsed .side-item { justify-content: center; padding: 8px 0; margin-top: 4px; }
+}
+
+/* Narrow screens: the sidebar becomes a drawer over the content. */
+@media (max-width: 899px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side {
+    position: fixed; left: 0; top: 0; height: 100dvh; width: min(85vw, 320px); z-index: 80;
+    transform: translateX(-100%); transition: transform var(--dur-base) var(--ease-out); box-shadow: var(--shadow);
+  }
+  .app.drawer-open .side { transform: none; }
+  .side-scrim { position: fixed; inset: 0; z-index: 75; background: rgba(0, 0, 0, .45); }
+  .side-open { display: inline-flex; }
+  .side-toggle, .side-resizer { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .side { transition: none; }
+}
 
 /* ---------------------------------------------------------------- charts -- */
 .chart { width: 100%; display: block; overflow: visible; }
@@ -621,9 +697,8 @@ dialog h2 { margin: 0; font-size: 15px; }
 
 @media print {
   header.top { position: static; }
-  /* .tabbar, not nav.tabs: the wrapper also carries the ⌘K chip, and hiding
-     only the nested nav would leave that chip printed on its own row. */
-  .btn, .tabbar, .filters { display: none !important; }
+  .app { display: block; }
+  .side, .side-open, .side-scrim, .btn, .filters { display: none !important; }
   .card { break-inside: avoid; }
 }
 

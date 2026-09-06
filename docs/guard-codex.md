@@ -101,32 +101,47 @@ or beside the `guard:` block.
 **A repository's declared key wins over the personal config, key by key.** A
 key the repository does not declare falls back to `~/.tokenflow/config.yaml`,
 and a key declared nowhere is `null` — informational only, same as today.
+Above both sits an optional **org policy**: a cap your team publishes on its
+own team server, cached locally, applied only as a ceiling (it can lower an
+effective cap, never raise one). See [policy.md](policy.md).
 
 ```bash
 tokenflow guard --policy                  # effective policy for the current directory
 tokenflow guard --policy --cwd <dir>      # for some other directory / repository
+tokenflow policy show                     # the same view, under its own command
 ```
 
-prints each of the five keys, its value, and where it came from —
-`[repo]`, `[config]`, or `[default]` — plus the repository root that was
-found (a plain `.git` directory is enough; a git worktree resolves to its
-main checkout, same as everywhere else in TokenFlow) and any errors in
-`policy.yaml`.
+prints each of the five keys, its value, and where it came from -
+`[personal]`, `[repo]`, `[org]`, or `[default]` - plus the repository root
+that was found (a plain `.git` directory is enough; a git worktree resolves to
+its main checkout, same as everywhere else in TokenFlow) and any errors in
+`policy.yaml`. `[personal]` is `~/.tokenflow/config.yaml`; older builds of
+this command labelled that same source `[config]`.
 
 When a warning or block fires because of a repo-declared key, one extra line
 is appended to the verdict naming which key(s) came from
 `.tokenflow/policy.yaml` (and the `note`, if one is set) — for both the
-Claude Code hook and the Codex path, since both call the same
-`effectiveGuardPolicy()`.
+Claude Code hook and the Codex path, since both call the same policy
+computation. A key that came from the org layer gets its own line saying so,
+and a block on an org cap tells you to talk to whoever maintains the team
+server rather than to run `guard --set`, which writes your own config and
+cannot lift a ceiling.
+
+The org layer is read from its local cache only. This hook never fetches, no
+matter how stale that cache is; `tokenflow policy pull` and `tokenflow
+refresh` are what keep it current. See [policy.md](policy.md).
 
 ## Everything this adds, at a glance
 
 | Command | What it does |
 | --- | --- |
 | `tokenflow guard --policy [--cwd <dir>]` | Show the effective guard policy and each value's source |
+| `tokenflow policy show [--cwd <dir>]` | The same view, plus where the cached org policy came from |
+| `tokenflow policy pull [--force]` | Refresh the cached org policy from your team server |
 | `tokenflow guard --install --codex [--apply]` | Wire up (or print) Codex's `notify` line |
 | `tokenflow guard --codex-notify <json>` | What Codex's `notify` actually runs, once per turn |
 
-Nothing here makes a network call, reads prompt or code content, or writes
-outside `$TOKENFLOW_HOME` and (only with `--apply`, and only when safe)
-`~/.codex/config.toml`.
+Nothing here reads prompt or code content, or writes outside `$TOKENFLOW_HOME`
+and (only with `--apply`, and only when safe) `~/.codex/config.toml`. Only one
+row makes a network call: `policy pull`, to the team server you named in
+`sync.to`. Both guard paths read the cached policy and never fetch.

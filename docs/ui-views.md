@@ -19,7 +19,7 @@ Two registries do this:
 3. Import the module in `src/ui/views/index.js` and add it to `VIEWS`.
 4. Run the dashboard and open `#tab=<your id>`.
 
-Nothing else changes. app.js merges your tab into the tab bar, links your
+Nothing else changes. app.js merges your tab into the sidebar, links your
 stylesheet in development, inlines it into the offline snapshot, and routes the
 deep link to you.
 
@@ -30,7 +30,7 @@ import { el } from '../charts.js';
 
 export const id = 'burn';            // required, unique
 export const label = 'Burn rate';    // required, the tab caption
-export const order = 45;             // required, position in the tab bar
+export const order = 45;             // required, position within the sidebar (and in its "More views" group)
 export const css = './styles/burn.css';  // optional, relative to src/ui/
 
 export function view(ctx) {          // required, returns one element

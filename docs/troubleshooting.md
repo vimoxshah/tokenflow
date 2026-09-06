@@ -130,7 +130,7 @@ interfaceOverrides:
 ## The dashboard is empty but `status` shows data
 
 Almost always the date filter. Click **Since …**, or clear filters via the breadcrumb. The
-breadcrumb above the tabs always lists every active filter.
+breadcrumb above the view always lists every active filter.
 
 ## "a refresh is already running"
 

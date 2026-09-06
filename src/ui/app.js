@@ -86,6 +86,28 @@ const TABS = [
 const BUILTIN_TAB_IDS = new Set(TABS.map(([id]) => id));
 
 /**
+ * Topic groups for the tab strip's overflow menu. Presentation only: the order
+ * of the strip still comes from TABS and the registry. An id missing here lands
+ * under "More views", so a newly registered view needs no edit to appear.
+ */
+/** @type {[string, string[]][]} */
+const TAB_GROUPS = [
+  ['Spend', ['overview', 'receipts', 'tickets', 'cost', 'branches', 'compare']],
+  ['Sessions', ['anatomy', 'live', 'productivity', 'rhythm']],
+  ['Models', ['providers', 'models', 'interfaces', 'efficiency', 'cache']],
+  ['Time', ['time', 'peaks', 'whatif']],
+  ['Data', ['explorer', 'annotations', 'health']],
+];
+// Declared here, above boot(): the snapshot boots synchronously at module end,
+// and a binding below that call would still be in its temporal dead zone.
+const SIDEBAR_DEFAULT_W = 248;
+const SIDEBAR_MIN_W = 200;
+const SIDEBAR_MAX_W = 420;
+const SIDEBAR_RAIL_W = 56;
+/** Sidebar chrome state. `w` and `collapsed` persist with the other prefs; `drawerOpen` is per load. */
+const sideState = { w: SIDEBAR_DEFAULT_W, collapsed: false, drawerOpen: false };
+
+/**
  * Registered views that are safe to mount: a unique id that does not collide
  * with a built-in tab, and the three required exports.
  *
@@ -285,7 +307,7 @@ function paletteContext() {
     exportHtmlInfo: () => htmlExportInfoModal(),
     clearFilters,
     copyDeepLink,
-    activeTabButton: () => document.querySelector('nav.tabs button[aria-selected="true"]'),
+    activeTabButton: () => /** @type {HTMLElement|null} */ (document.querySelector('#tabs .side-item[aria-current="page"]')),
   };
 }
 
@@ -326,6 +348,7 @@ async function boot() {
   injectViewStyles();
   injectOwnStyles();
   const prefs = loadPrefs();
+  initSidebar(prefs);
   S.bundle = SNAPSHOT ? window.__TOKENFLOW_BUNDLE__ : await fetchJson('/api/bundle');
   // Every daily chart overlays annotations from this module-level list, not
   // from S.bundle directly, so a marker must not wait for someone to visit
@@ -526,6 +549,177 @@ function goToTab(id) {
   try { history.replaceState(null, '', `#${currentDeepLinkHash()}`); } catch { /* file:// or a sandboxed frame may refuse; the tab still switched */ }
 }
 
+/**
+ * Two letters per tab for the collapsed rail: initials of the first two words,
+ * else the first two letters. When two labels would share a monogram, the
+ * later one takes its first letter plus the next unused consonant, so
+ * Providers and Productivity never both read "PR".
+ * @param {{id:string,label:string}[]} tabs
+ * @returns {Map<string,string>} tab id to monogram
+ */
+function tabMonograms(tabs) {
+  const used = new Set();
+  const out = new Map();
+  for (const t of tabs) {
+    const label = String(t.label);
+    const words = label.split(/\s+/).filter(Boolean);
+    let m = (words.length >= 2 ? words[0][0] + words[1][0] : label.slice(0, 2)).toUpperCase();
+    if (used.has(m)) {
+      const rest = label.slice(1).replace(/[^a-z]/gi, '');
+      for (const ch of rest) {
+        const cand = (label[0] + ch).toUpperCase();
+        if (!used.has(cand) && !/[AEIOU]/.test(ch.toUpperCase())) { m = cand; break; }
+      }
+    }
+    used.add(m);
+    out.set(t.id, m);
+  }
+  return out;
+}
+
+/**
+ * The sidebar navigation: every tab, grouped by TAB_GROUPS, with anything the
+ * groups do not name under "More views" so a newly registered view always has
+ * a place. Also sets the page title in the header to the active view's label.
+ */
+function renderSidebar() {
+  const nav = document.getElementById('tabs');
+  if (!nav) return;
+  nav.textContent = '';
+  const tabs = allTabs();
+  const byId = new Map(tabs.map((t) => [t.id, t]));
+  const monograms = tabMonograms(tabs);
+  const placed = new Set();
+  const group = (/** @type {string} */ title, /** @type {{id:string,label:string}[]} */ items) => {
+    if (!items.length) return;
+    nav.appendChild(el('div', { class: 'side-group', text: title }));
+    for (const t of items) {
+      const active = S.tab === t.id;
+      const a = el('a', {
+        class: 'side-item', href: `#tab=${t.id}`, title: t.label, 'data-tab': t.id,
+        'aria-current': active ? 'page' : null,
+      }, [
+        el('span', { class: 'side-mono', 'aria-hidden': 'true', text: monograms.get(t.id) || '' }),
+        el('span', { class: 'side-label', text: t.label }),
+      ]);
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        goToTab(t.id);
+        if (sideState.drawerOpen) setDrawer(false);
+      });
+      nav.appendChild(a);
+      placed.add(t.id);
+    }
+  };
+  for (const [title, ids] of TAB_GROUPS) group(title, ids.filter((id) => byId.has(id)).map((id) => byId.get(id)));
+  group('More views', tabs.filter((t) => !placed.has(t.id)));
+  const active = nav.querySelector('.side-item[aria-current="page"]');
+  if (active && typeof active.scrollIntoView === 'function') active.scrollIntoView({ block: 'nearest' });
+  const title = document.getElementById('page-title');
+  if (title) title.textContent = byId.get(S.tab)?.label || 'Tokenflow';
+  const foot = document.getElementById('side-foot');
+  if (foot) foot.textContent = S.bundle?.meta?.appVersion ? `v${S.bundle.meta.appVersion} · local-first` : '';
+}
+
+function clampSidebarWidth(/** @type {number} */ w) {
+  return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, Math.round(w)));
+}
+
+/** Push sideState into the DOM: the width variable, the collapsed and drawer classes, and the controls' ARIA state. */
+function applySidebarState() {
+  const app = document.getElementById('app');
+  if (!app) return;
+  app.style.setProperty('--sidebar-w', `${sideState.collapsed ? SIDEBAR_RAIL_W : sideState.w}px`);
+  app.classList.toggle('collapsed', sideState.collapsed);
+  app.classList.toggle('drawer-open', sideState.drawerOpen);
+  const toggle = document.getElementById('side-toggle');
+  if (toggle) {
+    const label = sideState.collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    toggle.setAttribute('aria-expanded', String(!sideState.collapsed));
+    toggle.setAttribute('aria-label', label);
+    toggle.title = label;
+    toggle.textContent = sideState.collapsed ? '›' : '‹';
+  }
+  const rz = document.getElementById('side-resizer');
+  if (rz) rz.setAttribute('aria-valuenow', String(sideState.w));
+  const scrim = document.getElementById('side-scrim');
+  if (scrim) scrim.hidden = !sideState.drawerOpen;
+  const opener = document.getElementById('side-open');
+  if (opener) opener.setAttribute('aria-expanded', String(sideState.drawerOpen));
+}
+
+/** Narrow screens: the sidebar is an off-canvas drawer. Focus moves in on open and back to the trigger on close. */
+function setDrawer(/** @type {boolean} */ open) {
+  sideState.drawerOpen = open;
+  applySidebarState();
+  const target = /** @type {HTMLElement|null} */ (document.getElementById(open ? 'palette-chip' : 'side-open'));
+  if (target) target.focus();
+}
+
+/**
+ * Wire the sidebar chrome once: collapse toggle, drawer trigger and scrim,
+ * Escape, and the resize handle (pointer capture for 1:1 tracking, arrow keys
+ * and Home/End for keyboard users, double-click to reset). Width and collapsed
+ * state come from the same prefs blob as skin and tab.
+ * @param {any} prefs
+ */
+function initSidebar(prefs) {
+  const saved = prefs && prefs.sidebar;
+  if (saved && typeof saved === 'object') {
+    if (Number.isFinite(saved.w)) sideState.w = clampSidebarWidth(saved.w);
+    sideState.collapsed = saved.collapsed === true;
+  }
+  applySidebarState();
+  const toggle = document.getElementById('side-toggle');
+  if (toggle) toggle.addEventListener('click', () => { sideState.collapsed = !sideState.collapsed; applySidebarState(); savePrefs(); });
+  const opener = document.getElementById('side-open');
+  if (opener) opener.addEventListener('click', () => setDrawer(true));
+  const scrim = document.getElementById('side-scrim');
+  if (scrim) scrim.addEventListener('click', () => setDrawer(false));
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && sideState.drawerOpen) { ev.preventDefault(); setDrawer(false); }
+  });
+  const rz = document.getElementById('side-resizer');
+  if (!rz) return;
+  let startX = 0;
+  let startW = 0;
+  rz.addEventListener('pointerdown', (ev) => {
+    if (sideState.collapsed) return;
+    startX = ev.clientX;
+    startW = sideState.w;
+    rz.setPointerCapture(ev.pointerId);
+    document.body.classList.add('resizing');
+    ev.preventDefault();
+  });
+  rz.addEventListener('pointermove', (ev) => {
+    if (!rz.hasPointerCapture(ev.pointerId)) return;
+    sideState.w = clampSidebarWidth(startW + (ev.clientX - startX));
+    applySidebarState();
+  });
+  const end = (/** @type {PointerEvent} */ ev) => {
+    if (!rz.hasPointerCapture(ev.pointerId)) return;
+    rz.releasePointerCapture(ev.pointerId);
+    document.body.classList.remove('resizing');
+    savePrefs();
+  };
+  rz.addEventListener('pointerup', end);
+  rz.addEventListener('pointercancel', end);
+  rz.addEventListener('dblclick', () => { sideState.w = SIDEBAR_DEFAULT_W; applySidebarState(); savePrefs(); });
+  rz.addEventListener('keydown', (ev) => {
+    const step = ev.shiftKey ? 48 : 16;
+    let w = null;
+    if (ev.key === 'ArrowLeft') w = sideState.w - step;
+    else if (ev.key === 'ArrowRight') w = sideState.w + step;
+    else if (ev.key === 'Home') w = SIDEBAR_MIN_W;
+    else if (ev.key === 'End') w = SIDEBAR_MAX_W;
+    if (w === null) return;
+    ev.preventDefault();
+    sideState.w = clampSidebarWidth(w);
+    applySidebarState();
+    savePrefs();
+  });
+}
+
 /** The `tab=…&skin=…&mode=…` hash boot() parses back. Shared by goToTab's address-bar update and copyDeepLink, so the two never disagree on shape. */
 function currentDeepLinkHash() {
   return new URLSearchParams({
@@ -545,13 +739,7 @@ function renderShell() {
   acts.appendChild(btn('Pricing', () => pricingModal(), 'ghost'));
   acts.appendChild(themePicker());
 
-  const tabs = document.getElementById('tabs');
-  tabs.textContent = '';
-  for (const { id, label } of allTabs()) {
-    const b = el('button', { role: 'tab', text: label, 'aria-selected': String(S.tab === id) });
-    b.addEventListener('click', () => goToTab(id));
-    tabs.appendChild(b);
-  }
+  renderSidebar();
 
   const foot = document.getElementById('footer');
   foot.textContent = '';
@@ -2689,6 +2877,7 @@ function savePrefs() {
     granularity: S.granularity,
     rangeId: S.rangeId,
     filters: S.filters,
+    sidebar: { w: sideState.w, collapsed: sideState.collapsed },
   };
   try {
     localStorage.setItem('tokenflow-prefs', JSON.stringify(prefs));

@@ -118,6 +118,15 @@ Hooks and integrations that run on the developer's machine:
 - **Per-repo policy file** `.tokenflow/policy.yaml`, committed with the code,
   so a team's caps travel with the repository.
 - **Receipt schema v0**, published, so FinOps tools can ingest receipts.
+- **Org policy** (shipped in 1.3.0). A cap the team publishes on its own team
+  server, cached locally and applied as a ceiling above the personal and repo
+  layers: it can lower an effective cap, never raise one. The guard hook reads
+  the cache and never fetches, so a session is never blocked on a server. See
+  docs/policy.md.
+- **MCP server** (shipped in 1.3.0). `tokenflow mcp` on stdio, so the agent
+  spending the money can read its own bill: what the branch has cost, the caps
+  in force here, recent totals, the monthly budget. Read-only and local. See
+  docs/mcp.md.
 
 ## 5. Ledger — the buyer's view (next → later)
 
@@ -126,8 +135,21 @@ Hooks and integrations that run on the developer's machine:
 - **Self-hosted team server.** One process on a machine the team owns (LAN,
   Docker), fed by the same per-machine rollups the folder sync uses today.
   Per-developer names remain opt-in per person. Still no cloud.
+- **Self-hosted GitHub App** (shipped in 1.3.0). That same process can receive
+  the customer's OWN GitHub App and put a receipt comment plus a "TokenFlow
+  spend" check run on every pull request. We host nothing and store nothing.
+  Ships with a deployment kit. See docs/github-app.md.
 - **Exports that travel.** A receipt as a PNG card for Slack or a PR; a weekly
   "your AI week" card; CSV of receipts.
+- **Cost per ticket** (shipped in 1.3.0). Branch receipts joined to the ticket
+  key their branch name (or a merged PR title) carries: a dashboard tab,
+  `tokenflow tickets`, and a `ticket` field on every receipt. Matching is a
+  convention, and an unmatched branch stays unattributed rather than guessed.
+  See docs/tickets.md.
+- **FOCUS export** (shipped in 1.3.0). `tokenflow export --focus` and
+  `tokenflow team --focus` write this machine's own estimates onto the FinOps
+  FOCUS column names, so they can sit beside a real cloud bill. Still an
+  estimate at list price, never an invoice. See docs/focus-export.md.
 - **Budgets per repo and per team**, using the existing budget engine.
 
 ## 6. Landing page and story (now)
@@ -172,11 +194,19 @@ Hooks and integrations that run on the developer's machine:
 | **Now** (this release) | Design system + compiler + gates (shipped) · dashboard polish (shipped) · story strip (shipped) · Receipts view (shipped) · menu bar on tokens (shipped) · landing v2 (shipped) |
 | **Next** (weeks 2-6) | Session anatomy (shipped) · live sessions (shipped) · receipt-on-push hook + GitHub Action (shipped) · Codex branch capture (shipped) · attribution defect fixes (shipped) · cache health (shipped) · guard state in menu bar (shipped) |
 | **Later** (quarter) | Ledger join + self-hosted team server (shipped) · model what-if (shipped) · new adapters in batches (otel shipped; the rest still need a sample, see docs/providers-otel.md) · Windows/Linux trays (not started) · signed build (not started) |
+| **1.3.0** | Self-hosted GitHub App (shipped) · cost per ticket (shipped) · FOCUS export (shipped) · MCP server (shipped) · org policy (shipped) · self-hosting kit (shipped) |
 
 **Status 2026-09-06:** everything in the Now and Next rows above has shipped, along with the
 Ledger, the self-hosted team server, model what-if, and the otel adapter from Later. The six
 views named in section 2's Next list (Session anatomy, Cache health, Model what-if, Compare v2,
 Rhythm and focus, Annotations) all landed as registered modules, plus Compare branches as a
-seventh. Remaining open items: Windows/Linux trays, the browser extension, a signed macOS build,
+seventh, and Tickets as an eighth in 1.3.0.
+
+1.3.0 closed six more: the self-hosted GitHub App (docs/github-app.md), cost per ticket
+(docs/tickets.md), the FOCUS export (docs/focus-export.md), the MCP server (docs/mcp.md), the org
+policy layer (docs/policy.md), and the self-hosting kit that deploys the team server
+(docs/team-server.md).
+
+Remaining open items: Windows/Linux trays, the browser extension, a signed macOS build,
 and adapters for Aider/Ollama/LM Studio/Zed/Windsurf/JetBrains/Continue/Copilot CLI/Antigravity
 (each needs a sample before it can be verified).
