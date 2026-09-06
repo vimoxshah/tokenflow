@@ -1,0 +1,21 @@
+name: Receipt comment
+
+# Dogfoods action/ against this repo's own pull requests: reads the TokenFlow
+# receipt attached to the PR head sha (refs/notes/tokenflow) and posts or
+# updates one comment with it. See action/README.md.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  receipt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./action

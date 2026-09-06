@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vimoxshah/tokenflow/schemas/receipt.v0.json",
+  "title": "TokenFlow branch receipt (v0)",
+  "description": "A portable, self-contained record of what one branch cost — designed to travel with the code as a git note (refs/notes/tokenflow) rather than live on a server. Every cost figure is estimated locally from token counts against a local price table, never measured billing, unless the underlying records say otherwise; see docs/receipt-schema.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "toolVersion",
+    "repo",
+    "branch",
+    "headSha",
+    "window",
+    "costUsd",
+    "contextShare",
+    "turns",
+    "sessions",
+    "subagentTurns",
+    "models",
+    "coverage",
+    "largestPromptTokens",
+    "changedLines",
+    "pr",
+    "longLived",
+    "costPer100Lines",
+    "notes"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 0,
+      "description": "Receipt schema version. This document describes version 0."
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this receipt was computed, in UTC ISO-8601."
+    },
+    "toolVersion": {
+      "type": "string",
+      "description": "The TokenFlow package version that computed this receipt (package.json version)."
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The repository's name — the basename of its main checkout, resolved through git worktrees. Never a full path."
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The branch this receipt attributes spend to."
+    },
+    "headSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "The commit sha this receipt is attached to (the local sha being pushed)."
+    },
+    "window": {
+      "description": "The first and last timestamp of a priced turn attributed to this branch, or null when there were none.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["first", "last"],
+          "properties": {
+            "first": { "type": ["string", "null"], "format": "date-time" },
+            "last": { "type": ["string", "null"], "format": "date-time" }
+          }
+        }
+      ]
+    },
+    "costUsd": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Estimated spend attributed to this branch, in US dollars. null when no turn on this branch had a priced model — never 0."
+    },
+    "contextShare": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Share of costUsd that paid to re-send prior context (cache reads + writes) rather than fresh input/output. A high share is the price of a long session, not necessarily waste."
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of primary-measurement turns attributed to this branch."
+    },
+    "sessions": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of distinct sessions that touched this branch."
+    },
+    "subagentTurns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Of turns, how many ran as a subagent."
+    },
+    "models": {
+      "type": "array",
+      "description": "Spend broken down by model family, most expensive first.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "costUsd", "share"],
+        "properties": {
+          "model": { "type": "string" },
+          "costUsd": { "type": ["number", "null"], "minimum": 0 },
+          "share": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "coverage": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Share of this branch's turns that used a model with a configured price. Turns outside this coverage are counted but excluded from costUsd."
+    },
+    "largestPromptTokens": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "The largest single prompt (input + cache read + cache write tokens) seen on this branch."
+    },
+    "changedLines": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Additions + deletions of the matched pull request, when one was supplied. null with no matched PR."
+    },
+    "pr": {
+      "description": "The pull request this receipt's headline window is scoped to (turns up to its merge), or null when none was supplied/matched.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["number", "mergedAt"],
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 },
+            "mergedAt": { "type": ["string", "null"], "format": "date-time" }
+          }
+        }
+      ]
+    },
+    "longLived": {
+      "type": "boolean",
+      "description": "True for a long-lived branch name (main, staging, …): this receipt is for a period of work on it, not one change."
+    },
+    "costPer100Lines": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "costUsd divided by changedLines, scaled to 100 lines. null with no matched PR, no changed lines, or no priced turns."
+    },
+    "notes": {
+      "type": "array",
+      "description": "Honesty caveats in plain sentences: e.g. unpriced turns excluded from costUsd, a long-lived branch covering a period, work that predates the matched PR, that costs are estimated locally and no prompt or code content was read.",
+      "items": { "type": "string" }
+    }
+  }
+}
