@@ -1,8 +1,16 @@
 name: Receipt comment
 
-# Dogfoods action/ against this repo's own pull requests: reads the TokenFlow
-# receipt attached to the PR head sha (refs/notes/tokenflow) and posts or
-# updates one comment with it. See action/README.md.
+# Dogfoods the root action (the Marketplace listing's entry point) against
+# this repo's own pull requests: reads the TokenFlow receipt attached to the
+# PR head sha (refs/notes/tokenflow) and posts or updates one comment with
+# it. See action/README.md and docs/receipts-on-github.md.
+#
+# max-usd is a dogfood example only, not a real cap for this repo: today, no
+# push to this repo has the pre-push hook installed, so every PR here has no
+# receipt note, and a missing receipt is always a no-op regardless of
+# max-usd. This job is not a required check, so it never blocks a merge on
+# its own either way - but once someone installs the hook, an over-budget
+# receipt will fail this job (see docs/receipts-on-github.md).
 
 on:
   pull_request:
@@ -18,4 +26,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: ./action
+      - uses: ./
+        with:
+          max-usd: '50'
