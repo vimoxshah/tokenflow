@@ -11,11 +11,16 @@ import { indexCube, filterCube } from '../analytics/aggregate.js';
 import { calculateDimensionSeries } from '../analytics/dimensions.js';
 import { compact, int, usd, pct, signedPct, shortDate, longDate, hourLabel, hourWindow, relativeTime, humanDuration, countdown, DOW } from '../core/units.js';
 import { INTERFACE_ORDER } from '../core/schema.js';
+import { renderReceiptMarkdown } from '../analytics/receipt.js';
 import {
   el, svg, timeSeries, columns, hbars, donut, compositionBar, calendarHeatmap,
   matrix, scatter, sparkline, legend, table, miniBar, tooltip, observeWidth,
   ColorScale, SERIES_VARS, OTHER_COLOR, scaleLegend,
 } from './charts.js';
+import * as charts from './charts.js';
+import { VIEWS } from './views/index.js';
+import { mountPalette } from './palette.js';
+import { maybeShowFirstRun } from './first-run.js';
 
 const SNAPSHOT = typeof window !== 'undefined' && !!window.__TOKENFLOW_BUNDLE__;
 
@@ -55,21 +60,72 @@ const COMP_COLORS = {
   cacheWrite: 'var(--series-4)',
 };
 
+/**
+ * The tabs app.js renders itself, as `[id, label, order]`.
+ *
+ * Orders are spaced by 10 so a view registered in ./views/index.js can slot
+ * anywhere without renumbering anything. 30 is deliberately absent: the Live
+ * tab is a registered view and claims it from the registry.
+ */
 const TABS = [
-  ['overview', 'Overview'],
-  ['live', 'Live'],
-  ['providers', 'Providers'],
-  ['models', 'Models'],
-  ['interfaces', 'Interfaces'],
-  ['time', 'Time patterns'],
-  ['peaks', 'Peaks'],
-  ['efficiency', 'Efficiency'],
-  ['cost', 'Cost'],
-  ['productivity', 'Productivity'],
-  ['compare', 'Compare'],
-  ['explorer', 'Data explorer'],
-  ['health', 'Data health'],
+  ['overview', 'Overview', 10],
+  ['receipts', 'Receipts', 20],
+  ['providers', 'Providers', 40],
+  ['models', 'Models', 50],
+  ['interfaces', 'Interfaces', 60],
+  ['time', 'Time patterns', 70],
+  ['peaks', 'Peaks', 80],
+  ['efficiency', 'Efficiency', 90],
+  ['cost', 'Cost', 100],
+  ['productivity', 'Productivity', 110],
+  ['compare', 'Compare', 120],
+  ['explorer', 'Data explorer', 130],
+  ['health', 'Data health', 140],
 ];
+
+const BUILTIN_TAB_IDS = new Set(TABS.map(([id]) => id));
+
+/**
+ * Registered views that are safe to mount: a unique id that does not collide
+ * with a built-in tab, and the three required exports.
+ *
+ * A malformed entry is dropped with a console message rather than allowed to
+ * break every other tab. Several people add views to the same registry, and one
+ * bad module must not take the dashboard down with it.
+ *
+ * @returns {object[]}
+ */
+function registeredViews() {
+  const seen = new Set();
+  const out = [];
+  for (const v of VIEWS) {
+    const where = v && v.id ? `view "${v.id}"` : 'a view module';
+    if (!v || typeof v.id !== 'string' || !v.id) { console.error(`registry: ${where} has no id — skipped`); continue; }
+    if (typeof v.view !== 'function' || typeof v.label !== 'string' || typeof v.order !== 'number') {
+      console.error(`registry: ${where} needs label, order and view() — skipped`);
+      continue;
+    }
+    if (BUILTIN_TAB_IDS.has(v.id) || seen.has(v.id)) { console.error(`registry: ${where} duplicates an existing tab id — skipped`); continue; }
+    seen.add(v.id);
+    out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Built-in tabs and registered views merged into one ordered tab list.
+ * @returns {{id:string,label:string,order:number,module:object|null}[]}
+ */
+function allTabs() {
+  const builtin = TABS.map(([id, label, order]) => ({ id, label, order, module: null }));
+  const registered = registeredViews().map((v) => ({ id: v.id, label: v.label, order: v.order, module: v }));
+  return [...builtin, ...registered].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+}
+
+/** The registered module owning a tab id, or null for a built-in tab. */
+function viewModule(id) {
+  return allTabs().find((t) => t.id === id)?.module || null;
+}
 
 /**
  * Skins restyle the room; they never restyle the data. The categorical series
@@ -84,6 +140,177 @@ export const SKINS = [
   { id: 'editorial', name: 'Editorial', note: 'Warm charcoal, serif figures' },
 ];
 
+// =========================================================== view registry ==
+
+/**
+ * One `<link>` per registered view's stylesheet, injected once.
+ *
+ * Development only. A saved snapshot has no server to fetch src/ from, so the
+ * exporter inlines the same files instead — see src/export/html-snapshot.js.
+ */
+let viewStylesInjected = false;
+function injectViewStyles() {
+  if (SNAPSHOT || viewStylesInjected) return;
+  viewStylesInjected = true;
+  const already = new Set();
+  document.querySelectorAll('link[rel="stylesheet"]').forEach((l) => already.add(l.getAttribute('href')));
+  for (const v of registeredViews()) {
+    if (!v.css) continue;
+    const href = '/src/ui/' + String(v.css).replace(/^\.?\//, '');
+    if (already.has(href)) continue;
+    already.add(href);
+    document.head.appendChild(el('link', { rel: 'stylesheet', href }));
+  }
+}
+
+/**
+ * The stylesheets for palette.js and first-run.js: not registered views (they
+ * are app.js features, not tabs), so injectViewStyles() never sees them. They
+ * still live under src/ui/styles/, which means html-snapshot.js's collectCss
+ * inlines them into an offline snapshot for free — this function only has to
+ * cover the dev server, where nothing else links them.
+ *
+ * A static `<link>` in index.html would do the same job in dev, but the
+ * snapshot's `<link>` removal is a single, non-global replace (see
+ * html-snapshot.js): a second `<link>` there would survive into the saved
+ * file and fail to load from file://. Injecting by script, the same way
+ * injectViewStyles() does, avoids that entirely.
+ */
+const OWN_STYLES = ['./styles/palette.css', './styles/first-run.css'];
+let ownStylesInjected = false;
+function injectOwnStyles() {
+  if (SNAPSHOT || ownStylesInjected) return;
+  ownStylesInjected = true;
+  for (const css of OWN_STYLES) {
+    const href = '/src/ui/' + css.replace(/^\.?\//, '');
+    document.head.appendChild(el('link', { rel: 'stylesheet', href }));
+  }
+}
+
+/**
+ * Set once boot() mounts it; the chip's click handler is the only other
+ * caller. Declared here — before `boot().catch(...)` is invoked below — and
+ * NOT after boot()'s own definition: in a snapshot, boot() never hits a real
+ * `await` (the bundle is already on `window`, so the SNAPSHOT branch of the
+ * ternary never evaluates the `await` branch), so it runs start to finish
+ * synchronously in one go. A `let` declared later in the file would still be
+ * in its temporal dead zone at that point, exactly like `viewStylesInjected`
+ * had to be declared before boot() for the same reason.
+ */
+let palette = null;
+
+/**
+ * Intervals a view asked for, in two lifetimes: one registered from `onEnter`
+ * lives until the view is left, one registered from `view()` only until the
+ * next render — because that render runs `view()` again and it would otherwise
+ * stack a duplicate every time a filter changed.
+ */
+const viewTimers = { enter: [], render: [] };
+/** @type {'enter'|'render'} */
+let timerPhase = 'render';
+let enteredTab = null;
+
+function clearViewTimers(phase) {
+  for (const t of viewTimers[phase]) clearInterval(t);
+  viewTimers[phase] = [];
+}
+
+/**
+ * The object every registered view is given. `bundle`, `view` and `filters` are
+ * getters over live state, so a ctx held in a closure never reads a stale one.
+ *
+ * @returns {import('./views/index.js').ViewContext}
+ */
+function viewContext() {
+  return {
+    S,
+    get bundle() { return S.bundle; },
+    get view() { return S.view; },
+    get filters() { return S.filters; },
+    snapshot: SNAPSHOT,
+    el,
+    card,
+    chartCard,
+    btn,
+    kpi,
+    deltaChip,
+    sectionTitle,
+    emptyCard,
+    openModal,
+    closeModal,
+    drillTo,
+    fmt: {
+      compact, int, usd, pct, signedPct, shortDate, longDate,
+      hourLabel, hourWindow, relativeTime, humanDuration, countdown, DOW,
+    },
+    charts,
+    // A snapshot is a file: there is no API to call, and a view must get a
+    // plain "no data" rather than an exception it has to catch.
+    fetchJson: (path, opt) => (SNAPSHOT ? Promise.resolve(null) : fetchJson(path, opt)),
+    schedule: (fn, ms) => {
+      const t = setInterval(fn, ms);
+      viewTimers[timerPhase].push(t);
+      return t;
+    },
+    rerender: (opt = {}) => {
+      if (opt.recompute !== false) recompute();
+      render();
+    },
+  };
+}
+
+/**
+ * The object mountPalette(ctx) is given, once, at boot.
+ *
+ * Unlike viewContext(), nothing here needs to be a getter: the palette only
+ * reads `getTabs()` (and nothing else state-shaped) at the moment it opens,
+ * never while it is closed, so a stale closure is not a risk.
+ *
+ * @returns {import('./palette.js').PaletteContext}
+ */
+function paletteContext() {
+  return {
+    el,
+    getTabs: () => allTabs().map((t) => ({ id: t.id, label: t.label })),
+    goToTab,
+    ranges: QUICK_RANGES.filter((r) => r.id !== 'custom'),
+    applyRange: (id) => applyRange(id),
+    skins: SKINS,
+    setSkin: (id) => { applyTheme(id, document.documentElement.dataset.mode); savePrefs(); renderShell(); render(); },
+    modes: [{ id: 'dark', label: 'Dark' }, { id: 'light', label: 'Light' }],
+    setMode: (id) => { applyTheme(document.documentElement.dataset.skin, id); savePrefs(); renderShell(); render(); },
+    canRefresh: () => !SNAPSHOT,
+    refresh: () => doRefresh(),
+    exportCsv: () => exportMenu(),
+    exportHtmlInfo: () => htmlExportInfoModal(),
+    clearFilters,
+    copyDeepLink,
+    activeTabButton: () => document.querySelector('nav.tabs button[aria-selected="true"]'),
+  };
+}
+
+/**
+ * Fire onLeave/onEnter when the active tab changes, and drop the timers the
+ * departing view owned. Called from render(), so it catches every route into a
+ * tab: the tab bar, a deep link, and the KPI tiles that jump between views.
+ */
+function enterTab(ctx) {
+  if (enteredTab === S.tab) return;
+  const prev = enteredTab === null ? null : viewModule(enteredTab);
+  if (prev && typeof prev.onLeave === 'function') {
+    try { prev.onLeave(ctx); } catch (err) { console.error(err); }
+  }
+  clearViewTimers('enter');
+  clearViewTimers('render');
+  enteredTab = S.tab;
+  const next = viewModule(S.tab);
+  if (next && typeof next.onEnter === 'function') {
+    timerPhase = 'enter';
+    try { next.onEnter(ctx); } catch (err) { console.error(err); }
+    timerPhase = 'render';
+  }
+}
+
 // ============================================================ bootstrapping ==
 
 boot().catch((err) => {
@@ -94,8 +321,16 @@ boot().catch((err) => {
 });
 
 async function boot() {
+  // Before the bundle fetch, so each view's stylesheet loads in parallel with
+  // the data and is applied by the time anything paints.
+  injectViewStyles();
+  injectOwnStyles();
   const prefs = loadPrefs();
   S.bundle = SNAPSHOT ? window.__TOKENFLOW_BUNDLE__ : await fetchJson('/api/bundle');
+  // Every daily chart overlays annotations from this module-level list, not
+  // from S.bundle directly, so a marker must not wait for someone to visit
+  // the Annotations tab before it appears anywhere else.
+  charts.setAnnotations(S.bundle.annotations || []);
   // Config supplies the default look; a choice made in the browser wins.
   applyTheme(
     prefs.skin || S.bundle.meta?.skin || SKINS[0].id,
@@ -105,9 +340,24 @@ async function boot() {
   S.rangeId = prefs.rangeId || S.bundle.meta.defaultRange || 'all';
   if (prefs.granularity) S.granularity = prefs.granularity;
   if (prefs.tab) S.tab = prefs.tab;
+  // Deep links: #tab=receipts&skin=terminal&mode=light. A link wins over a
+  // remembered preference for this load only; nothing is persisted from it.
+  const link = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (link.get('tab') && allTabs().some((t) => t.id === link.get('tab'))) S.tab = link.get('tab');
+  if (link.get('skin') || link.get('mode')) {
+    applyTheme(
+      SKINS.some((s) => s.id === link.get('skin')) ? link.get('skin') : document.documentElement.dataset.skin,
+      ['dark', 'light'].includes(link.get('mode')) ? link.get('mode') : document.documentElement.dataset.mode,
+    );
+  }
   if (S.bundle.meta?.includeOverlayDefault) S.filters.includeOverlay = true;
   applyRange(S.rangeId, { silent: true });
   recompute();
+  // Mounted once: the chip and the Cmd+K/Ctrl+K shortcut both open the same
+  // instance for the rest of this page's life.
+  palette = mountPalette(paletteContext());
+  const chip = document.getElementById('palette-chip');
+  if (chip) chip.addEventListener('click', () => palette.open());
   renderShell();
   render();
   // Handed over from a saved snapshot's "Refresh & open live" button. The
@@ -117,6 +367,16 @@ async function boot() {
     doRefresh();
   }
   ensureLiveLoop();
+  // Never in a snapshot: a saved file has no /api/providers to ask, and
+  // nothing new to report since it was written.
+  if (!SNAPSHOT) {
+    maybeShowFirstRun({
+      el,
+      appVersion: S.bundle.meta.appVersion,
+      sources: S.bundle.meta.sources,
+      fetchProviders: () => fetch('/api/providers').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    });
+  }
 }
 
 // ============================================================ live polling ==
@@ -128,6 +388,9 @@ let liveTimer = null;
  * what makes the header pill and the Live tab's watcher strip current without
  * any user action. In a static snapshot there is no server: the loop never
  * starts, and the Live tab renders purely from the bundle.
+ *
+ * boot() starts it whichever tab is open, so the pill works everywhere and the
+ * Live view (now src/ui/views/live.js) does not have to ask for it.
  */
 function ensureLiveLoop() {
   if (SNAPSHOT || liveTimer) return;
@@ -191,7 +454,6 @@ function recompute() {
   savePrefs();
 }
 
-// ==================================================================== theme ==
 
 function applyTheme(skin, mode) {
   const r = document.documentElement;
@@ -251,6 +513,28 @@ function themePicker() {
 
 // ==================================================================== shell ==
 
+/**
+ * Switch the active tab. The tab bar's own buttons and the command palette's
+ * "Go to tab" commands both funnel through here, so a deep link built from
+ * one behaves exactly like a deep link built from the other.
+ * @param {string} id
+ */
+function goToTab(id) {
+  if (S.tab !== id) S.viewEntered = false; // a view change earns the one entry stagger
+  S.tab = id; savePrefs(); renderShell(); render();
+  // Keep the URL shareable without adding history entries for every click.
+  try { history.replaceState(null, '', `#${currentDeepLinkHash()}`); } catch { /* file:// or a sandboxed frame may refuse; the tab still switched */ }
+}
+
+/** The `tab=…&skin=…&mode=…` hash boot() parses back. Shared by goToTab's address-bar update and copyDeepLink, so the two never disagree on shape. */
+function currentDeepLinkHash() {
+  return new URLSearchParams({
+    tab: S.tab,
+    skin: document.documentElement.dataset.skin,
+    mode: document.documentElement.dataset.mode,
+  }).toString();
+}
+
 function renderShell() {
   const acts = document.getElementById('header-actions');
   acts.textContent = '';
@@ -263,9 +547,9 @@ function renderShell() {
 
   const tabs = document.getElementById('tabs');
   tabs.textContent = '';
-  for (const [id, label] of TABS) {
+  for (const { id, label } of allTabs()) {
     const b = el('button', { role: 'tab', text: label, 'aria-selected': String(S.tab === id) });
-    b.addEventListener('click', () => { S.tab = id; savePrefs(); renderShell(); render(); });
+    b.addEventListener('click', () => goToTab(id));
     tabs.appendChild(b);
   }
 
@@ -285,11 +569,31 @@ function render() {
   renderBanners();
   renderFilters();
   renderCrumbs();
+  const ctx = viewContext();
+  enterTab(ctx);
   const host = document.getElementById('view');
   host.textContent = '';
+  // Cards stagger in only when the VIEW changes. A filter change re-renders the
+  // same view and must feel instant, so it does not re-run the entrance.
+  host.classList.toggle('view-enter', S.viewEntered === false);
+  S.viewEntered = true;
+  const mod = viewModule(S.tab);
+  if (mod) {
+    clearViewTimers('render');
+    // One broken registered view must cost its own tab, not the whole page.
+    try {
+      host.appendChild(mod.view(ctx));
+    } catch (err) {
+      console.error(err);
+      host.appendChild(el('div', { class: 'banner' }, [
+        el('span', { text: `The ${mod.label} tab could not render: ${err.message}` }),
+      ]));
+    }
+    return;
+  }
   const fn = {
     overview: viewOverview,
-    live: viewLive,
+    receipts: viewReceipts,
     providers: () => viewDimension('provider', 'Provider intelligence'),
     models: viewModels,
     interfaces: viewInterfaces,
@@ -437,12 +741,23 @@ function renderFilters() {
   box.appendChild(el('div', { class: 'grp' }, [el('label', { class: 'fld' }, [el('span', { text: 'Scope' }), toggles])]));
 
   if (activeFilterCount()) {
-    box.appendChild(btn(`Clear ${activeFilterCount()} filter(s)`, () => {
-      S.filters = { ...EMPTY_FILTERS, includeOverlay: S.filters.includeOverlay, includeActivity: S.filters.includeActivity };
-      S.drillDate = null;
-      applyRange('all');
-    }, 'ghost sm'));
+    box.appendChild(btn(`Clear ${activeFilterCount()} filter(s)`, clearFilters, 'ghost sm'));
   }
+}
+
+/**
+ * Reset every filter and the date range to "all". The overlay/activity scope
+ * toggles are preserved — they widen or narrow what counts as data, not a
+ * filter on it, so "Clear filters" leaving them alone matches what the
+ * "Clear N filter(s)" button already only counted as filters.
+ *
+ * Shared by the filter panel's own button, the "All data" breadcrumb, and the
+ * command palette's "Clear filters", so the three cannot drift apart.
+ */
+function clearFilters() {
+  S.filters = { ...EMPTY_FILTERS, includeOverlay: S.filters.includeOverlay, includeActivity: S.filters.includeActivity };
+  S.drillDate = null;
+  applyRange('all');
 }
 
 function activeFilterCount() {
@@ -532,7 +847,7 @@ function multi(label, options, selected, onChange) {
 function renderCrumbs() {
   const box = document.getElementById('crumbs');
   box.textContent = '';
-  const parts = [{ label: 'All data', reset: () => { S.filters = { ...EMPTY_FILTERS, includeOverlay: S.filters.includeOverlay, includeActivity: S.filters.includeActivity }; S.drillDate = null; applyRange('all'); } }];
+  const parts = [{ label: 'All data', reset: clearFilters }];
   for (const [key, label] of [['provider', 'Provider'], ['model', 'Model'], ['client', 'Client'], ['interface', 'Interface'], ['project', 'Project'], ['gateway', 'Gateway'], ['service_tier', 'Tier']]) {
     const v = S.filters[key];
     if (v && v.length) {
@@ -660,6 +975,8 @@ function emptyCard(text, detail) {
 function viewOverview() {
   const v = S.view;
   const root = el('div', { class: 'grid' });
+  const story = storyStrip();
+  if (story) root.appendChild(story);
   root.appendChild(kpiRow());
 
   const gran = el('div', { class: 'chips' });
@@ -993,6 +1310,160 @@ function dayDetailBox(d) {
     }));
   }));
   return box;
+}
+
+/**
+ * The three sentences that matter for this slice, before any chart. Each
+ * insight already carries its own condition and weight (insights.js); this
+ * only picks the top three and sets the numbers in a heavier face so the eye
+ * lands on them first. Nothing here is computed.
+ */
+function storyStrip() {
+  const ins = (S.view.insights || []).filter((i) => i.kind !== 'empty' && i.kind !== 'quality');
+  if (ins.length < 2) return null;
+  const top = [...ins].sort((a, b) => (b.weight || 0) - (a.weight || 0)).slice(0, 3);
+  const strip = el('div', { class: 'story' });
+  for (const i of top) {
+    const p = el('p', { class: 'story-text' });
+    // Numbers, money, ratios and percentages get the figure face; words stay words.
+    // A figure is a number with its unit: "4.37M", "97.9%", "2.3×", "30 days", "$12.40", "r = 0.44".
+    const re = /((?:\$|[+\-−]|r = )?\d+(?:[.,]\d+)*(?:\s?(?:[KMB](?![a-z])|×|x(?![a-z])|%|days?|hours?|min(?![a-z])))?)/g;
+    let last = 0;
+    for (const m of i.text.matchAll(re)) {
+      if (m.index > last) p.appendChild(document.createTextNode(i.text.slice(last, m.index)));
+      p.appendChild(el('strong', { text: m[0] }));
+      last = m.index + m[0].length;
+    }
+    if (last < i.text.length) p.appendChild(document.createTextNode(i.text.slice(last)));
+    strip.appendChild(el('div', { class: 'story-line ' + (i.kind || '') }, [
+      el('span', { class: 'story-ico', text: i.icon || '•', 'aria-hidden': 'true' }),
+      p,
+    ]));
+  }
+  return strip;
+}
+
+// ================================================================= receipts ==
+
+/**
+ * Spend attributed to the unit of work: per repository, per branch. The
+ * receipts arrive in the bundle (computed once per refresh on the server, or
+ * baked into a snapshot), so this view works offline and never scans records
+ * in the browser. It covers the whole store: a receipt is bounded by its
+ * branch, not by the date filter, and the view says so.
+ */
+function viewReceipts() {
+  const R = S.bundle.receipts;
+  const root = el('div', { class: 'grid' });
+  if (!R || !R.repos || !R.repos.length || !(R.totals.cost > 0)) {
+    root.appendChild(card('Receipts', 'Spend attributed to a branch, per repository.', emptyCard(
+      'No branch-attributed spend yet',
+      'Receipts need sessions that recorded a git branch and a priced model. Claude Code and OpenCode sessions do; sessions on a detached HEAD are reported as unattributed.',
+    )));
+    return root;
+  }
+  const all = R.repos.flatMap((r) => r.branches.filter((b) => b.cost !== null).map((b) => ({ ...b, repo: r.repo })));
+  const costs = all.map((b) => b.cost).sort((a, b) => a - b);
+  const median = costs.length ? costs[Math.floor(costs.length / 2)] : null;
+  const top = all.length ? all.reduce((a, b) => (b.cost > a.cost ? b : a)) : null;
+  const unattributed = R.repos.reduce((a, r) => a + (r.unattributed.cost ?? 0), 0);
+
+  const box = el('div', { class: 'cards' });
+  const heroCard = kpi('Attributed to a branch', pct(R.totals.attributedShare, 0), `${usd(R.totals.attributedCost)} of ${usd(R.totals.cost)} estimated`, { hero: true, title: 'Share of estimated spend whose turns ran on a named branch. The rest ran on a detached HEAD or with no branch recorded.' });
+  heroCard.classList.add('wide');
+  box.appendChild(heroCard);
+  box.appendChild(kpi('Branches', int(R.totals.branches), `${int(R.repos.length)} repositor${R.repos.length === 1 ? 'y' : 'ies'}`));
+  box.appendChild(kpi('Median branch', median !== null ? usd(median) : '—', 'half of all branches cost less'));
+  if (top) box.appendChild(kpi('Most expensive branch', usd(top.cost), `${top.key} · ${top.repo}`, { title: `${top.sessions} sessions · ${top.turns} turns`, onClick: () => receiptDetail(R.repos.find((r) => r.repo === top.repo), top) }));
+  box.appendChild(kpi('Unattributed', usd(unattributed), 'detached HEAD or no branch', { title: 'Reported, never guessed: these turns cannot be tied to a unit of work.' }));
+  root.appendChild(box);
+
+  root.appendChild(el('div', { class: 'banner info' }, [el('span', {
+    text: `Receipts cover the whole store (${int(R.totals.records)} turns, computed ${relativeTime(R.computedAt)}). The date and provider filters above do not apply here: a receipt is bounded by its branch, not by a window. Pull-request joins run from the CLI: tokenflow receipt --repo <path> --gh.`,
+  })]));
+
+  for (const repo of R.repos.slice(0, 12)) {
+    const maxCost = Math.max(...repo.branches.map((b) => b.cost ?? 0), 0);
+    const rows = repo.branches.slice(0, 15);
+    const columns = [
+      { key: 'key', label: 'Branch', text: true, value: (b) => el('span', { class: 'branch-cell' }, [
+        miniBar(maxCost ? (b.cost ?? 0) / maxCost : 0, 'var(--seq-5)'),
+        el('span', { class: 'branch-name', text: b.key }),
+        b.longLived ? el('span', { class: 'badge', text: 'long-lived', title: 'A branch that lives forever: this is a receipt for a period of work on it, not for one change.' }) : null,
+      ]) },
+      { key: 'cost', label: 'Spend', value: (b) => (b.cost === null ? null : usd(b.cost)), title: 'Estimated from the price table; unpriced turns excluded' },
+      { key: 'contextShare', label: 'Context', value: (b) => (b.contextShare === null ? null : pct(b.contextShare, 0)), title: 'Share of spend that paid to re-send earlier context (cache reads + writes)' },
+      { key: 'sessions', label: 'Sessions' },
+      { key: 'turns', label: 'Turns' },
+      { key: 'subagentShare', label: 'Subagent', value: (b) => (b.subagentTurns ? pct(b.subagentShare, 0) : '0%') },
+      { key: 'vsMedian', label: '× median', value: (b) => (b.vsMedian === null ? null : `${b.vsMedian >= 10 ? Math.round(b.vsMedian) : b.vsMedian.toFixed(1)}×`), title: 'This branch against the median priced branch in the same repository' },
+    ];
+    const tbl = table(columns, rows, { onRowClick: (b) => receiptDetail(repo, b), emptyText: 'No attributed branches in this repository.' });
+    const hint = [
+      `${usd(repo.cost)} · ${int(repo.branches.length)} branch${repo.branches.length === 1 ? '' : 'es'}`,
+      repo.medianBranchCost !== null ? `median ${usd(repo.medianBranchCost)}` : null,
+      repo.unattributed.turns ? `unattributed ${usd(repo.unattributed.cost)} across ${int(repo.unattributed.sessions)} session${repo.unattributed.sessions === 1 ? '' : 's'}` : null,
+      repo.branches.length > rows.length ? `showing the top ${rows.length}` : null,
+    ].filter(Boolean).join(' · ');
+    root.appendChild(card(repo.repo, hint, tbl));
+  }
+  if (R.repos.length > 12) root.appendChild(el('p', { class: 'muted', text: `${R.repos.length - 12} smaller repositories not shown. The CLI lists every one: tokenflow receipt.` }));
+  return root;
+}
+
+/** One receipt, as a card with a copy-as-PR-comment action. */
+function receiptDetail(repo, b) {
+  const body = el('div', { class: 'receipt' });
+  const head = el('div', { class: 'receipt-head' });
+  head.appendChild(el('div', { class: 'receipt-kicker', text: repo ? repo.repo : '' }));
+  head.appendChild(el('div', { class: 'receipt-branch' }, [
+    document.createTextNode(b.key),
+    b.longLived ? el('span', { class: 'badge', style: 'margin-left:8px;vertical-align:middle', text: 'long-lived branch · a period of work, not one change' }) : null,
+  ]));
+  body.appendChild(head);
+
+  body.appendChild(el('div', { class: 'receipt-total' }, [
+    el('span', { class: 'receipt-amount', text: b.cost === null ? '—' : usd(b.cost) }),
+    el('span', { class: 'receipt-amount-sub', text: b.cost === null ? 'no priced turns' : 'estimated spend on this branch' }),
+  ]));
+
+  if (b.contextShare !== null) {
+    const bar = el('div', { class: 'split-bar', role: 'img', 'aria-label': `${pct(b.contextShare, 0)} re-sent context, ${pct(1 - b.contextShare, 0)} fresh work` });
+    const ctx = el('i', { class: 'seg ctx', title: 'Context: cache reads and writes — the cost of re-sending the conversation so far' });
+    ctx.style.width = `${Math.round(b.contextShare * 1000) / 10}%`;
+    const work = el('i', { class: 'seg work', title: 'Work: fresh input and generated output' });
+    bar.appendChild(ctx);
+    bar.appendChild(work);
+    body.appendChild(bar);
+    body.appendChild(el('div', { class: 'split-legend' }, [
+      el('span', {}, [el('i', { class: 'sw ctx' }), document.createTextNode(` ${pct(b.contextShare, 0)} re-sent context`)]),
+      el('span', {}, [el('i', { class: 'sw work' }), document.createTextNode(` ${pct(1 - b.contextShare, 0)} fresh work`)]),
+    ]));
+  }
+
+  const dl = el('dl', { class: 'kv receipt-kv' });
+  const row = (k, v) => { dl.appendChild(el('dt', { text: k })); dl.appendChild(el('dd', { text: v })); };
+  row('Sessions · turns', `${int(b.sessions)} · ${int(b.turns)}${b.subagentTurns ? ` (${pct(b.subagentShare, 0)} subagent)` : ''}`);
+  if (b.models.length) row('Models', b.models.slice(0, 3).map((m) => `${m.model} ${pct(m.share, 0)}`).join(', ') + (b.models.length > 3 ? ', …' : ''));
+  if (b.vsMedian !== null) row('vs repository median', `${b.vsMedian >= 10 ? Math.round(b.vsMedian) : b.vsMedian.toFixed(1)}×`);
+  if (b.maxPrompt !== null) row('Largest prompt', `${compact(b.maxPrompt)} tokens`);
+  if (b.first && b.last) row('Window', `${shortDate(b.first.slice(0, 10))} → ${shortDate(b.last.slice(0, 10))}`);
+  if (b.unpricedTurns) row('Unpriced turns', `${int(b.unpricedTurns)} (not in the total)`);
+  body.appendChild(dl);
+  body.appendChild(el('p', { class: 'receipt-foot', text: `Estimated locally from the session logs on this machine with price table ${S.bundle.meta.pricingTableVersion}. No prompt or code content was read. Bounded by branch, not by a pull request — join PRs from the CLI with tokenflow receipt --gh.` }));
+
+  const copy = btn('Copy as PR comment', async () => {
+    const md = renderReceiptMarkdown(b, { repo: repo ? repo.repo : undefined, pricingVersion: S.bundle.meta.pricingTableVersion });
+    try {
+      await navigator.clipboard.writeText(md);
+      copy.textContent = 'Copied ✓';
+      setTimeout(() => { copy.textContent = 'Copy as PR comment'; }, 1400);
+    } catch {
+      // The clipboard API needs a secure context or a user gesture the browser accepted; fall back to showing the text.
+      openModal('Receipt (markdown)', el('pre', { class: 'mono', text: md }));
+    }
+  }, 'primary');
+  openModal('AI cost receipt', body, [copy]);
 }
 
 function insightsCard() {
@@ -1969,6 +2440,7 @@ async function doRefresh() {
     const keep = { ...S.filters };
     const keepRange = S.rangeId;
     S.bundle = await fetchJson('/api/bundle');
+    charts.setAnnotations(S.bundle.annotations || []);
     S.filters = keep;
     if (keepRange !== 'custom') applyRange(keepRange, { silent: true });
     recompute();
@@ -2067,6 +2539,52 @@ function downloadCsv(name, cols, rows) {
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+/**
+ * "Export HTML snapshot" (command palette). Writing a self-contained offline
+ * file is a filesystem operation, and every route this server exposes is
+ * read-only or config-writing — there is no `/api/export.html` to call from
+ * here. This states the one CLI command that does it, the same way
+ * freshnessBar() states `npm start` when no live dashboard answers.
+ */
+function htmlExportInfoModal() {
+  const body = el('div');
+  body.appendChild(el('p', { class: 'hint', text: 'This writes one self-contained HTML file: the analytics, the charts and the data bundle, all inlined. It opens later from a file:// URL with no server and no network.' }));
+  const row = el('div', { style: 'display:flex;gap:8px;align-items:center' });
+  row.appendChild(el('code', { text: 'tokenflow export --html' }));
+  const copy = btn('Copy', async () => {
+    try { await navigator.clipboard.writeText('tokenflow export --html'); copy.textContent = 'Copied'; } catch { copy.textContent = 'tokenflow export --html'; }
+  }, 'ghost sm');
+  row.appendChild(copy);
+  body.appendChild(row);
+  openModal('Export HTML snapshot', body);
+}
+
+/** "Copy deep link" (command palette): the current tab, skin and mode, via the same hash shape goToTab() writes to the address bar. */
+async function copyDeepLink() {
+  // Built from location.href, not location.origin + location.pathname:
+  // Chromium (and others) return the literal string "null" for `origin` on a
+  // file:// page, which would silently produce a "null/…" link for anyone
+  // copying a deep link out of a saved snapshot.
+  const u = new URL(location.href);
+  u.search = ''; // drop a stale ?refresh=1 from a snapshot's "Refresh & open live" handoff
+  u.hash = currentDeepLinkHash();
+  const url = u.href;
+  let ok = true;
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch {
+    // No Clipboard permission, or an insecure context (file://): the banner
+    // still shows the link so it can be copied by hand.
+    ok = false;
+  }
+  const box = document.getElementById('banners');
+  const status = el('div', { class: 'banner info' }, [el('span', {
+    text: ok ? `Copied: ${url}` : `Could not copy automatically. Deep link: ${url}`,
+  })]);
+  box.prepend(status);
+  setTimeout(() => status.remove(), 9000);
 }
 
 // ================================================================== pricing ==
@@ -2186,288 +2704,3 @@ window.addEventListener('keydown', (ev) => {
   if (ev.key === 'r' && (ev.metaKey || ev.ctrlKey) === false && ev.target === document.body && !SNAPSHOT) doRefresh();
   if (ev.key === 'Escape') tooltip.hide();
 });
-
-// ============================================================== live view ==
-
-const SEV = {
-  high: { label: 'high', cls: 'sev-high' },
-  warn: { label: 'watch', cls: 'sev-warn' },
-  info: { label: 'info', cls: 'sev-info' },
-};
-
-function liveWatcherCard() {
-  const body = el('div');
-  const w = S.live?.watcher;
-  if (w) {
-    const age = S.live.freshness?.ageMs;
-    body.appendChild(el('div', { class: 'chips', style: 'padding:10px 14px' }, [
-      el('span', { class: 'badge ok', text: `● watcher running · pid ${w.pid}` }),
-      el('span', { class: 'muted', text: `every ${w.intervalSeconds ?? '?'}s · ${int(w.cycles)} cycles` + (age != null ? ` · snapshot ${relativeTime(S.live.generatedAt)}` : '') }),
-    ]));
-  } else {
-    const c = el('code', { text: 'tokenflow watch', style: 'font-size:12px' });
-    body.appendChild(el('div', { class: 'chips', style: 'padding:10px 14px;gap:8px;flex-wrap:wrap' }, [
-      el('span', { class: 'badge stale', text: '○ watcher not running' }),
-      el('span', { class: 'muted', text: 'run ' }),
-      c,
-      el('span', { class: 'muted', text: ' to keep the status file, menu bar and alerts current' }),
-    ]));
-  }
-  return card('Real-time engine', 'The watcher refreshes incrementally and rewrites data/status.json after every cycle.', body);
-}
-
-function limitRow(s) {
-  // Past ~10× a cap, percentages stop communicating; multiples do.
-  const pctText = s.pctUsed == null ? '—'
-    : s.pctUsed >= 10 ? `${Math.round(s.pctUsed)}×`
-    : `${(s.pctUsed * 100).toFixed(1)}%`;
-  const color = s.status === 'exceeded' ? 'var(--critical)' : s.status === 'warn' ? 'var(--warning)' : 'var(--series-1)';
-  const row = el('div', { style: 'display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--hairline)' });
-  const glyph = s.status === 'exceeded' ? '✗' : s.status === 'warn' ? '⚠' : '✓';
-  const left = el('div', { style: 'min-width:220px' });
-  left.appendChild(el('div', {}, [document.createTextNode(`${glyph} ${s.label}`), s.provider ? el('span', { class: 'muted', text: `  [${s.provider}]` }) : null]));
-  left.appendChild(el('div', { class: 'hint', text: `${s.scope} · ${s.metric}` }));
-  row.appendChild(left);
-  const barWrap = el('div', { style: 'flex:1;min-width:120px' });
-  barWrap.appendChild(miniBar(Math.max(0, Math.min(1, s.pctUsed ?? 0)), color));
-  row.appendChild(barWrap);
-  const right = el('div', { style: 'text-align:right;min-width:190px' });
-  right.appendChild(el('div', { text: `${pctText} of ${compact(s.cap)}` }));
-  const sub = [];
-  if (s.status !== 'exceeded' && s.etaHours != null) sub.push(`ETA ${countdown(s.etaHours * 3600000)}`);
-  if (s.resetsInMs > 0) sub.push(`resets in ${countdown(s.resetsInMs)}`);
-  if (sub.length) right.appendChild(el('div', { class: 'hint', text: sub.join(' · ') }));
-  row.appendChild(right);
-  return row;
-}
-
-function capacityCard() {
-  const cap = S.view.capacity || { states: [], invalid: [], summary: {} };
-  const body = el('div', { style: 'padding:6px 14px 14px' });
-
-  if (!cap.states.length) {
-    const yaml = [
-      '# ~/.tokenflow/config.yaml',
-      'limits:',
-      '  - id: anthropic-monthly',
-      '    provider: anthropic        # optional: provider | model | project',
-      '    scope: month               # day | week | month',
-      '    metric: tokens             # tokens | input | output | requests | cost',
-      '    cap: 120000000             # tokens (or $ for metric: cost)',
-      '    warnAt: 0.8                # optional warn threshold',
-    ].join('\n');
-    body.appendChild(el('p', { class: 'hint', text: 'TokenFlow never invents vendor quota numbers — a limit exists only if you declare it. Declare one here or paste this into your config:' }));
-    const pre = el('pre', { class: 'mono', text: yaml, style: 'background:var(--surface-2);padding:10px;border-radius:8px;overflow:auto;font-size:11.5px;line-height:1.55' });
-    body.appendChild(pre);
-    const actions = btn('⧉ Copy YAML', () => {
-      navigator.clipboard.writeText(yaml).then(() => { actions.textContent = '✓ Copied'; setTimeout(() => { actions.textContent = '⧉ Copy YAML'; }, 1500); }).catch(() => {});
-    }, 'ghost sm');
-    return card('Capacity & budgets', 'Burn rate, exhaustion ETA and reset countdowns for your declared limits.', body, actions);
-  }
-
-  const sum = cap.summary || {};
-  if (sum.counts && (sum.counts.exceeded || sum.counts.warn)) {
-    body.appendChild(el('div', { class: 'chips', style: 'padding:2px 0 8px' }, [
-      sum.counts.exceeded ? el('span', { class: 'badge demo', text: `${sum.counts.exceeded} exceeded` }) : null,
-      sum.counts.warn ? el('span', { class: 'badge warn', text: `${sum.counts.warn} approaching` }) : null,
-      sum.firstToHit ? el('span', { class: 'muted', text: `first projected hit: ${sum.firstToHit.label} in ${countdown(sum.firstToHit.etaHours * 3600000)}` }) : null,
-    ].filter(Boolean)));
-  }
-  for (const s of cap.states) body.appendChild(limitRow(s));
-  if (cap.invalid?.length) {
-    body.appendChild(el('p', { class: 'hint', text: `${cap.invalid.length} invalid limit definition(s) in config were ignored — check \`tokenflow capacity\`.` }));
-  }
-  const manage = SNAPSHOT
-    ? null
-    : btn('⚙ Manage limits', openLimitEditor, 'ghost sm');
-  return card('Capacity & budgets', 'Evaluated against all primary usage regardless of dashboard filters — quota windows are facts about your accounts, not filter states.', body, manage);
-}
-
-function openLimitEditor() {
-  const cur = (S.bundle.limits || []).map((l) => ({ ...l }));
-  const body = el('div');
-
-  // A simple editable list is clearer than a grid here.
-  const rows = el('div');
-  const renderRows = () => {
-    rows.textContent = '';
-    for (const l of cur) {
-      const r = el('div', { style: 'display:flex;gap:8px;align-items:center;padding:4px 0' });
-      r.appendChild(el('span', { class: 'mono', text: `${l.id}`, style: 'min-width:140px' }));
-      r.appendChild(el('span', { class: 'muted', text: `${[l.provider, l.model, l.project].filter(Boolean).join('/') || 'all sources'} · ${l.scope} · ${l.metric} · cap ${compact(l.cap)}` }));
-      const spacer = el('div', { style: 'flex:1' });
-      r.appendChild(spacer);
-      r.appendChild(btn('Remove', () => { cur.splice(cur.indexOf(l), 1); renderRows(); }, 'ghost sm'));
-      rows.appendChild(r);
-    }
-    if (!cur.length) rows.appendChild(el('p', { class: 'hint', text: 'No limits yet — add one below.' }));
-  };
-  renderRows();
-  body.appendChild(rows);
-
-  const f = {};
-  const field = (key, placeholder, type = 'text') => {
-    const input = el('input', { placeholder, type, 'aria-label': key });
-    input.style.cssText = 'flex:1;min-width:90px';
-    f[key] = input;
-    return input;
-  };
-  const scopeSel = el('select', { 'aria-label': 'scope' });
-  for (const o of ['day', 'week', 'month']) scopeSel.appendChild(el('option', { value: o, text: o }));
-  const metricSel = el('select', { 'aria-label': 'metric' });
-  for (const o of ['tokens', 'input', 'output', 'requests', 'cost']) metricSel.appendChild(el('option', { value: o, text: o }));
-
-  const form = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:10px' }, [
-    field('id', 'id (required)'),
-    field('provider', 'provider (optional)'),
-    field('model', 'model (optional)'),
-    scopeSel, metricSel,
-    field('cap', 'cap', 'number'),
-    field('warnAt', 'warnAt 0–1', 'number'),
-  ]);
-  for (const c of form.children) c.style.flexGrow = '0';
-  body.appendChild(form);
-
-  const errBox = el('p', { class: 'hint', style: 'color:var(--critical)' });
-  body.appendChild(errBox);
-
-  const foot = el('div', { style: 'display:flex;gap:8px;justify-content:flex-end;width:100%' });
-  foot.appendChild(btn('Cancel', () => document.getElementById('modal-close').click(), 'ghost sm'));
-  foot.appendChild(btn('Save limits', async () => {
-    errBox.textContent = '';
-    // The form is only part of the save when the user actually named a new
-    // limit. Removal-only saves must not inject an empty draft — that bug
-    // made every "remove" also POST a junk row and fail validation.
-    const wantsAdd = f.id.value.trim() !== '' || f.cap.value !== '';
-    if (wantsAdd && f.id.value.trim() === '') {
-      errBox.textContent = 'New limit needs an id (or clear the form to save removals only).';
-      return;
-    }
-    const def = {
-      id: f.id.value.trim(),
-      provider: f.provider.value.trim() || undefined,
-      model: f.model.value.trim() || undefined,
-      scope: scopeSel.value,
-      metric: metricSel.value,
-      cap: Number(f.cap.value),
-      ...(f.warnAt.value !== '' ? { warnAt: Number(f.warnAt.value) } : {}),
-    };
-    const next = wantsAdd ? [...cur, def] : [...cur];
-    try {
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ limits: next }),
-      });
-      const out = await res.json();
-      if (!res.ok || !out.ok) {
-        errBox.textContent = `Invalid: ${(out.invalid || []).map((x) => `${x.id ? x.id + ': ' : ''}${x.errors.join('; ')}`).join(' | ')}`;
-        return;
-      }
-      S.bundle.limits = out.limits;
-      recompute();
-      render();
-      document.getElementById('modal-close').click();
-    } catch (e) {
-      errBox.textContent = `Save failed: ${e.message}`;
-    }
-  }, 'sm'));
-  body.appendChild(foot);
-
-  openModal('Manage capacity limits', body);
-}
-
-function forecastCard() {
-  const v = S.view;
-  const f = v.forecast;
-  const body = el('div');
-
-  if (!f || f.tomorrow === null) {
-    body.appendChild(el('p', { class: 'hint', text: f?.reason || 'Not enough history yet.' }));
-    return card('Forecast', 'A conservative linear trend over recent days — never a promise.', body);
-  }
-
-  const kpis = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:10px 14px 2px' });
-  const kpiTile = (label, val, sub) => {
-    const d = el('div', { style: 'background:var(--surface-2);border-radius:8px;padding:10px' });
-    d.appendChild(el('div', { class: 'hint', text: label }));
-    d.appendChild(el('div', { class: 'k-value str', text: val, style: 'font-size:20px' }));
-    if (sub) d.appendChild(el('div', { class: 'hint', text: sub }));
-    return d;
-  };
-  kpis.appendChild(kpiTile('Tomorrow (projected)', compact(f.tomorrow), f.tomorrowInterval ? `${compact(f.tomorrowInterval[0])} – ${compact(f.tomorrowInterval[1])}` : null));
-  kpis.appendChild(kpiTile('Next 7 days', compact(f.next7days), f.next7daysCost != null ? usd(f.next7daysCost) : null));
-  if (f.monthEnd !== null) {
-    kpis.appendChild(kpiTile('Month-end', compact(f.monthEnd), `measured so far ${compact(f.monthEndActualToDate)}${f.monthEndCost !== null ? ` · ≈${usd(f.monthEndCost)} est.` : ''}`));
-  }
-  kpis.appendChild(kpiTile('Confidence', f.confidence, f.n ? `${f.n}-day trend` : null));
-  body.appendChild(kpis);
-
-  // History + projection side by side: measured bars, then forecast bars in a
-  // dashed-looking muted tone, clearly separated by an empty slot.
-  const daily = v.daily.slice(-14);
-  const data = daily.map((d) => ({
-    label: shortDate(d.key),
-    value: d.total,
-    fmtXLong: d.key,
-    color: 'var(--series-1)',
-  }));
-  if (f.tomorrow !== null) {
-    data.push({ label: 'tomorrow*', value: f.tomorrow, color: 'var(--hairline)', extra: [{ name: 'Projected', value: compact(f.tomorrow) }] });
-  }
-  // The month-end projection deliberately stays OUT of the chart: a whole-
-  // month total beside daily bars would flatten the history into unreadability.
-  // It lives in the KPI tiles above, labelled as a projection.
-  const wrapChart = el('div', { style: 'padding:6px 14px 12px' });
-  requestAnimationFrame(() => observeWidth(wrapChart, (w) => {
-    wrapChart.textContent = '';
-    wrapChart.appendChild(columns({
-      data, width: w, height: 200, fmtY: (x) => compact(x), valueLabel: 'Tokens',
-      ariaLabel: 'Recent daily usage with projections appended',
-    }));
-  }));
-  body.appendChild(wrapChart);
-  body.appendChild(el('p', { class: 'hint', style: 'padding:0 14px 12px', text: '* Projected, not measured. The trend assumes the recent pattern continues; confidence is stated above and drops sharply on thin or volatile history.' }));
-
-  return card('Forecast', 'Measured history first; projections always labelled and kept apart.', body);
-}
-
-function anomaliesCard() {
-  const v = S.view;
-  const body = el('div', { style: 'padding:6px 14px 14px' });
-  const anomalies = v.anomalies || [];
-
-  if (!anomalies.length) {
-    body.appendChild(el('p', { class: 'hint', text: 'No anomalies detected in the current dataset. Detection covers token/cost/request spikes, weekday gaps and sudden drops — each reported with its own arithmetic.' }));
-  } else {
-    for (const a of anomalies) {
-      const sev = SEV[a.severity] || SEV.info;
-      const row = el('div', { style: 'display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--hairline)' });
-      row.appendChild(el('span', { class: `badge ${sev.cls}`, text: sev.label }));
-      row.appendChild(el('span', { class: 'mono muted', text: a.date, style: 'min-width:86px;font-size:11px' }));
-      row.appendChild(el('span', { text: a.detail }));
-      body.appendChild(row);
-    }
-  }
-
-  const fresh = [...(v.firstSeen?.models || []).map((m) => ({ kind: 'model', ...m })), ...(v.firstSeen?.providers || []).map((p) => ({ kind: 'provider', ...p }))];
-  if (fresh.length) {
-    const chips = el('div', { class: 'chips', style: 'padding-top:10px' });
-    chips.appendChild(el('span', { class: 'muted', text: 'New this week: ' }));
-    for (const x of fresh) {
-      chips.appendChild(el('span', { class: 'chip', text: `${x.kind} ${x.entity} (${shortDate(x.firstSeen)})` }));
-    }
-    body.appendChild(chips);
-  }
-  return card('Anomalies & changes', 'Robust median/MAD detection — every alert shows observed vs expected so you can check it.', body);
-}
-
-function viewLive() {
-  ensureLiveLoop();
-  const root = el('div', { class: 'grid' });
-  if (!SNAPSHOT) root.appendChild(liveWatcherCard());
-  root.appendChild(capacityCard());
-  root.appendChild(forecastCard());
-  root.appendChild(anomaliesCard());
-  return root;
-}

@@ -24,9 +24,36 @@ function candidatePorts() {
   return [...new Set([configured, 7799, 7800, 8799].filter(Boolean))];
 }
 
+/**
+ * The base stylesheet followed by every registered view's stylesheet, in name
+ * order, concatenated in the same sequence the live page links them.
+ *
+ * The dev page gets these as one `<link>` per view, injected by app.js. A
+ * snapshot has no server to fetch them from, so they are inlined here instead —
+ * miss this and every registered tab loses its styles the moment the file is
+ * saved. Order matters: view rules must be able to override the base.
+ *
+ * @param {string} root repository root
+ * @returns {string}
+ */
+function collectCss(root) {
+  const uiDir = path.join(root, 'src', 'ui');
+  const parts = [fs.readFileSync(path.join(uiDir, 'styles.css'), 'utf8')];
+  const viewCssDir = path.join(uiDir, 'styles');
+  let files = [];
+  try {
+    files = fs.readdirSync(viewCssDir).filter((f) => f.endsWith('.css')).sort();
+  } catch { /* no per-view stylesheets yet: the base sheet is the whole answer */ }
+  for (const f of files) {
+    parts.push(`/* --- ${path.posix.join('src/ui/styles', f)} --- */`);
+    parts.push(fs.readFileSync(path.join(viewCssDir, f), 'utf8'));
+  }
+  return parts.join('\n');
+}
+
 export function buildSnapshot({ maxRecords = 20000, title = 'Tokenflow' } = {}) {
   const ROOT = rootDir();
-  const css = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'styles.css'), 'utf8');
+  const css = collectCss(ROOT);
   const html = fs.readFileSync(path.join(ROOT, 'src', 'ui', 'index.html'), 'utf8');
   const js = bundle(path.join(ROOT, 'src', 'ui', 'app.js'), { root: ROOT });
   // A snapshot that does not parse is worse than a failed export, so check the

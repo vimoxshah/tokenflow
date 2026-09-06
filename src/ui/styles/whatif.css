@@ -1,0 +1,55 @@
+/* What-if pricing view. Every view stylesheet loads together in every skin
+   and mode, so class names are prefixed `whatif-` to stay out of another
+   view's way. Delta colouring uses the diverging ramp (--div-1 .. --div-5):
+   --div-1 for extra cost, --div-5 for savings, --div-3 for a flat delta. That
+   ramp is reserved for polarity, so it appears here and nowhere a chart series
+   or a status marker already claims a colour. */
+
+.whatif-footnote {
+  margin: 0 0 var(--sp-4);
+}
+
+.whatif-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-4) var(--sp-14) var(--sp-14);
+}
+
+.whatif-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-10);
+  flex-wrap: wrap;
+}
+
+.whatif-picker-label {
+  min-width: 200px;
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  color: var(--text-primary);
+}
+
+.whatif-picker-arrow {
+  color: var(--text-muted);
+}
+
+.whatif-target {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-6) var(--sp-10);
+  font-size: var(--fs-caption);
+  font-family: var(--sans);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.whatif-target:focus-visible {
+  border-color: var(--series-1);
+  outline: none;
+}
+
+.whatif-delta-kpi.whatif-save .k-value { color: var(--div-5); }
+.whatif-delta-kpi.whatif-extra .k-value { color: var(--div-1); }
+.whatif-delta-kpi.whatif-flat .k-value { color: var(--div-3); }

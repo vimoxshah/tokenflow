@@ -1,0 +1,6 @@
+/* Cache health view. Everything else here reuses the shared card, table and
+   kpi styles; this tab only adds a status line for the churn card while it
+   loads or fails, so that state reads as a status message and not as a data
+   row. */
+
+.cache-status { color: var(--text-muted); font-style: italic; }

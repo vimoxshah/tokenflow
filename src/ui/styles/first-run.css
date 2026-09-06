@@ -1,0 +1,31 @@
+/* First-run screen (src/ui/first-run.js). A one-time explanation, not a
+   keyboard shortcut, so the ordinary 220ms dialog motion in styles.css is
+   fine here — only the command palette needs zero motion. */
+
+.first-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.first-run-row {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
+  line-height: var(--lh-body);
+}
+
+.first-run-missing {
+  margin-top: var(--sp-16);
+}
+.first-run-missing .sec-title {
+  margin-top: 0;
+}
+
+.first-run-closing {
+  margin: var(--sp-20) 0 0;
+  padding-top: var(--sp-12);
+  border-top: 1px solid var(--hairline);
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}

@@ -1,0 +1,8 @@
+/* Rhythm view.
+   Every element here reuses shared classes already styled elsewhere: `story`
+   / `story-line` / `story-text` (styles.css, the Overview's story strip),
+   `cards` / `card` / `kpi` (styles.css), and the chart + table twin
+   (charts.js). None of it needs a rule of its own, so this file is
+   intentionally empty rather than adding a look-alike class that would only
+   drift from the shared one. Kept in place (instead of dropping `css` from
+   the view module) so the file exists at the path docs/ui-views.md expects. */
