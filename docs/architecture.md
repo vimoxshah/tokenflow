@@ -180,8 +180,9 @@ Every chart ships a **table twin** toggled per card, so no value is reachable on
 
 ## Privacy by construction
 
-There is no HTTP client anywhere in this codebase — not for telemetry, not for pricing, not for
-updates. The server binds to loopback and refuses non-GET requests from a foreign origin without a
+The product makes no network call on its own. The only outbound HTTP is the opt-in
+`tokenflow sync --to`, which posts your two sync files to a team server you run, and the GitHub
+Action, which runs in CI. Nothing for telemetry, pricing, or updates. The server binds to loopback and refuses non-GET requests from a foreign origin without a
 token. Adapters read token counts and metadata and discard content; the schema has nowhere to put
 a prompt. SQLite sources are read from a temp snapshot so a live editor is never disturbed.
 
@@ -189,5 +190,5 @@ a prompt. SQLite sources are read from a temp snapshot so a live editor is never
 
 `user`, `machine`, `session_id`, `project` and `repository` are first-class, and the cube is
 additive — so cubes from several machines can be merged by concatenating rows and re-summing
-duplicated dimension tuples. V1 ships no identity, auth or sync, deliberately. Nothing here makes
-them impossible to add.
+duplicated dimension tuples. Identity stays opt-in per person. Sync is file-based, or to a server you run
+(`tokenflow team serve`) behind a shared token. No hosted service holds anyone's usage.
