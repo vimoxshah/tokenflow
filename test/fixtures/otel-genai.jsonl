@@ -1,0 +1,49 @@
+{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"acme-agent"}}]},"scopeSpans":[{"scope":{"name":"acme-instrumentation"},"spans":[{"traceId":"5B8EFFF798038103D269B633813FC60C","spanId":"EEE19B7EC3C1B174","name":"chat gpt-4o-mini","kind":3,"startTimeUnixNano":"1700000000000000000","endTimeUnixNano":"1700000001500000000","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.request.model","value":{"stringValue":"gpt-4o-mini"}},{"key":"gen_ai.response.model","value":{"stringValue":"gpt-4o-mini-2024-07-18"}},{"key":"gen_ai.conversation.id","value":{"stringValue":"conv-synthetic-abc"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"1000"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":"200"}},{"key":"gen_ai.usage.cache_read.input_tokens","value":{"intValue":"300"}},{"key":"gen_ai.usage.cache_write.input_tokens","value":{"intValue":"100"}}]}]}]}]}
+{"resourceLogs": [{"resource": {"attributes": [{"key": "service.name"
+{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"acme-agent-service"}},{"key":"session.id","value":{"stringValue":"session-synthetic-002"}}]},"scopeLogs":[{"scope":{"name":"acme-log-instrumentation"},"logRecords":[{"timeUnixNano":"1705318200000000000","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"generate_content"}},{"key":"gen_ai.provider.name","value":{"stringValue":"acme-cloud"}},{"key":"gen_ai.request.model","value":{"stringValue":"acme-internal-llm-v9"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"500"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":"150"}},{"key":"gen_ai.usage.reasoning.output_tokens","value":{"intValue":"40"}}]}]}]}]}
+{
+  "attributes": {
+    "session.id": "session-synthetic-001",
+    "installation.id": "install-synthetic-xyz",
+    "active_approval_mode": "auto_edit",
+    "event.name": "gemini_cli.api_response",
+    "event.timestamp": "2026-01-15T10:00:00.000Z",
+    "model": "gemini-2.0-flash",
+    "duration_ms": 842,
+    "input_token_count": 900,
+    "output_token_count": 120,
+    "cached_content_token_count": 200,
+    "thoughts_token_count": 30,
+    "tool_token_count": 15,
+    "total_token_count": 1050,
+    "prompt_id": "prompt-synthetic-001",
+    "auth_type": "oauth-personal",
+    "status_code": 200,
+    "finish_reasons": ["STOP"]
+  }
+}
+{
+  "attributes": {
+    "session.id": "session-synthetic-001",
+    "installation.id": "install-synthetic-xyz",
+    "active_approval_mode": "auto_edit",
+    "event.name": "gen_ai.client.inference.operation.details",
+    "event.timestamp": "2026-01-15T10:00:00.000Z",
+    "gen_ai.operation.name": "generate_content",
+    "gen_ai.provider.name": "gcp.gen_ai",
+    "gen_ai.usage.input_tokens": 900,
+    "gen_ai.usage.output_tokens": 120
+  }
+}
+{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"acme-web"}}]},"scopeSpans":[{"scope":{"name":"http-instrumentation"},"spans":[{"traceId":"AA8EFFF798038103D269B633813FC61D","spanId":"FFF19B7EC3C1B185","name":"GET /health","kind":2,"startTimeUnixNano":"1700000010000000000","endTimeUnixNano":"1700000010005000000","attributes":[{"key":"http.method","value":{"stringValue":"GET"}},{"key":"http.status_code","value":{"intValue":"200"}}]}]}]}]}
+{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"acme-agent"}}]},"scopeSpans":[{"scope":{"name":"acme-instrumentation"},"spans":[{"traceId":"BB8EFFF798038103D269B633813FC62E","spanId":"AAA19B7EC3C1B196","name":"chat gpt-4o","kind":3,"startTimeUnixNano":"1700000020000000000","endTimeUnixNano":"1700000020800000000","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.request.model","value":{"stringValue":"gpt-4o"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"400"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":"80"}},{"key":"gen_ai.input.messages","value":{"stringValue":"SENTINEL_PROMPT_TEXT_MUST_NOT_LEAK user asked something private"}},{"key":"gen_ai.output.messages","value":{"stringValue":"SENTINEL_PROMPT_TEXT_MUST_NOT_LEAK model replied with something private"}}]}]}]}]}
+{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"acme-agent"}}]},"scopeSpans":[{"scope":{"name":"acme-instrumentation"},"spans":[{"traceId":"DD8EFFF798038103D269B633813FC63F","spanId":"CCC19B7EC3C1B1A0","name":"chat claude-3-5-haiku","kind":3,"startTimeUnixNano":"1700000024000000000","endTimeUnixNano":"1700000025200000000","attributes":[{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.provider.name","value":{"stringValue":"anthropic"}},{"key":"gen_ai.request.model","value":{"stringValue":"claude-3-5-haiku-20241022"}}],"events":[{"name":"gen_ai.client.inference.operation.details","timeUnixNano":"1700000025000000000","attributes":[{"key":"gen_ai.usage.input_tokens","value":{"intValue":"250"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":"60"}}]}]}]}]}]}
+{
+  "attributes": {
+    "gen_ai.operation.name": "generate_content",
+    "gen_ai.agent.name": "gemini-cli",
+    "gen_ai.request.model": "gemini-2.0-flash",
+    "gen_ai.usage.input_tokens": 999,
+    "gen_ai.usage.output_tokens": 999
+  }
+}

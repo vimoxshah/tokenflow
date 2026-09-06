@@ -45,6 +45,16 @@
  * A `model_provider` that is not a known model vendor is recorded as a
  * **gateway** (a proxy/router) rather than as the vendor, so "who served this"
  * and "who made this model" stay separate dimensions.
+ *
+ * ## Repository identity from `session_meta.git`
+ *
+ * Recent CLIs (cli_version 0.149+ observed) include a `git` block on
+ * `session_meta`: `{ commit_hash, branch, repository_url }`. `branch` becomes
+ * `git_branch`; `repository_url` is reduced to its basename with any `.git`
+ * suffix stripped and becomes `repository` (falling back to the cwd basename,
+ * same as `project`, when `git` is absent — the pre-existing behaviour).
+ * Only the derived name is kept: the commit hash and the URL itself are never
+ * stored, and no message content is read.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -77,6 +87,19 @@ export function codexHomes(ctx) {
 
 function expand(p) {
   return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p;
+}
+
+/**
+ * "https://example.invalid/org/my-repo.git" -> "my-repo". Never returns or
+ * stores the URL itself — only the derived name is kept.
+ * @param {unknown} url
+ * @returns {string|null}
+ */
+export function repoNameFromUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const base = path.posix.basename(url.replace(/\/+$/, ''));
+  if (!base) return null;
+  return base.replace(/\.git$/i, '') || null;
 }
 
 /**
@@ -225,7 +248,8 @@ export default createProvider({
         conversation_id: s.threadId || null,
         request_id: turn.id,
         project,
-        repository: project,
+        repository: s.gitRepository || project,
+        git_branch: s.gitBranch || null,
         category: s.threadSource === 'subagent' ? 'subagent' : 'main',
         client: 'codex',
         application: 'Codex',
@@ -275,6 +299,12 @@ export default createProvider({
           s.threadSource = p.thread_source || s.threadSource || null;
           s.cliVersion = p.cli_version || s.cliVersion || null;
           s.routeProvider = p.model_provider || s.routeProvider || null;
+          // Never store the commit hash or the repository URL — only what a
+          // branch name and a derived repo name need.
+          if (p.git) {
+            s.gitBranch = p.git.branch || s.gitBranch || null;
+            s.gitRepository = repoNameFromUrl(p.git.repository_url) || s.gitRepository || null;
+          }
           if (p.model) s.model = p.model;
           return;
         }
