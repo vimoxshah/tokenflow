@@ -1,0 +1,297 @@
+/* The filter bar. Owned by src/ui/filters.js.
+
+   One row, at rest: a date range button, a "+ Filter" button, whatever chips
+   are actually filtering, and a quiet Scope control at the far end. It
+   replaced 18 always-visible controls that stood between the reader and the
+   data on all 21 views.
+
+   Every value here is a role variable from design/tokens.yaml. There is not
+   one literal colour, which is what lets a skin change and a mode change
+   restyle the whole bar for free; test/filters.test.js fails the build if a
+   literal appears. The class prefix is `tf-` so nothing here can collide with
+   the hand-authored selectors in styles.css, and the pieces the component
+   layer already owns (.tf-trigger, .tf-btn, .tf-popover, .tf-option) are
+   reused rather than restyled. */
+
+/* ------------------------------------------------------------------ focus --
+   One ring, everywhere, on :focus-visible only, matching the declaration
+   styles.css and components.css already use. The chip body and both buttons
+   are .tf-trigger and .tf-btn and are already covered there; these two
+   controls exist only in this file, so they draw it here. */
+.tf-chip-x:focus-visible,
+.tf-scope-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Both halves of a chip sit inside the pill's own border, so a ring drawn
+   outside either one would collide with that border and with the chip next to
+   it. They draw inside instead, the same relief components.css gives the
+   search field. The two halves ring separately on purpose: ringing the whole
+   pill for both would leave a keyboard user unable to tell whether Enter is
+   about to edit the filter or remove it. */
+.tf-chip .tf-chip-body:focus-visible,
+.tf-chip-x:focus-visible { outline-offset: -2px; }
+
+/* An author `display` beats the UA's `[hidden] { display: none }` however low
+   its specificity, and .tf-btn/.tf-trigger both set `display: inline-flex`.
+   Without this, "Clear all" and the scope badge would never leave the bar,
+   which is the defect this whole file exists to remove, in miniature. */
+.tf-filterbar [hidden] { display: none; }
+
+/* -------------------------------------------------------------- the strip -- */
+/* `flex-start`, not `center`: once the chips wrap to a second line the lead
+   grows taller, and a centred Scope would drift down to sit between the two
+   rows instead of staying level with the date button it started beside. */
+.tf-filterbar {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-10);
+  padding: var(--sp-12) 0 var(--sp-14);
+}
+/* `display: contents` on both wrappers, so the date button, the add button,
+   every chip and Clear all are siblings in ONE wrapping flex line. A nested
+   flex box would wrap as a block and put the chips on their own row while the
+   first row sat half empty. */
+.tf-filterbar-date,
+.tf-chips { display: contents; }
+.tf-filterbar-lead {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.tf-filterbar-end {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+/* The date button carries state at all times, so it reads as the primary
+   control. Everything else in the row is quieter than it. */
+.tf-daterange-trigger { font-variant-numeric: tabular-nums; }
+
+.tf-filter-add {
+  background: transparent;
+  color: var(--text-secondary);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-filter-add:hover { background: var(--surface-2); color: var(--text-primary); }
+}
+.tf-filter-add .tf-trigger-icon { color: var(--text-muted); }
+/* No dimension here carries an icon, and a glyph invented for "Service tier"
+   would be decoration pretending to be meaning. Without this the menu still
+   reserves the icon column and every label sits behind an empty gutter. */
+.tf-filter-menu { min-width: 184px; }
+.tf-filter-menu .tf-menu-icon { display: none; }
+
+.tf-filter-clear {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-filter-clear:hover { background: var(--surface-2); color: var(--text-primary); border-color: transparent; }
+}
+
+/* --------------------------------------------------------------- the chip --
+   Two controls in one pill: the body reopens the value list, the x removes the
+   filter. Two real buttons rather than one button with a clickable region,
+   because a button inside a button is not a thing, and because removing a
+   filter has to be reachable by Tab. */
+.tf-chip {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: min(100%, 300px);
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-chip:hover { border-color: var(--text-muted); }
+}
+/* Set by filters.js from the trigger's own aria-expanded, so the pill and the
+   panel can never disagree about whether the chip is being edited. */
+.tf-chip.is-open {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+.tf-chip .tf-chip-body {
+  min-width: 0;
+  min-height: 26px;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-10);
+  border: 0;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  background: transparent;
+  gap: var(--sp-4);
+  overflow: hidden;
+}
+/* The pill is the hover surface, not the half of it under the pointer. */
+@media (hover: hover) and (pointer: fine) {
+  .tf-chip .tf-chip-body:hover { background: transparent; }
+}
+.tf-chip .tf-chip-body[aria-expanded='true'] {
+  background: transparent;
+  border-color: transparent;
+}
+.tf-chip .tf-trigger-caret { margin-left: 0; }
+
+/* The dimension name is context and the value is the answer, so the name is
+   quieter. On a static chip the whole label lives in this span and there is
+   nothing to rank it against. */
+.tf-chip-key {
+  flex: none;
+  color: var(--text-muted);
+}
+.tf-chip-fixed {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-10);
+  color: var(--text-primary);
+  font-family: var(--sans);
+  font-size: var(--fs-caption);
+  letter-spacing: var(--tr-caption);
+  font-variant-numeric: tabular-nums;
+}
+.tf-chip-fixed .tf-chip-key {
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tf-chip-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--sp-8) 0 var(--sp-4);
+  border: 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-chip-x:hover { color: var(--text-primary); }
+}
+.tf-chip-x:active { transform: scale(.94); }
+
+/* ------------------------------------------------------------- the values --
+   The chip's value list. `matchTriggerWidth` sizes the panel from its trigger
+   and writes an inline min-width, and a chip is narrow, so the panel needs a
+   width of its own or a two-word filter would open a two-word-wide list.
+   `width` rather than `min-width` because the inline style would win.
+
+   The filter bar is the only consumer of createListbox in the product today.
+   The primitive offers no hook to class its panel, so this sits here; the day
+   a second consumer appears, it belongs in components.css next to the
+   primitive it styles. */
+.tf-listbox-popover { width: 288px; }
+
+/* Same reach, same reason. The date panel's height is set by its preset
+   column, so without this the custom column's Cancel and Apply float in the
+   middle with a hand's width of nothing under them. Actions belong at the
+   bottom edge of the panel they act on. */
+.tf-daterange-foot { margin-top: auto; }
+
+/* --------------------------------------------------------------- the scope --
+   Not a filter in the same sense: it decides what counts as data at all,
+   rather than narrowing the data. It sits apart, at the end of the row, and
+   stays quiet until it is not at its default. */
+.tf-scope-trigger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-scope-trigger:hover { background: var(--surface-2); border-color: var(--border); color: var(--text-primary); }
+}
+.tf-scope-trigger.is-modified { color: var(--text-secondary); }
+.tf-scope-count {
+  flex: none;
+  min-width: 16px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--radius-pill);
+  background: var(--accent-solid);
+  color: var(--accent-ink);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  text-align: center;
+}
+
+.tf-scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-width: 340px;
+  padding: var(--sp-8);
+}
+.tf-scope-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-8);
+  padding: var(--sp-8);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-press) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-scope-row:hover { background: var(--surface-2); }
+}
+/* A real box that fills in, not a tick that appears out of nowhere: the empty
+   state has to be visibly a control that is off. */
+.tf-scope-mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  color: var(--accent-ink);
+}
+.tf-scope-row[aria-checked='true'] .tf-scope-mark {
+  border-color: transparent;
+  background: var(--accent-solid);
+}
+.tf-scope-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.tf-scope-title {
+  font-size: var(--fs-caption);
+  letter-spacing: var(--tr-caption);
+  line-height: var(--lh-caption);
+}
+.tf-scope-note {
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
+  line-height: var(--lh-label);
+}
+
+/* ------------------------------------------------------- reduced motion --
+   Nothing travels. The bar still changes state, it simply stops moving to get
+   there, the same doctrine components.css follows. */
+@media (prefers-reduced-motion: reduce) {
+  .tf-chip { transition: background var(--dur-press) var(--ease-out), border-color var(--dur-press) var(--ease-out); }
+  .tf-chip-x { transition: color var(--dur-press) var(--ease-out); }
+  .tf-chip-x:active { transform: none; }
+}

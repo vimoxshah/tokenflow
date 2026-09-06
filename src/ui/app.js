@@ -23,6 +23,7 @@ import { mountPalette } from './palette.js';
 import { maybeShowFirstRun } from './first-run.js';
 import { icon, ICON_NAMES } from './components/icons.js';
 import { attachTooltip } from './components/tooltip.js';
+import { mountFilterBar } from './filters.js';
 
 const SNAPSHOT = typeof window !== 'undefined' && !!window.__TOKENFLOW_BUNDLE__;
 
@@ -260,7 +261,7 @@ function injectViewStyles() {
  * file and fail to load from file://. Injecting by script, the same way
  * injectViewStyles() does, avoids that entirely.
  */
-const OWN_STYLES = ['./styles/palette.css', './styles/first-run.css', './styles/sidebar.css', './styles/components.css'];
+const OWN_STYLES = ['./styles/palette.css', './styles/first-run.css', './styles/sidebar.css', './styles/components.css', './styles/filters.css'];
 let ownStylesInjected = false;
 function injectOwnStyles() {
   if (SNAPSHOT || ownStylesInjected) return;
@@ -282,6 +283,17 @@ function injectOwnStyles() {
  * had to be declared before boot() for the same reason.
  */
 let palette = null;
+
+/**
+ * The filter bar, mounted once on the first render and patched by every render
+ * after it. Declared here for the same temporal-dead-zone reason as `palette`
+ * above: in a snapshot, boot() runs start to finish synchronously.
+ *
+ * It is mounted lazily rather than in boot() because it reads `S.view.facets`
+ * to build a value list, and the first recompute() has to have happened.
+ * @type {import('./filters.js').FilterBarApi|null}
+ */
+let filterBar = null;
 
 /**
  * Intervals a view asked for, in two lifetimes: one registered from `onEnter`
@@ -505,6 +517,20 @@ function updateLivePill() {
 }
 
 /**
+ * The dataset's today, which is not the machine's.
+ *
+ * `meta.today` is `localToday(tz)` in the dataset's configured timezone. A
+ * store whose newest record is older than that still ends at its own coverage,
+ * so the later of the two is the day every relative range counts back from.
+ * Every consumer has to use this one: a preset resolved against UTC now, or
+ * against a browser in another zone, is off by a day.
+ */
+function datasetToday() {
+  const cov = S.bundle.meta.coverage;
+  return S.bundle.meta.today && S.bundle.meta.today > cov.to ? S.bundle.meta.today : cov.to;
+}
+
+/**
  * @param {string} id
  * @param {{silent?:boolean}} [o]
  */
@@ -512,8 +538,7 @@ function applyRange(id, { silent } = {}) {
   S.rangeId = id;
   if (id !== 'custom') {
     const cov = S.bundle.meta.coverage;
-    const today = S.bundle.meta.today && S.bundle.meta.today > cov.to ? S.bundle.meta.today : cov.to;
-    const r = resolveRange(id, cov, today);
+    const r = resolveRange(id, cov, datasetToday());
     const floor = S.bundle.meta.defaultFrom;
     S.filters.from = floor && r.from && r.from < floor ? floor : r.from;
     S.filters.to = r.to;
@@ -837,8 +862,7 @@ function renderShell() {
 function render() {
   renderHeaderMeta();
   renderBanners();
-  renderFilters();
-  renderCrumbs();
+  syncFilterBar();
   const ctx = viewContext();
   enterTab(ctx);
   const host = document.getElementById('view');
@@ -972,176 +996,73 @@ async function findLiveServer() {
 
 // ================================================================== filters ==
 
-function renderFilters() {
-  const box = document.getElementById('filters');
-  box.textContent = '';
-  const cov = S.bundle.meta.coverage;
-
-  const quick = el('div', { class: 'chips' });
-  for (const r of QUICK_RANGES) {
-    if (r.id === 'custom') continue;
-    const allFrom = S.bundle.meta.defaultFrom && S.bundle.meta.defaultFrom > (cov.from || '') ? S.bundle.meta.defaultFrom : cov.from;
-    const c = el('button', { class: 'chip', text: r.id === 'all' ? `Since ${shortDate(allFrom || '')}` : r.label, 'aria-pressed': String(S.rangeId === r.id) });
-    c.addEventListener('click', () => applyRange(r.id));
-    quick.appendChild(c);
-  }
-  box.appendChild(el('div', { class: 'grp' }, [el('label', { class: 'fld' }, [el('span', { text: 'Quick range' }), quick])]));
-
-  box.appendChild(dateField('Date from', S.filters.from, (v) => { S.filters.from = v; S.rangeId = 'custom'; recompute(); render(); }));
-  box.appendChild(dateField('Date to', S.filters.to, (v) => { S.filters.to = v; S.rangeId = 'custom'; recompute(); render(); }));
-  box.appendChild(hourField('Hour from', S.filters.hourFrom, (v) => { S.filters.hourFrom = v; recompute(); render(); }));
-  box.appendChild(hourField('Hour to', S.filters.hourTo, (v) => { S.filters.hourTo = v; recompute(); render(); }));
-
-  const f = S.view.facets;
-  box.appendChild(multi('Provider', f.provider, S.filters.provider, (v) => { S.filters.provider = v; recompute(); render(); }));
-  box.appendChild(multi('Model', f.model, S.filters.model, (v) => { S.filters.model = v; recompute(); render(); }));
-  box.appendChild(multi('Client', f.client, S.filters.client, (v) => { S.filters.client = v; recompute(); render(); }));
-  box.appendChild(multi('Interface', f.interface, S.filters.interface, (v) => { S.filters.interface = v; recompute(); render(); }));
-  box.appendChild(multi('Project', f.project, S.filters.project, (v) => { S.filters.project = v; recompute(); render(); }));
-  box.appendChild(multi('Gateway', f.gateway, S.filters.gateway, (v) => { S.filters.gateway = v; recompute(); render(); }));
-  box.appendChild(multi('Service tier', f.service_tier, S.filters.service_tier, (v) => { S.filters.service_tier = v; recompute(); render(); }));
-
-  const toggles = el('div', { class: 'chips' });
-  toggles.appendChild(toggleChip('Include gateway overlay', S.filters.includeOverlay, (v) => {
-    S.filters.includeOverlay = v; recompute(); render();
-  }, 'Proxy/gateway logs describe traffic already counted by the client adapter. Including them double-counts tokens, but exposes measured cost.'));
-  toggles.appendChild(toggleChip('Include activity-only', S.filters.includeActivity, (v) => {
-    S.filters.includeActivity = v; recompute(); render();
-  }, 'Records from sources that report no token counts (Cline sessions, IDE edits, commits). They never add tokens, only activity.'));
-  box.appendChild(el('div', { class: 'grp' }, [el('label', { class: 'fld' }, [el('span', { text: 'Scope' }), toggles])]));
-
-  if (activeFilterCount()) {
-    box.appendChild(btn(`Clear ${activeFilterCount()} filter(s)`, clearFilters, 'ghost sm'));
-  }
+/**
+ * The filter bar, mounted on the first render and patched by every one after.
+ *
+ * Mounted here rather than in boot() because a value list is built from
+ * `S.view.facets`, which only exists once recompute() has run. Patched rather
+ * than rebuilt because a multi-select value list stays open across its own
+ * change: a bar rebuilt on every render would tear the panel out from under
+ * the user mid-selection. src/ui/filters.js owns the DOM; this function owns
+ * the state, and every command below still ends in recompute() then render().
+ */
+function syncFilterBar() {
+  if (filterBar) { filterBar.update(); return; }
+  filterBar = mountFilterBar({
+    host: document.getElementById('filters'),
+    getFilters: () => S.filters,
+    getFacets: () => S.view.facets,
+    getDrillDate: () => S.drillDate,
+    getToday: () => datasetToday(),
+    // `custom` has no computable dates, so the picker has nothing to offer for
+    // it; the custom fields on the right of the same panel are that row.
+    presets: QUICK_RANGES.filter((r) => r.id !== 'custom'),
+    onRange: (v) => {
+      S.filters.hourFrom = v.hourFrom;
+      S.filters.hourTo = v.hourTo;
+      // A preset goes through applyRange, which is the only thing that knows
+      // about the configured `defaultFrom` floor and about resolving a range
+      // against the dataset's coverage. Re-deriving the dates here would drop
+      // the floor and quietly widen "all data".
+      if (v.presetId) { applyRange(v.presetId); return; }
+      S.filters.from = v.from;
+      S.filters.to = v.to;
+      S.rangeId = 'custom';
+      recompute();
+      render();
+    },
+    setDimension: (key, values) => {
+      // An empty list is stored as null, the shape EMPTY_FILTERS and
+      // clearFilters both use, so a filter that was emptied does not persist
+      // into preferences as a stray [].
+      S.filters[key] = values && values.length ? values : null;
+      recompute();
+      render();
+    },
+    setScope: (patch) => {
+      Object.assign(S.filters, patch);
+      recompute();
+      render();
+    },
+    clearWeekdays: () => { S.filters.dows = null; recompute(); render(); },
+    clearDrillDate: () => { S.drillDate = null; recompute(); render(); },
+    clearAll: clearFilters,
+  });
 }
 
 /**
  * Reset every filter and the date range to "all". The overlay/activity scope
- * toggles are preserved — they widen or narrow what counts as data, not a
- * filter on it, so "Clear filters" leaving them alone matches what the
- * "Clear N filter(s)" button already only counted as filters.
+ * toggles are preserved: they widen or narrow what counts as data, not a
+ * filter on it, which is why the old "Clear N filter(s)" button never counted
+ * them either.
  *
- * Shared by the filter panel's own button, the "All data" breadcrumb, and the
- * command palette's "Clear filters", so the three cannot drift apart.
+ * Shared by the bar's own "Clear all" and the command palette's "Clear
+ * filters", so the two cannot drift apart.
  */
 function clearFilters() {
   S.filters = { ...EMPTY_FILTERS, includeOverlay: S.filters.includeOverlay, includeActivity: S.filters.includeActivity };
   S.drillDate = null;
   applyRange('all');
-}
-
-function activeFilterCount() {
-  let n = 0;
-  for (const k of ['provider', 'model', 'model_family', 'client', 'interface', 'gateway', 'project', 'repository', 'service_tier']) {
-    if (S.filters[k] && S.filters[k].length) n++;
-  }
-  if (S.filters.hourFrom !== null || S.filters.hourTo !== null) n++;
-  if (S.drillDate) n++;
-  return n;
-}
-
-function dateField(label, value, onChange) {
-  const i = el('input', { type: 'date', value: value || '' });
-  i.min = S.bundle.meta.coverage.from || '';
-  i.addEventListener('change', () => onChange(i.value || null));
-  return el('label', { class: 'fld' }, [el('span', { text: label }), i]);
-}
-
-function hourField(label, value, onChange) {
-  const s = el('select');
-  s.appendChild(el('option', { value: '', text: 'any' }));
-  for (let h = 0; h < 24; h++) s.appendChild(el('option', { value: String(h), text: hourLabel(h) + ':00' }));
-  s.value = value === null || value === undefined ? '' : String(value);
-  s.addEventListener('change', () => onChange(s.value === '' ? null : Number(s.value)));
-  return el('label', { class: 'fld' }, [el('span', { text: label }), s]);
-}
-
-function toggleChip(label, on, onChange, title) {
-  const c = el('button', { class: 'chip', text: (on ? '✓ ' : '') + label, 'aria-pressed': String(!!on), title: title || '' });
-  c.addEventListener('click', () => onChange(!on));
-  return c;
-}
-
-function multi(label, options, selected, onChange) {
-  const sel = new Set(selected || []);
-  const wrap = el('div', { class: 'ms' });
-  const b = el('button', {
-    class: 'btn ms-btn',
-    text: sel.size ? `${label}: ${sel.size}` : label,
-  });
-  b.appendChild(el('span', { class: 'muted', text: '▾' }));
-  const pop = el('div', { class: 'ms-pop' });
-  const search = el('input', { type: 'text', placeholder: `Filter ${label.toLowerCase()}…` });
-  const list = el('div', { class: 'ms-list' });
-  const paint = () => {
-    list.textContent = '';
-    const q = search.value.toLowerCase();
-    for (const o of options) {
-      const name = String(o.value);
-      if (q && !name.toLowerCase().includes(q)) continue;
-      const row = el('div', { class: 'ms-row', role: 'option', 'aria-selected': String(sel.has(o.value)) }, [
-        el('span', { class: 'tick', text: sel.has(o.value) ? '✓' : '' }),
-        el('span', { class: 'nm', text: name, title: name }),
-        el('span', { class: 'ct', text: compact(o.total) }),
-      ]);
-      row.addEventListener('click', () => {
-        if (sel.has(o.value)) sel.delete(o.value); else sel.add(o.value);
-        paint();
-        b.firstChild.textContent = sel.size ? `${label}: ${sel.size}` : label;
-      });
-      list.appendChild(row);
-    }
-    if (!list.children.length) list.appendChild(el('div', { class: 'empty', text: 'No matches' }));
-  };
-  search.addEventListener('input', paint);
-  paint();
-  pop.appendChild(search);
-  pop.appendChild(list);
-  pop.appendChild(el('div', { class: 'ms-foot' }, [
-    btn('Clear', () => { sel.clear(); paint(); onChange(null); wrap.classList.remove('open'); }, 'ghost sm'),
-    btn('Apply', () => { onChange([...sel]); wrap.classList.remove('open'); }, 'primary sm'),
-  ]));
-  b.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    document.querySelectorAll('.ms.open').forEach((x) => { if (x !== wrap) x.classList.remove('open'); });
-    wrap.classList.toggle('open');
-  });
-  document.addEventListener('click', (ev) => { if (!wrap.contains(ev.target)) wrap.classList.remove('open'); });
-  wrap.appendChild(b);
-  wrap.appendChild(pop);
-  return el('label', { class: 'fld' }, [el('span', { text: label }), wrap]);
-}
-
-// ============================================================== breadcrumbs ==
-
-function renderCrumbs() {
-  const box = document.getElementById('crumbs');
-  box.textContent = '';
-  const parts = [{ label: 'All data', reset: clearFilters }];
-  for (const [key, label] of [['provider', 'Provider'], ['model', 'Model'], ['client', 'Client'], ['interface', 'Interface'], ['project', 'Project'], ['gateway', 'Gateway'], ['service_tier', 'Tier']]) {
-    const v = S.filters[key];
-    if (v && v.length) {
-      parts.push({
-        label: `${label}: ${v.join(', ')}`,
-        reset: () => { S.filters[key] = null; recompute(); render(); },
-      });
-    }
-  }
-  if (S.filters.hourFrom !== null || S.filters.hourTo !== null) {
-    parts.push({
-      label: `Hours ${S.filters.hourFrom ?? 0}–${S.filters.hourTo ?? 23}`,
-      reset: () => { S.filters.hourFrom = null; S.filters.hourTo = null; recompute(); render(); },
-    });
-  }
-  if (S.drillDate) parts.push({ label: longDate(S.drillDate), reset: () => { S.drillDate = null; recompute(); render(); } });
-
-  parts.forEach((p, i) => {
-    if (i) box.appendChild(el('span', { class: 'sep', text: '→' }));
-    const c = el('span', { class: 'cr', text: p.label });
-    c.addEventListener('click', p.reset);
-    box.appendChild(c);
-  });
-  if (parts.length > 1) box.appendChild(el('span', { class: 'muted', text: ` · click a crumb to remove it` }));
 }
 
 // ==================================================== card / chart plumbing ==
@@ -2478,7 +2399,7 @@ function defaultCompare() {
 }
 
 function dateFieldRaw(label, value, onChange) {
-  const i = el('input', { type: 'date', value: value || '' });
+  const i = el('input', { class: 'tf-input', type: 'date', value: value || '' });
   i.addEventListener('change', () => onChange(i.value || null));
   return el('label', { class: 'fld' }, [el('span', { text: label }), i]);
 }
@@ -2491,8 +2412,11 @@ function viewExplorer() {
   const ex = S.explorer;
 
   const bar = el('div', { class: 'filters', style: 'padding-top:0' });
-  const search = el('input', { type: 'text', placeholder: 'Search model, project, session, branch…', value: ex.search });
-  search.style.minWidth = '280px';
+  const search = el('input', { class: 'tf-input', type: 'text', placeholder: 'Search model, project, session, branch…', value: ex.search });
+  // An explicit width, because .tf-input is `width: 100%` and this input sits
+  // in a flex row next to the page controls, where filling the row would push
+  // them off it. 280px is what the old min-width rendered as.
+  search.style.width = '280px';
   let t = null;
   search.addEventListener('input', () => {
     clearTimeout(t);
@@ -2869,7 +2793,7 @@ function pricingModal() {
   const rows = models.map((m) => {
     const cur = existing[m.key] || {};
     const mk = (k, ph) => {
-      const i = el('input', { type: 'number', step: '0.0001', min: '0', placeholder: ph, value: cur[k] ?? '' });
+      const i = el('input', { class: 'tf-input', type: 'number', step: '0.0001', min: '0', placeholder: ph, value: cur[k] ?? '' });
       i.style.width = '92px';
       return i;
     };
