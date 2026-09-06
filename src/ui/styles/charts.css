@@ -1,0 +1,39 @@
+/* Chart interaction and finish for every renderer in charts.js: the hover
+   crosshair, per-mark tooltips, mark specs and reduced-motion guards this
+   file adds all read their colour from the same design tokens the rest of
+   the dashboard uses. Nothing here is a raw hex or rgb() value. */
+
+/* charts.js emits axis and tick labels as <text class="tick"> directly, a
+   leaf element, not a wrapper. The base stylesheet's ".tick text" selector
+   is a descendant selector, so it matches a <text> nested inside a .tick
+   element, which this markup never has; it has never actually painted an
+   axis label. This rule targets the element itself, and being a compound
+   class+tag selector it outranks the dead one on specificity regardless of
+   load order, so it is safe however these two files are linked. */
+svg.chart text.tick {
+  fill: var(--text-muted);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every chart's viewBox stretches independently on each axis
+   (preserveAspectRatio="none"), which would otherwise distort stroke width
+   whenever the rendered box's aspect ratio differs from the viewBox's. */
+.grid-line, .axis-line, .series-line, .ma-line, .peak-mark, .crosshair, .annot-mark {
+  vector-effect: non-scaling-stroke;
+}
+
+/* The "no data" / "one point" states every renderer now falls back to
+   instead of a blank axis or an invisible zero-length path. */
+.empty-state {
+  fill: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+/* The tooltip's own show/hide transition (styles.css) is direct feedback on
+   a hover, not decoration, so collapse it under reduced motion like every
+   other transition in the app already does. */
+@media (prefers-reduced-motion: reduce) {
+  .tip { transition: none; }
+}
