@@ -295,7 +295,7 @@ header.top {
 /* Feedback lives on the press, not the release: the interface heard you. */
 .btn:active { transform: scale(.97); }
 .btn:focus-visible, .chip:focus-visible, .side-item:focus-visible, .side-search:focus-visible, .side-toggle:focus-visible, select:focus-visible,
-input:focus-visible, .theme-row:focus-visible, .ms-row:focus-visible, table.tbl tbody tr:focus-visible {
+input:focus-visible, .theme-row:focus-visible, table.tbl tbody tr:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .btn[disabled] { opacity: .5; cursor: default; }
@@ -312,12 +312,13 @@ select, input[type=date], input[type=text], input[type=number], input[type=time]
 input::placeholder { color: var(--text-muted); }
 label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-muted); }
 
-/* filter bar: ONE row above everything it scopes */
+/* A view's own control row: the compare view's four date fields and the data
+   explorer's search box. The dashboard-wide filter bar is no longer one of
+   these; it is .tf-filterbar in styles/filters.css. */
 .filters {
   display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
   padding: 12px 0 14px;
 }
-.filters .grp { display: flex; gap: 8px; align-items: flex-end; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .chip {
   border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-secondary);
@@ -330,37 +331,12 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 11px; co
 }
 .chip:active { transform: scale(.97); }
 .chip[aria-pressed=true] { background: var(--accent-solid); border-color: transparent; color: var(--accent-ink); }
-.chip .x { opacity: .7; margin-left: 4px; }
 
-/* multiselect ------------------------------------------------------------- */
-.ms { position: relative; }
-.ms-btn { min-width: 132px; justify-content: space-between; }
-.ms-pop {
-  position: absolute; z-index: 60; top: calc(100% + 5px); left: 0; width: 268px;
-  background: var(--surface-1); border: 1px solid var(--border-strong);
-  border-radius: var(--radius); box-shadow: var(--shadow); padding: 8px; display: none;
-  /* A popover grows from its trigger, never from its own centre. */
-  transform-origin: top left;
-  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
-}
-.ms.open .ms-pop { display: block; opacity: 1; transform: scale(1); }
 @starting-style {
-  .ms.open .ms-pop { opacity: 0; transform: scale(.96); }
   .theme.open .theme-pop { opacity: 0; transform: scale(.96); }
   dialog[open] { opacity: 0; transform: scale(.97); }
   dialog[open]::backdrop { opacity: 0; }
 }
-.ms-pop input { width: 100%; margin-bottom: 7px; }
-.ms-list { max-height: 258px; overflow: auto; }
-.ms-row {
-  display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 13px;
-}
-.ms-row:hover { background: var(--surface-2); }
-.ms-row .tick { width: 14px; font-weight: 700; color: var(--accent); }
-.ms-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-row .ct { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.ms-foot { display: flex; justify-content: space-between; gap: 8px; padding-top: 7px; border-top: 1px solid var(--border); margin-top: 6px; }
 
 /* ----------------------------------------------------------------- cards -- */
 .grid { display: grid; gap: var(--gap-grid); }
@@ -651,11 +627,6 @@ table.tbl .mini {
 .empty strong { color: var(--text-secondary); font-weight: 600; }
 
 /* ----------------------------------------------------------------- misc --- */
-.crumbs { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
-.crumbs .cr { cursor: pointer; color: var(--text-secondary); }
-.crumbs .cr:hover { color: var(--text-primary); text-decoration: underline; }
-.crumbs .sep { opacity: .5; }
-
 .bar-row { display: grid; grid-template-columns: 128px 1fr 76px; gap: 10px; align-items: center; font-size: 12.5px; padding: 3px 0; }
 .bar-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
 .bar-row .track { display: block; height: 9px; background: var(--surface-3); border-radius: 5px; overflow: hidden; }
