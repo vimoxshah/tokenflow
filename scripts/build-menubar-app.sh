@@ -106,9 +106,11 @@ if [ "$PORTABLE" != "1" ]; then
 fi
 
 echo "compiling with $(swiftc --version | head -1)"
+# DesignTokens.swift is generated from design/tokens.yaml (`npm run design`);
+# the app is compiled from both files so it cannot drift from the dashboard.
 swiftc -O -swift-version 5 \
   -o "$APP/Contents/MacOS/TokenFlow" \
-  "$SRC" 2>&1 | head -40
+  "$SRC" "$REPO/menubar/TokenFlow/DesignTokens.swift" 2>&1 | head -40
 
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 
