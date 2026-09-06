@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const { aggregate, renderText } = await import('../src/core/team.js');
+const { aggregate, renderText, readDailyLines } = await import('../src/core/team.js');
 const syncMod = await import('../src/core/sync.js');
 
 function teamFixture() {
@@ -81,6 +81,26 @@ test('team: empty dir returns null, renderText handles it', () => {
   assert.equal(aggregate(empty), null);
   assert.match(renderText(null), /No team data/);
   fs.rmSync(empty, { recursive: true, force: true });
+});
+
+test('readDailyLines: every rollup line, in the date window, with the filename as the machine fallback', () => {
+  const dir = teamFixture();
+  fs.writeFileSync(path.join(dir, 'm-old.jsonl'), [
+    JSON.stringify({ date: '2026-08-22', inputTokens: 10, outputTokens: 1, requests: 1, estCostUsd: 0.5 }),
+    'not json at all',                                     // a partial sync must not take the export down
+  ].join('\n') + '\n');
+
+  const all = readDailyLines(dir);
+  assert.equal(all.length, 5, 'four fixture lines plus the one parseable line above');
+  const fallback = all.find((r) => r.estCostUsd === 0.5);
+  assert.equal(fallback.machineName, 'm-old', 'a line written before machineName existed still names its machine');
+
+  const narrowed = readDailyLines(dir, { from: '2026-08-23', to: '2026-08-23' });
+  assert.equal(narrowed.length, 1);
+  assert.equal(narrowed[0].date, '2026-08-23');
+
+  assert.deepEqual(readDailyLines(path.join(dir, 'nope')), [], 'a missing folder is empty, never a throw');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('sync push includes developer field ONLY when configured', async () => {

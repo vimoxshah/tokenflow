@@ -1,0 +1,47 @@
+# TokenFlow team server, systemd unit.
+# See docs/team-server.md and deploy/README.md.
+#
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin tokenflow
+#   sudo mkdir -p /etc/tokenflow
+#   sudo cp deploy/team.env.example /etc/tokenflow/team.env
+#   sudo chmod 600 /etc/tokenflow/team.env   # it carries the shared token
+#   sudo cp deploy/tokenflow-team.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tokenflow-team
+
+[Unit]
+Description=TokenFlow team server
+Documentation=https://github.com/vimoxshah/tokenflow/blob/main/docs/team-server.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tokenflow
+Group=tokenflow
+EnvironmentFile=/etc/tokenflow/team.env
+# Loopback by default: put a reverse proxy (deploy/Caddyfile or
+# deploy/nginx.conf) in front for anything beyond this one machine.
+# /usr/bin/tokenflow assumes a nodesource-style global npm install; replace
+# it with the real path (run `command -v tokenflow` as the tokenflow user to
+# find it). A Debian/apt Node package instead puts it under /usr/local/bin,
+# and an nvm install lives under a user's home directory, which
+# ProtectHome=true below blocks entirely, so do not point this unit at one.
+ExecStart=/usr/bin/tokenflow team serve --host 127.0.0.1 --port 7790
+Restart=on-failure
+RestartSec=5
+
+# Hardening. StateDirectory creates /var/lib/tokenflow owned by User/Group
+# before the first start; TOKENFLOW_HOME in team.env must point at the same
+# path, and ReadWritePaths must list it, or ProtectSystem=strict makes every
+# write fail.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=tokenflow
+ReadWritePaths=/var/lib/tokenflow
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

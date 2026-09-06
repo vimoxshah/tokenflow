@@ -30,6 +30,18 @@
  * token/cost rollups and receipt summaries, the same coarse shape the folder
  * sync already produces. Request bodies are never logged.
  *
+ * Two routes sit outside the rollup contract:
+ *   - `GET /api/policy` serves `<dir>/policy.yaml` verbatim as `text/yaml`,
+ *     the org cap `src/core/policy.js` caches locally. Gated exactly like the
+ *     other reads.
+ *   - `POST /github/webhook` is the self-hosted GitHub App receiver
+ *     (`src/core/github-app.js`, docs/github-app.md). We host nothing: the
+ *     customer registers their OWN App pointing at their OWN server. It is
+ *     the one route the shared bearer token cannot protect, because GitHub
+ *     cannot be told to send one; its auth is the App's webhook secret,
+ *     checked as an HMAC over the raw body. Disabled (404) until an app id,
+ *     a private key and a webhook secret are all configured.
+ *
  *   tokenflow team serve                          loopback, no auth, port 7790
  *   tokenflow team serve --token <shared-secret>   required for --host 0.0.0.0
  *   TOKENFLOW_TEAM_TOKEN=<shared-secret> tokenflow team serve --host 0.0.0.0
@@ -37,15 +49,23 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { aggregate, renderText } from '../core/team.js';
 import { paths } from '../core/config.js';
+import {
+  verifyWebhookSignature, handleWebhook, createDeliveryMemory, createReceiverQueue,
+  DEFAULT_API_URL as GITHUB_DEFAULT_API_URL, DEFAULT_NOTES_REF as GITHUB_DEFAULT_NOTES_REF,
+} from '../core/github-app.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DEFAULT_PORT = 7790;
 const MAX_BODY_BYTES = 8 * 1024 * 1024; // 8 MB, per the rollup contract
+const GITHUB_MAX_BODY_BYTES = 1024 * 1024; // 1 MB: GitHub's own delivery ceiling is 25 MB, but nothing we act on is close
 const MACHINE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+/** The org policy file this server hands out at `GET /api/policy`. */
+const ORG_POLICY_FILE = 'policy.yaml';
 
 // Mirrors scripts/design-build.js's START/END markers (the source of truth
 // for the generated block). Duplicated here as plain strings so this runtime
@@ -53,14 +73,68 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const TOKEN_BLOCK_START = '/* @generated design-tokens:start';
 const TOKEN_BLOCK_END = '/* @generated design-tokens:end */';
 
+/** The first of `values` that is a non-empty string, or null. */
+function firstString(...values) {
+  for (const v of values) if (typeof v === 'string' && v.trim() !== '') return v.trim();
+  return null;
+}
+
+/**
+ * Resolve the GitHub App settings from flags then environment, and read the
+ * private key off disk once at startup rather than per delivery.
+ *
+ * The App is enabled only when the id, the key and the webhook secret are ALL
+ * present — two out of three is a half-configured receiver that would answer
+ * GitHub with a 500 instead of a clear 404. A key file that is named but
+ * unreadable throws here, at boot, where an operator will see it.
+ *
+ * Every value is trimmed: a webhook secret pasted into a systemd unit or a
+ * Docker env file picks up a trailing newline more often than not, and a
+ * secret that differs from GitHub's by one invisible byte fails every
+ * signature check with nothing in the log to explain it.
+ *
+ * The delivery memory and the per-pull-request queue are created ONCE here,
+ * not per request: both only work if every delivery shares them.
+ * @param {object} opt the `startTeamServer` options
+ * @returns {{webhookSecret:string, deliveries:object, queue:object, app:{apiUrl:string, appId:string, privateKeyPem:string, notesRef:string}}|null}
+ */
+function resolveGithubApp(opt) {
+  const appId = firstString(opt.githubAppId, process.env.TOKENFLOW_GH_APP_ID);
+  const keyFile = firstString(opt.githubKeyFile, process.env.TOKENFLOW_GH_PRIVATE_KEY_FILE);
+  const webhookSecret = firstString(opt.githubWebhookSecret, process.env.TOKENFLOW_GH_WEBHOOK_SECRET);
+  const apiUrl = firstString(opt.githubApiUrl, process.env.TOKENFLOW_GH_API_URL) || GITHUB_DEFAULT_API_URL;
+  const notesRef = firstString(opt.githubNotesRef) || GITHUB_DEFAULT_NOTES_REF;
+
+  let privateKeyPem = firstString(opt.githubPrivateKeyPem);
+  if (!privateKeyPem && keyFile) {
+    try {
+      privateKeyPem = fs.readFileSync(keyFile, 'utf8');
+    } catch (err) {
+      throw new Error(`cannot read the GitHub App private key at ${keyFile}: ${err.code || err.message}`);
+    }
+  }
+  if (!appId || !privateKeyPem || !webhookSecret) return null;
+  return {
+    webhookSecret,
+    deliveries: createDeliveryMemory(),
+    queue: createReceiverQueue(),
+    app: { apiUrl, appId, privateKeyPem, notesRef },
+  };
+}
+
 /**
  * Start the team server: accepts rollup uploads from each machine and serves
  * the aggregated team view over HTTP.
- * @param {{dir?:string, host?:string, port?:number, token?:string|null}} [opt]
+ * @param {{dir?:string, host?:string, port?:number, token?:string|null,
+ *   githubAppId?:string, githubKeyFile?:string, githubPrivateKeyPem?:string,
+ *   githubWebhookSecret?:string, githubApiUrl?:string, githubNotesRef?:string}} [opt]
  *   dir defaults to `<paths().root>/team` (created if missing); host defaults
  *   to 127.0.0.1; port defaults to 7790; token falls back to the
- *   TOKENFLOW_TEAM_TOKEN env var when not passed explicitly.
- * @returns {Promise<{server:import('node:http').Server, url:string, close:()=>Promise<void>}>}
+ *   TOKENFLOW_TEAM_TOKEN env var when not passed explicitly. The `github*`
+ *   options fall back to TOKENFLOW_GH_APP_ID, TOKENFLOW_GH_PRIVATE_KEY_FILE,
+ *   TOKENFLOW_GH_WEBHOOK_SECRET and TOKENFLOW_GH_API_URL;
+ *   `githubPrivateKeyPem` is the in-memory alternative to a key file.
+ * @returns {Promise<{server:import('node:http').Server, url:string, githubConfigured:boolean, close:()=>Promise<void>}>}
  */
 export async function startTeamServer(opt = {}) {
   const host = opt.host || '127.0.0.1';
@@ -74,10 +148,16 @@ export async function startTeamServer(opt = {}) {
     throw new Error('refusing to bind a non-loopback host without a token — pass --token or set TOKENFLOW_TEAM_TOKEN');
   }
 
+  const github = resolveGithubApp(opt);
   fs.mkdirSync(dir, { recursive: true });
 
+  // Webhook deliveries are answered 202 and processed afterwards; holding the
+  // promises lets close() drain them instead of cutting them off mid-flight.
+  /** @type {Set<Promise<unknown>>} */
+  const pending = new Set();
+
   const server = http.createServer((req, res) => {
-    handleRequest(req, res, { dir, token }).catch(() => {
+    handleRequest(req, res, { dir, token, github, pending }).catch(() => {
       // Never echo the triggering error: it may embed request-derived text
       // (e.g. a JSON.parse SyntaxError snippet of the body).
       try { json(res, { error: 'internal error' }, 500); } catch { /* response already sent or socket gone */ }
@@ -93,21 +173,42 @@ export async function startTeamServer(opt = {}) {
   const bound = server.address();
   const boundPort = typeof bound === 'object' && bound !== null ? bound.port : port;
   const url = `http://${host}:${boundPort}`;
-  return { server, url, close: () => new Promise((resolve) => server.close(() => resolve(undefined))) };
+  return {
+    server,
+    url,
+    githubConfigured: !!github,
+    close: async () => {
+      await new Promise((resolve) => server.close(() => resolve(undefined)));
+      await Promise.allSettled([...pending]);
+    },
+  };
 }
 
 /**
  * `tokenflow team serve` CLI entry point. Starts the server and keeps the
  * process alive (Ctrl+C to stop), matching `tokenflow dashboard`'s pattern.
- * @param {object} flags parsed CLI flags: --host, --port, --dir, --token
+ * @param {object} flags parsed CLI flags: --host, --port, --dir, --token,
+ *   --github-app-id, --github-key-file, --github-webhook-secret,
+ *   --github-api-url, --github-notes-ref
  */
 export async function run(flags = {}) {
   const host = typeof flags.host === 'string' ? flags.host : '127.0.0.1';
   const port = flags.port !== undefined ? Number(flags.port) : DEFAULT_PORT;
   const dir = typeof flags.dir === 'string' ? flags.dir : undefined;
   const token = typeof flags.token === 'string' ? flags.token : undefined;
+  const flag = (name) => (typeof flags[name] === 'string' ? flags[name] : undefined);
 
-  const { url } = await startTeamServer({ host, port, dir, token });
+  const { url, githubConfigured } = await startTeamServer({
+    host,
+    port,
+    dir,
+    token,
+    githubAppId: flag('github-app-id'),
+    githubKeyFile: flag('github-key-file'),
+    githubWebhookSecret: flag('github-webhook-secret'),
+    githubApiUrl: flag('github-api-url'),
+    githubNotesRef: flag('github-notes-ref'),
+  });
   const resolvedDir = dir || path.join(paths().root, 'team');
   const hasToken = !!(token || process.env.TOKENFLOW_TEAM_TOKEN);
 
@@ -118,15 +219,18 @@ export async function run(flags = {}) {
     ? '  auth: bearer token (or the tf_token cookie minted by /?token=<token>) required for writes and reads'
     : '  auth: none configured — every route is open. Set --token or TOKENFLOW_TEAM_TOKEN to require one.');
   console.log('  /health always answers, but only { ok: true } until authenticated.');
+  console.log(githubConfigured
+    ? '  GitHub App: on. POST /github/webhook is open to GitHub and verified by the webhook secret, not the team token.'
+    : '  GitHub App: off. /github/webhook answers 404 until an app id, a key file and a webhook secret are all set.');
   console.log('  Ctrl+C to stop\n');
   await new Promise(() => {}); // keep the process alive until interrupted
 }
 
 // ------------------------------------------------------------- routing ---
 
-/** @param {{dir:string, token:string|null}} ctx */
+/** @param {{dir:string, token:string|null, github?:object|null, pending?:Set<Promise<unknown>>}} ctx */
 async function handleRequest(req, res, ctx) {
-  const { dir, token } = ctx;
+  const { dir, token, github = null, pending = null } = ctx;
   let url;
   try {
     url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -143,9 +247,137 @@ async function handleRequest(req, res, ctx) {
     if (token && !isAuthorized(req, token)) return json(res, { error: 'unauthorized' }, 401);
     return json(res, aggregate(dir));
   }
+  if (req.method === 'GET' && p === '/api/policy') return handleOrgPolicy(req, res, { dir, token });
+  if (req.method === 'GET' && p === '/github/health') {
+    // Never gated and never secret-bearing: an operator checks this from the
+    // reverse proxy before GitHub ever sends a delivery.
+    return json(res, { ok: true, appConfigured: !!github });
+  }
+  if (req.method === 'POST' && p === '/github/webhook') return handleGithubWebhook(req, res, { github, pending });
   if (req.method === 'GET' && p === '/') return handleIndex(req, res, url, { dir, token });
   if (req.method === 'POST' && p === '/api/rollup') return handleRollup(req, res, { dir, token });
   return json(res, { error: 'not found' }, 404);
+}
+
+/**
+ * `GET /api/policy`: the org's `policy.yaml`, verbatim, as `text/yaml`.
+ *
+ * The contract `fetchOrgPolicy()` in `src/core/policy.js` reads: 200 with the
+ * file's text, or a 404 JSON error when the org has declared none. Gated by
+ * the same bearer token or `tf_token` cookie as every other read, because a
+ * cap is a statement about how the team works.
+ */
+function handleOrgPolicy(req, res, { dir, token }) {
+  if (token && !isAuthorized(req, token)) return json(res, { error: 'unauthorized' }, 401);
+  const file = path.join(dir, ORG_POLICY_FILE);
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return json(res, { error: 'no org policy configured' }, 404); // missing or unreadable: the org has none
+  }
+  // `no-store` still applies: this is not for a shared HTTP cache, whose copy
+  // of a team's cap policy nobody wants. The ETag is for `fetchOrgPolicy`,
+  // which keeps its own cache on disk and can send it back as
+  // `If-None-Match` to skip re-downloading a file that has not changed.
+  const etag = `"${crypto.createHash('sha256').update(text).digest('hex').slice(0, 32)}"`;
+  if (etagMatches(req.headers['if-none-match'], etag)) {
+    res.writeHead(304, { etag, 'cache-control': 'no-store' });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'content-type': 'text/yaml; charset=utf-8',
+    'cache-control': 'no-store',
+    etag,
+  });
+  res.end(text);
+}
+
+/**
+ * True when an `If-None-Match` header names `etag`. The header is a
+ * comma-separated list, each entry optionally weak-prefixed (`W/`), and `*`
+ * matches anything that exists.
+ */
+function etagMatches(header, etag) {
+  if (typeof header !== 'string' || header.trim() === '') return false;
+  return header.split(',').some((raw) => {
+    const candidate = raw.trim().replace(/^W\//, '');
+    return candidate === '*' || candidate === etag;
+  });
+}
+
+/**
+ * `POST /github/webhook`: the self-hosted App receiver.
+ *
+ * The only unauthenticated-by-token route on this server, because GitHub
+ * cannot be told to send a bearer header. Its auth is the webhook secret,
+ * checked as an HMAC over the RAW bytes — the body is verified before it is
+ * parsed, so nothing untrusted is ever handed to JSON.parse first.
+ *
+ * The response is a 202 sent immediately: GitHub gives a receiver ten seconds
+ * and a notes tree read can take longer, so the work happens after the socket
+ * is answered. Nothing from the delivery is written to disk and no body is
+ * logged; the one line per pull request carries the event, repository, PR
+ * number and outcome.
+ *
+ * `github` is the resolved App config (null when it is not configured, which
+ * is a 404); `pending` is the set close() drains before it resolves.
+ */
+async function handleGithubWebhook(req, res, { github, pending }) {
+  if (!github) return json(res, { error: 'not found' }, 404);
+
+  let raw;
+  try {
+    raw = await readBodyLimited(req, GITHUB_MAX_BODY_BYTES);
+  } catch (err) {
+    if (err.code === 'PAYLOAD_TOO_LARGE') return json(res, { error: 'payload too large' }, 413);
+    return json(res, { error: 'bad request' }, 400);
+  }
+
+  const header = req.headers['x-hub-signature-256'];
+  if (!verifyWebhookSignature({
+    secret: github.webhookSecret,
+    rawBody: raw,
+    signatureHeader: typeof header === 'string' ? header : null,
+  })) {
+    return json(res, { error: 'unauthorized' }, 401);
+  }
+
+  if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) {
+    return json(res, { error: 'content-type must be application/json' }, 415);
+  }
+  let payload;
+  try {
+    payload = JSON.parse(raw.toString('utf8'));
+  } catch {
+    return json(res, { error: 'invalid JSON body' }, 400);
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return json(res, { error: 'invalid JSON body' }, 400);
+  }
+
+  const event = typeof req.headers['x-github-event'] === 'string' ? req.headers['x-github-event'] : '';
+  const deliveryId = typeof req.headers['x-github-delivery'] === 'string' ? req.headers['x-github-delivery'] : null;
+
+  json(res, { ok: true, event, delivery: deliveryId }, 202);
+
+  const work = handleWebhook({
+    event,
+    deliveryId,
+    payload,
+    app: github.app,
+    deliveries: github.deliveries,
+    queue: github.queue,
+    log: (line) => console.log(line),
+  }).catch((err) => {
+    // The message names a request and a status, never a payload.
+    console.error(`[tokenflow github] event=${event || '-'} delivery=${deliveryId || '-'} outcome=error (${err.message})`);
+  });
+  if (pending) {
+    pending.add(work);
+    work.finally(() => pending.delete(work));
+  }
+  return work;
 }
 
 /**
@@ -209,7 +441,7 @@ async function handleRollup(req, res, { dir, token }) {
   }
 
   let body;
-  try { body = JSON.parse(raw || '{}'); } catch { return json(res, { error: 'invalid JSON body' }, 400); }
+  try { body = JSON.parse(raw.toString('utf8') || '{}'); } catch { return json(res, { error: 'invalid JSON body' }, 400); }
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json(res, { error: 'invalid JSON body' }, 400);
   }
@@ -256,6 +488,11 @@ async function handleRollup(req, res, { dir, token }) {
  * `code: 'PAYLOAD_TOO_LARGE'` — responding while the client still has
  * unsent body bytes in flight resets the connection instead of delivering
  * the 413.
+ *
+ * Resolves the RAW bytes, not a string: the GitHub webhook signature is an
+ * HMAC over exactly what arrived, and a decode-then-re-encode round trip is
+ * not guaranteed to reproduce it.
+ * @returns {Promise<Buffer>}
  */
 function readBodyLimited(req, maxBytes) {
   return new Promise((resolve, reject) => {
@@ -273,7 +510,7 @@ function readBodyLimited(req, maxBytes) {
         err.code = 'PAYLOAD_TOO_LARGE';
         reject(err);
       } else {
-        resolve(Buffer.concat(chunks).toString('utf8'));
+        resolve(Buffer.concat(chunks));
       }
     });
     req.on('error', reject);
