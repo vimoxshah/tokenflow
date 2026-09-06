@@ -30,8 +30,9 @@ import { Store, decodeRecord, readJson } from '../core/store.js';
 import { buildPriceBook } from '../core/pricing.js';
 import { MEASUREMENT } from '../core/schema.js';
 import { repoRootOf, makeRepoResolver } from '../core/repo.js';
+import { loadRepoPolicy } from '../core/policy.js';
 import {
-  buildReceipts, sessionStats,
+  buildReceipts, sessionStats, toReceiptV1,
   renderReceiptMarkdown, renderReceiptsTable, renderSessionStats,
 } from '../analytics/receipt.js';
 import { csvLine } from '../export/csv.js';
@@ -99,6 +100,34 @@ function expandHome(p) {
   return p && p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p;
 }
 
+/** This package's own version, stamped into every portable receipt this command prints. */
+function toolVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version || '0.0.0';
+  } catch {
+    return '0.0.0'; // package.json missing or unreadable: still print a usable receipt
+  }
+}
+
+/**
+ * The commit a branch points at, or null when there is no checkout to ask.
+ * `--repo <name>` names a repository without giving a path, and a receipt is
+ * still worth printing without a sha, so this never throws.
+ * @param {string|null} repoPath
+ * @param {string} branch
+ * @returns {string|null}
+ */
+function resolveHeadSha(repoPath, branch) {
+  if (!repoPath) return null;
+  try {
+    return execFileSync('git', ['rev-parse', `refs/heads/${branch}`], {
+      cwd: repoPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return null; // the branch is gone locally, or this is not a git checkout
+  }
+}
+
 const RECEIPT_CSV_COLUMNS = [
   'repo', 'branch', 'costUsd', 'contextShare', 'sessions', 'turns', 'subagentTurns',
   'first', 'last', 'longLived', 'prNumber', 'mergedAt', 'changedLines', 'costPer100Lines',
@@ -127,6 +156,7 @@ export function renderReceiptsCsv(result) {
  * @returns {{text:string, json:object}}
  */
 export function run(flags = {}) {
+  const cfg = loadConfig();
   const book = buildPriceBook(readJson(paths().pricing, {}));
   const from = typeof flags.from === 'string' ? flags.from : null;
   const to = typeof flags.to === 'string' ? flags.to : null;
@@ -173,6 +203,7 @@ export function run(flags = {}) {
     repoOf: makeRepoResolver(),
     minTurns: Number(flags['min-turns']) || 1,
     automated,
+    tickets: cfg.tickets || {},
   });
   if (repoName) result.repos = result.repos.filter((R) => R.repo === repoName);
 
@@ -190,7 +221,6 @@ export function run(flags = {}) {
         const md = renderReceiptMarkdown(b, { repo: R.repo, pricingVersion: book.version });
         let text = md;
         if (typeof flags.svg === 'string' || typeof flags.png === 'string') {
-          const cfg = loadConfig();
           const skin = cfg.ui?.skin || 'aurora';
           const mode = cfg.ui?.mode || cfg.ui?.theme || 'dark';
           const svgPath = typeof flags.svg === 'string'
@@ -205,7 +235,15 @@ export function run(flags = {}) {
             text += res.ok ? `\nWrote PNG receipt card to ${pngPath}` : `\n${res.message}`;
           }
         }
-        return { text, json: { repo: R.repo, receipt: b } };
+        // `--json` on a single receipt is the portable receipt.v1 document
+        // (schemas/receipt.v1.json) — the same shape the pre-push hook
+        // attaches as a git note and the Action reads back — so a script can
+        // pipe it straight into anything that already speaks that schema.
+        // `headSha` needs a checkout to resolve, so it is null unless --repo
+        // named a path.
+        const caps = repoPath ? loadRepoPolicy(repoPath).receipt : null;
+        const meta = { repo: R.repo, headSha: resolveHeadSha(repoPath, b.key), toolVersion: toolVersion() };
+        return { text, json: { repo: R.repo, receipt: toReceiptV1(b, meta, { caps }) } };
       }
     }
     const what = wantBranch ? `branch ${wantBranch}` : `PR #${wantPr}`;

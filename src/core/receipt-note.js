@@ -13,12 +13,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { paths } from './config.js';
+import { paths, loadConfig } from './config.js';
 import { readJson } from './store.js';
 import { buildPriceBook } from './pricing.js';
 import { repoRootOf, makeRepoResolver } from './repo.js';
-import { buildReceipts } from '../analytics/receipt.js';
-import { toReceiptV0 } from '../analytics/receipt-schema.js';
+import { loadRepoPolicy } from './policy.js';
+import { buildReceipts, toReceiptV1 } from '../analytics/receipt.js';
 import { loadPrimaryRecords } from '../commands/receipt.js';
 
 /** The git notes ref every receipt note in this package lives under. */
@@ -42,7 +42,7 @@ function resolveSha(repoPath, branch) {
 }
 
 /**
- * Compute the receipt.v0 object for one branch of one repository checkout.
+ * Compute the receipt.v1 object for one branch of one repository checkout.
  * Scans every primary record this machine has recorded, then narrows to the
  * repository identified from `repoPath` (the same worktree-aware resolution
  * `tokenflow receipt` uses) and to the named branch.
@@ -51,26 +51,38 @@ function resolveSha(repoPath, branch) {
  * before any PR necessarily exists — so the returned receipt always carries
  * `pr: null` and `changedLines: null`.
  *
+ * v1 adds two fields on top of v0 (docs/receipt-schema.md): the `ticket` the
+ * branch name names, resolved with the user's own `tickets:` config, and the
+ * `verdict` against the `receipt:` caps that repository committed in its
+ * `.tokenflow/policy.yaml`. A reader that only knows v0 is unaffected —
+ * `validateReceipt()` dispatches on `schemaVersion`, and every field v0
+ * requires is still present and unmoved.
+ *
  * @param {{repoPath:string, branch:string, store?:import('./store.js').Store,
  *   config?:object, sha?:string}} opt
  *   `config` is the pricing-overrides object (the shape of pricing.json /
- *   buildPriceBook's argument); defaults to what's on disk. `sha` defaults to
- *   `git rev-parse refs/heads/<branch>` in repoPath.
- * @returns {object|null} a receipt.v0 object, or null when this branch has no local sessions
+ *   buildPriceBook's argument); defaults to what's on disk. The `tickets:`
+ *   block is read from the user's own config.yaml, not from here. `sha`
+ *   defaults to `git rev-parse refs/heads/<branch>` in repoPath.
+ * @returns {object|null} a receipt.v1 object, or null when this branch has no local sessions
  */
 export function buildBranchReceipt({ repoPath, branch, store, config, sha }) {
   const pricingConfig = config || readJson(paths().pricing, {});
   const book = buildPriceBook(pricingConfig);
-  const repoName = path.basename(repoRootOf(repoPath) || repoPath);
+  const repoRoot = repoRootOf(repoPath) || repoPath;
+  const repoName = path.basename(repoRoot);
 
   const records = loadPrimaryRecords({ store });
-  const result = buildReceipts(records, { book, repoOf: makeRepoResolver(), minTurns: 1 });
+  const result = buildReceipts(records, {
+    book, repoOf: makeRepoResolver(), minTurns: 1, tickets: loadConfig().tickets || {},
+  });
   const R = result.repos.find((r) => r.repo === repoName);
   const b = R ? R.branches.find((x) => x.key === branch) : null;
   if (!b) return null;
 
   const headSha = sha || resolveSha(repoPath, branch);
-  return toReceiptV0(b, { repo: repoName, headSha, toolVersion: toolVersion() });
+  const caps = loadRepoPolicy(repoRoot).receipt;
+  return toReceiptV1(b, { repo: repoName, headSha, toolVersion: toolVersion() }, { caps });
 }
 
 /**

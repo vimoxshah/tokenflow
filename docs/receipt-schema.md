@@ -1,19 +1,24 @@
-# Receipt schema v0
+# Receipt schema v0 and v1
 
 A branch receipt that travels with the code — no server. `tokenflow hooks install`
 attaches one to the local commit sha on every `git push`, as a git note under
 `refs/notes/tokenflow`. The [GitHub Action](../action/README.md) reads that note back
 on a pull request and posts (or updates) it as a comment.
 
-The machine-readable shape is `schemas/receipt.v0.json` (JSON Schema, draft 2020-12).
-`src/analytics/receipt-schema.js` provides:
+The machine-readable shape is `schemas/receipt.v0.json` (JSON Schema, draft 2020-12), or
+`schemas/receipt.v1.json`, which adds two optional fields on top (see
+[Schema v1](#schema-v1) below). `src/analytics/receipt-schema.js` provides:
 
-- `toReceiptV0(branchReceipt, meta)` — maps one `buildReceipts()` branch entry into
-  this shape.
-- `validateReceiptV0(obj)` — a small hand-written validator (no dependencies),
-  returns `{ ok, errors[] }`.
-- `renderReceiptV0Markdown(receipt)` — the PR-comment table, with a leading
-  `<!-- tokenflow-receipt -->` marker so CI can find and update its own comment.
+- `toReceiptV0(branchReceipt, meta)`: maps one `buildReceipts()` branch entry into
+  the v0 shape.
+- `validateReceiptV0(obj)` and `validateReceiptV1(obj)`: small hand-written validators
+  (no dependencies), each returns `{ ok, errors[] }`.
+- `validateReceipt(receipt)`: validates against whichever schema `receipt.schemaVersion`
+  names (`0` or `1` today); a v0 note keeps validating forever, see
+  [Schema v1](#schema-v1).
+- `renderReceiptV0Markdown(receipt)`: the PR-comment table, with a leading
+  `<!-- tokenflow-receipt -->` marker so CI can find and update its own comment. Renders
+  a v1 receipt's `ticket`/`verdict` rows too, when present.
 
 ## The estimated-vs-measured caveat
 
@@ -72,3 +77,36 @@ so a reader of the JSON alone — not just the markdown table — sees them.
   because attaching a note happens at push time, before any PR exists to look up —
   they are populated only when a receipt is built through `tokenflow receipt --gh`
   (or an equivalent supplied `--prs` list) and re-serialized through `toReceiptV0()`.
+
+## Schema v1
+
+`schemas/receipt.v1.json` is v0 plus two optional fields. **Nothing v0 required stops
+being required**: `receipt.v1.json`'s `required` list is identical to v0's, so a v1
+receipt is a v0 receipt with `schemaVersion: 1` and, optionally, these two fields set:
+
+| Field | Type | Nullable | Meaning |
+|---|---|---|---|
+| `ticket` | object or `null` | yes | `{ system, key, url }`, the tracked-work item (Jira, Linear, a GitHub issue, or `"other"`) this branch's work is filed against. `system` is one of `"jira"`, `"linear"`, `"github"`, `"other"`; `key` is the ticket's own identifier (e.g. `ENG-123`); `url` links to it, or `null` when there is none to link. Populated by the cost-per-ticket stream; this document is that stream's contract for the shape it writes. |
+| `verdict` | object or `null` | yes | `{ maxCostUsd, maxCostPer100Lines, overBudget }`, the result of checking this receipt against a declared budget. `maxCostUsd`/`maxCostPer100Lines` are the caps that were checked (either may be `null` when that cap wasn't declared); `overBudget` is `true` when the receipt crossed at least one declared cap. `null` when no budget comparison was run. |
+
+`src/analytics/receipt-schema.js` exports, alongside the v0 functions:
+
+- `validateReceiptV1(obj)`: the same field-for-field checks as `validateReceiptV0`,
+  plus `ticket`/`verdict` when present. Returns `{ ok, errors[] }`, same as v0.
+- `validateReceipt(receipt)`: dispatches on `receipt.schemaVersion`: `0` goes to
+  `validateReceiptV0`, `1` goes to `validateReceiptV1`, anything else fails with an
+  "unsupported schemaVersion" error rather than silently accepting it.
+- `renderReceiptV0Markdown(receipt)` renders a v1 receipt too, unchanged for v0 input.
+  When `ticket` is set it adds a Ticket row (linked when `url` is set, plain text
+  otherwise); when `verdict` is set it adds a Budget row saying over budget or within
+  budget, with the cap(s) checked. Neither row appears for a receipt that doesn't carry
+  the field (every v0 receipt, and a v1 receipt that left it `null`).
+
+### Compatibility rule
+
+**A v0 receipt stays valid forever.** `validateReceiptV0` is unchanged by v1's
+existence: nothing about the v0 shape, its required fields, or its error messages
+moved. A git note written today under `schemaVersion: 0` will still pass
+`validateReceiptV0` (and `validateReceipt`) after this repository has moved on to
+writing v1 notes by default. The two schemas are siblings, not a migration: nothing
+reads a v0 note and rewrites it as v1, and nothing requires that it ever happen.
