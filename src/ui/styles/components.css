@@ -1,0 +1,392 @@
+/* The component layer: popover, listbox, menu, tooltip, date range.
+   Owned by src/ui/components/*.js. Every value here is a role variable from
+   design/tokens.yaml. There is not one literal colour in this file, which is
+   what lets a skin change and a mode change restyle all of it for free.
+
+   The class prefix is `tf-` throughout so nothing here can collide with the
+   hand-authored selectors in styles.css. */
+
+/* ------------------------------------------------------------------ focus --
+   One ring, everywhere, on :focus-visible only. Never `:focus`, which would
+   put a ring on every mouse click, and never `outline: none` without this
+   taking its place. The declaration matches the one styles.css already uses
+   for .btn and friends, so a keyboard user sees a single ring in the product
+   rather than two competing ones. */
+.tf-trigger:focus-visible,
+.tf-btn:focus-visible,
+.tf-option:focus-visible,
+.tf-menu-item:focus-visible,
+.tf-preset:focus-visible,
+.tf-input:focus-visible,
+.tf-search-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The panel and the list take focus programmatically so the arrow keys have
+   somewhere to land. Neither is a control, so neither draws a ring: on the
+   list the ring would circle the whole scroller instead of the row the user is
+   on. The active row's --surface-3 ground is the replacement, which is the
+   aria-activedescendant pattern working as intended. */
+.tf-popover:focus,
+.tf-listbox:focus { outline: none; }
+/* The search field owns the whole panel head; a 2px offset ring there would be
+   clipped by the panel edge, so it draws inside instead. */
+.tf-search-input:focus-visible { outline-offset: -2px; }
+
+/* ------------------------------------------------------------------ icons -- */
+.tf-icon {
+  display: block;
+  flex: none;
+  /* The stroke is drawn in the parent's own ink, so an icon is never a colour
+     decision at the call site. */
+  color: inherit;
+}
+
+/* --------------------------------------------------------------- triggers -- */
+.tf-trigger,
+.tf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-height: 30px;
+  padding: var(--sp-6) var(--sp-10);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-family: var(--sans);
+  font-size: var(--fs-caption);
+  letter-spacing: var(--tr-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-trigger:hover,
+  .tf-btn:hover { background: var(--surface-3); border-color: var(--border-strong); }
+}
+/* Feedback on the press, not the release: the interface heard you. */
+.tf-trigger:active,
+.tf-btn:active { transform: scale(.97); }
+.tf-trigger[aria-expanded='true'] { background: var(--surface-3); border-color: var(--border-strong); }
+.tf-trigger[disabled],
+.tf-btn[disabled] { opacity: .5; cursor: default; }
+
+.tf-trigger-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tf-trigger.is-empty .tf-trigger-text { color: var(--text-muted); }
+.tf-trigger-hours {
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
+  font-variant-numeric: tabular-nums;
+}
+.tf-trigger-icon { color: var(--text-secondary); }
+.tf-trigger-caret {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.tf-trigger[aria-expanded='true'] .tf-trigger-caret { transform: rotate(180deg); }
+
+.tf-btn-primary {
+  background: var(--accent-solid);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-btn-primary:hover { background: var(--accent-solid); filter: brightness(1.08); }
+}
+
+/* -------------------------------------------------------------- the panel --
+   `position: fixed` in both the native-popover and the fallback path, so there
+   is one set of coordinates to reason about. The UA stylesheet for [popover]
+   sets `inset: 0; margin: auto` to centre it, which has to be undone before
+   left/top mean anything. */
+.tf-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  z-index: 60;
+  max-width: min(92vw, 560px);
+  padding: 0;
+  /* So the search field's border and the preset column's ground clip to the
+     panel radius instead of squaring off its corners. */
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  /* An opaque ground. A translucent panel over another panel stacks into an
+     unreadable double wash, which is exactly what a listbox inside a date
+     range popover would be. */
+  background: var(--surface-1);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+  font-family: var(--sans);
+  opacity: 0;
+  transform: scale(.96);
+  transition: opacity var(--dur-press) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+.tf-popover.is-open {
+  opacity: 1;
+  transform: scale(1);
+  /* Enter is the slower half: growing into place reads as arrival, and
+     leaving should never make the user wait to see what is underneath. */
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.tf-popover[hidden] { display: none; }
+/* Dead the moment it starts leaving. close() tears down the dismiss listeners
+   at once but the element is only hidden 120ms later, and opacity 0 is still
+   hit-testable: without this, a second click inside that window lands on a row
+   handler and silently changes the selection the user just made. */
+.tf-popover:not(.is-open) { pointer-events: none; }
+.tf-popover-body { display: contents; }
+
+/* ------------------------------------------------------------------ rows -- */
+.tf-listbox,
+.tf-menu {
+  max-height: min(52vh, 380px);
+  overflow-y: auto;
+  padding: var(--sp-4);
+}
+
+.tf-option,
+.tf-menu-item,
+.tf-preset {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 100%;
+  min-height: 32px;
+  padding: var(--sp-6) var(--sp-8);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--sans);
+  font-size: var(--fs-body);
+  letter-spacing: var(--tr-body);
+  line-height: var(--lh-body);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  /* The active row must land under the arrow key, not ease into place: this is
+     keyboard-initiated UI, the same rule the command palette follows. */
+  transition: background var(--dur-press) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tf-option:hover,
+  .tf-menu-item:hover,
+  .tf-preset:hover { background: var(--surface-2); }
+}
+.tf-option.is-active,
+.tf-menu-item.is-active,
+.tf-preset:focus-visible { background: var(--surface-3); }
+.tf-option[aria-selected='true'] .tf-option-label { color: var(--text-primary); }
+.tf-menu-item.is-disabled { color: var(--text-muted); cursor: default; }
+.tf-menu-item.is-disabled:hover { background: transparent; }
+
+.tf-option-mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+.tf-option-icon { flex: none; display: flex; color: var(--text-secondary); }
+.tf-option-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tf-option-hint {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ menu -- */
+.tf-menu-icon {
+  flex: none;
+  display: flex;
+  width: 14px;
+  color: var(--text-secondary);
+}
+.tf-menu-label { flex: 1 1 auto; }
+.tf-menu-separator {
+  height: 1px;
+  margin: var(--sp-4) var(--sp-6);
+  background: var(--hairline);
+}
+.tf-kbd {
+  flex: none;
+  padding: 1px var(--sp-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+}
+
+/* ---------------------------------------------------------------- search -- */
+.tf-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-8) var(--sp-10);
+  border-bottom: 1px solid var(--border);
+}
+.tf-search-icon { color: var(--text-muted); }
+.tf-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--sans);
+  font-size: var(--fs-body);
+  letter-spacing: var(--tr-body);
+}
+.tf-search-input::placeholder { color: var(--text-muted); }
+
+.tf-empty {
+  padding: var(--sp-16) var(--sp-12);
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  letter-spacing: var(--tr-caption);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ date range -- */
+.tf-daterange {
+  display: flex;
+  align-items: stretch;
+  min-width: 380px;
+}
+.tf-daterange-presets {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-8);
+  border-right: 1px solid var(--border);
+  background: var(--plane);
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.tf-preset[aria-current='true'] {
+  background: var(--surface-3);
+  color: var(--accent);
+}
+.tf-daterange-custom {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+  padding: var(--sp-12);
+}
+.tf-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-10);
+}
+.tf-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.tf-field-label {
+  color: var(--text-muted);
+  font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
+  line-height: var(--lh-label);
+  text-transform: uppercase;
+}
+.tf-input {
+  width: 100%;
+  min-height: 30px;
+  padding: var(--sp-4) var(--sp-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-family: var(--sans);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+/* The native date picker glyph is drawn black by the UA and disappears
+   entirely on a dark ground. Inverting it in dark mode is the only way to keep
+   it visible without shipping a colour. */
+:root[data-mode='dark'] .tf-input::-webkit-calendar-picker-indicator,
+:root:not([data-mode='light']) .tf-input::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: .55;
+}
+.tf-daterange-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--hairline);
+}
+
+/* --------------------------------------------------------------- tooltip -- */
+.tf-tooltip {
+  position: fixed;
+  z-index: 70;
+  max-width: 260px;
+  padding: var(--sp-6) var(--sp-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+  font-family: var(--sans);
+  font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
+  line-height: var(--lh-label);
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(.96);
+  transition: opacity var(--dur-press) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+.tf-tooltip[hidden] { display: none; }
+.tf-tooltip.is-open { opacity: 1; transform: scale(1); }
+/* The second tooltip in a group is already late: the user is reading labels,
+   so it arrives with no delay and no motion at all. */
+.tf-tooltip.is-instant { transition: none; }
+
+/* ------------------------------------------------------- reduced motion --
+   Nothing moves. Every transform animation collapses to an opacity change,
+   and the press feedback stops being a scale. The components still change
+   state; they simply stop travelling to get there. */
+@media (prefers-reduced-motion: reduce) {
+  .tf-popover,
+  .tf-popover.is-open,
+  .tf-tooltip {
+    transform: none;
+    transition: opacity var(--dur-press) var(--ease-out);
+  }
+  .tf-tooltip.is-open { transform: none; }
+  .tf-trigger,
+  .tf-btn { transition: background var(--dur-press) var(--ease-out), border-color var(--dur-press) var(--ease-out); }
+  .tf-trigger:active,
+  .tf-btn:active { transform: none; }
+  /* The caret keeps its flipped resting state, which is information about
+     whether the panel is open. Only the travel between the two states goes. */
+  .tf-trigger-caret { transition: none; }
+  .tf-option,
+  .tf-menu-item,
+  .tf-preset { transition: none; }
+}
