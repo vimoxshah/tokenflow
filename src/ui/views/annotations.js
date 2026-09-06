@@ -80,8 +80,8 @@ function listCard(ctx) {
 function formCard(ctx) {
   const body = el('div', { class: 'annotations-form' });
   const today = ctx.bundle?.meta?.today || '';
-  const dateInput = el('input', { type: 'date', value: today, 'aria-label': 'Date' });
-  const textInput = el('input', { type: 'text', placeholder: 'e.g. switched to Opus 5', maxlength: '140', 'aria-label': 'Note' });
+  const dateInput = el('input', { class: 'tf-input', type: 'date', value: today, 'aria-label': 'Date' });
+  const textInput = el('input', { class: 'tf-input', type: 'text', placeholder: 'e.g. switched to Opus 5', maxlength: '140', 'aria-label': 'Note' });
   const err = el('p', { class: 'hint annotations-error' });
 
   const addBtn = ctx.btn('Add', async () => {
