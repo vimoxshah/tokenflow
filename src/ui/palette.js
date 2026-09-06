@@ -506,6 +506,11 @@ export function mountPalette(ctx) {
   input.addEventListener('keydown', (ev) => {
     if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIndex + 1); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIndex - 1); }
+    // Home and End jump the list, not the caret. The caret would be the native
+    // behaviour of a text input, but this input is a filter box in front of a
+    // list, and every other listbox in the app answers these two keys.
+    else if (ev.key === 'Home') { ev.preventDefault(); setActive(0); }
+    else if (ev.key === 'End') { ev.preventDefault(); setActive(items.length - 1); }
     else if (ev.key === 'Enter') { ev.preventDefault(); runIndex(activeIndex); }
     else if (ev.key === 'Escape') { ev.preventDefault(); const before = lastFocused; closePalette(); restoreFocus(before); }
   });
