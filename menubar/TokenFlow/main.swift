@@ -1781,7 +1781,7 @@ private struct ActionsBar: View {
                     } else {
                         Image(systemName: "arrow.clockwise")
                     }
-                    Text("Refresh").font(.system(size: 12, weight: .semibold))
+                    Text("Refresh").font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(Capsule().fill(TF.accent))
@@ -1802,6 +1802,7 @@ private struct ActionsBar: View {
                     // so say so rather than looking inert.
                     Text(dashboardStarting ? "Starting…" : "Dashboard")
                         .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
@@ -1818,6 +1819,7 @@ private struct ActionsBar: View {
             }
             .buttonStyle(.plain)
             .help(live ? "Stop watcher" : "Start watcher")
+            .accessibilityLabel(live ? "Stop watcher" : "Start watcher")
 
             // Theme: system → light → dark, persisted across launches.
             Button(action: actions.cycleTheme) {
@@ -1827,6 +1829,7 @@ private struct ActionsBar: View {
             }
             .buttonStyle(.plain)
             .help("Appearance: follow system / light / dark")
+            .accessibilityLabel("Appearance")
 
             Button(action: actions.quit) {
                 Image(systemName: "power")
@@ -1835,6 +1838,7 @@ private struct ActionsBar: View {
             }
             .buttonStyle(.plain)
             .help("Quit TokenFlow")
+            .accessibilityLabel("Quit TokenFlow")
         }
     }
 }
@@ -2161,6 +2165,17 @@ private struct SparkRow: View {
 
 /// Density and shortcut, the two preferences that change how the popover
 /// behaves rather than what it says.
+///
+/// Both used to share one HStack: label, segmented control, label, menu. At
+/// the popover's real (fixed) width that line has no slack left once the
+/// segmented control claims its width, so "Shortcut" wrapped onto a second
+/// line and sat on top of the control beside it — the reported overlap. Each
+/// preference now gets its own row (label leading, control trailing), the
+/// same shape every other row in this popover already uses (ProviderRow,
+/// SourceRow, ModelRow), and the pair is introduced by a `SectionHeader` the
+/// same way `guardSection` introduces its rows: the header and its rows sit
+/// as siblings in the outer, section-spaced stack, with a tighter row-spaced
+/// stack for the rows themselves.
 private struct PrefsRow: View {
     @Binding var density: String
     let hotkey: TFHotkey
@@ -2168,28 +2183,36 @@ private struct PrefsRow: View {
     let d: TFDensity
 
     var body: some View {
-        HStack(spacing: DesignTokens.space[3]) {
-            Text("Density").font(d.micro()).foregroundStyle(.secondary)
-            Picker("", selection: $density) {
-                ForEach(TFDensity.allCases, id: \.rawValue) { option in
-                    Text(option.title).tag(option.rawValue)
+        VStack(alignment: .leading, spacing: d.sectionGap) {
+            SectionHeader("Settings")
+
+            VStack(alignment: .leading, spacing: d.rowGap) {
+                HStack(spacing: DesignTokens.space[3]) {
+                    Text("Density").font(d.micro()).foregroundStyle(.secondary)
+                    Spacer(minLength: DesignTokens.space[2])
+                    Picker("", selection: $density) {
+                        ForEach(TFDensity.allCases, id: \.rawValue) { option in
+                            Text(option.title).tag(option.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+
+                HStack(spacing: DesignTokens.space[3]) {
+                    Text("Shortcut").font(d.micro()).foregroundStyle(.secondary)
+                    Spacer(minLength: DesignTokens.space[2])
+                    Menu(hotkey.title) {
+                        ForEach(TFHotkey.allCases, id: \.rawValue) { option in
+                            Button(option.title) { setHotkey(option) }
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Toggle the popover from any app")
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 146)
-
-            Spacer(minLength: DesignTokens.space[2])
-
-            Text("Shortcut").font(d.micro()).foregroundStyle(.secondary)
-            Menu(hotkey.title) {
-                ForEach(TFHotkey.allCases, id: \.rawValue) { option in
-                    Button(option.title) { setHotkey(option) }
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Toggle the popover from any app")
         }
     }
 }
