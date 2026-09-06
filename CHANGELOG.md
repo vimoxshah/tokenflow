@@ -3,6 +3,44 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.1 — 2026-09-06
+
+Interface fixes found by driving the dashboard with real mouse and keyboard input, which is
+what 1.3.0 was never checked with. Every gate passed for 1.3.0 and every view was
+screenshotted, and none of that could see any of the following.
+
+### Fixed
+
+- **A closed command palette stayed on the page.** Its stylesheet set `display: flex` without
+  qualifying it to the open state, which overrides the browser's own rule for hiding a closed
+  dialog. The palette therefore stayed laid out, painted and clickable while closed: on a tall
+  page it sat below the footer, so it read as a stray box at the bottom of the dashboard, and
+  on a short page it floated over the content with no backdrop. Typing into it produced "No
+  commands available", because a palette that was never opened has no commands to show. Worse,
+  clicking a row in that closed panel still ran the command and changed the page. Nothing ever
+  threw, so no test and no screenshot caught it. A test now fails if any stylesheet sets
+  `display` on a dialog selector that is not qualified to `[open]`.
+- **Dismissing a popover by clicking away no longer jumps the page to the top.** The dismissal
+  runs on pointer-down, before the browser has moved focus, so the panel still appeared to hold
+  focus and the code handed it back to the trigger. Because focusing an element scrolls it into
+  view, closing a filter panel while scrolled down threw the reader back to the top of the page.
+  An outside click now never takes focus back, which was always the stated intention.
+- **Keyboard focus no longer ends up inside a closed palette**, where Tab walked deeper into a
+  dialog that was not on screen.
+- **"All data" is marked as the current range in the date picker.** The app resolves it into
+  real coverage dates before the picker sees it, so the picker could not recognise its own
+  default and left every row unmarked.
+- **The granularity chip said "Dayly".** The label was built by adding "ly" to the key, which is
+  right for week and month.
+
+### Added
+
+- **A stale tab now says so.** The dashboard is a long-lived page served by a local process, so
+  a tab left open across an upgrade keeps running the old JavaScript against the new API, and
+  nothing on screen admits it. The server stamps the running version into the page, and the page
+  says "This page is running TokenFlow X, but Y is installed" with a reload button when the two
+  disagree. A saved snapshot has no server to differ from, so it never asks.
+
 ## 1.3.0 — 2026-09-06
 
 Receipts that leave the laptop and land where the decision is made: on the pull request, on a
