@@ -45,7 +45,7 @@ per-source and per-model usage, capacity meters and forecast, in light and dark.
 | **Analytics** | 21 views: overview KPIs with a story strip, receipts per branch and pull request, cost per ticket, session anatomy, live, composition, provider/model intelligence, interfaces, hour×weekday heatmap + calendar, peaks, efficiency ratios, cache health, cost with coverage, model what-if, git correlations (labelled), rhythm and focus, period compare, compare branches, searchable data explorer, annotations, per-field data health |
 | **Integrations** | A GitHub Action and a **self-hosted GitHub App** (your App, your server, our code) that put a receipt comment and a budget check run on every pull request; receipts as git notes that travel with the code; an **MCP server** so the agent can read its own bill; a **FOCUS-shaped export** for a FinOps tool; **org policy** pulled from a team server you run |
 | **Live mode** | Watcher daemon, native Swift menu bar app (live sessions, today's receipts, guard state, provider/source/model breakdowns, capacity meters with reset countdowns & ETAs, forecast with stated confidence, MAD-based anomaly alerts, per-source sparklines, appearance toggle), SwiftBar/xbar plugin |
-| **Engineering** | Zero runtime dependencies · 707 tests · lint invariants (e.g. "no `\|\| 0` on a token field") · tsc-clean JSDoc types · CI on macOS/Linux/Windows × Node 22/24 |
+| **Engineering** | Zero runtime dependencies · 836 tests · lint invariants (e.g. "no `\|\| 0` on a token field") · tsc-clean JSDoc types · CI on macOS/Linux/Windows × Node 22/24 |
 
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
@@ -173,9 +173,25 @@ the live dashboard opens it explains what was found on this machine and what was
 - **Org policy.** A cap your team publishes on its own team server, cached locally and applied as a
   ceiling: it can lower an effective cap, never raise one. The guard hook reads the cache and never
   fetches, so a session is never blocked waiting on a server. See [policy.md](docs/policy.md).
+- **One filter bar instead of a wall of controls.** Every view used to open with eighteen controls
+  above the data: eight range chips, two date fields, two hour fields, seven dropdowns and two
+  scope toggles, visible whether you used them or not. At rest the bar is now a date button that
+  reads the range it applied and a `+ Filter` button. What you pick becomes a chip you can edit or
+  remove, and the chips are the whole truth.
 - **A sidebar instead of a tab bar.** Twenty-one views no longer fit a tab strip. The dashboard is
-  now an app shell: a left sidebar grouped by topic, collapsible to a rail, resizable, a drawer
-  below 900 pixels.
+  now an app shell: a left sidebar grouped by topic with an icon per view, collapsible to a rail,
+  resizable, a drawer below 900 pixels.
+- **A component layer.** The design tokens were always here; nothing was built on them, so every
+  control fell through to the browser's own styling. There is now a popover, a listbox with search
+  and full keyboard operation, a menu, a tooltip, a date range picker and an icon set, all vanilla
+  and all drawing from the same tokens. One focus ring, applied once.
+- **A command palette that reads like one**, with grouped commands, matched-character
+  highlighting and your recents on an empty query. Charts gained hover crosshairs, tooltips,
+  keyboard parity and honest empty states.
+
+1.3.1 and 1.3.2 fixed the interface defects that only real mouse and keyboard input could find,
+including a closed command palette that stayed on the page. See the
+[changelog](CHANGELOG.md).
 
 ## Supported sources
 
@@ -299,7 +315,7 @@ from `file://` with no server. A full CSV export doubles as a portable dataset:
 ## Contributing
 
 ```bash
-npm test               # 707 tests: normalization, adapters, analytics, store, receipts, guard
+npm test               # 836 tests: normalization, adapters, analytics, store, receipts, guard
 npm run lint           # project invariants (incl. "no || 0 on a token field")
 npm run typecheck      # tsc over JSDoc types — must be zero errors
 npm run validate       # self-check: runtime, adapters, store↔cube agreement
