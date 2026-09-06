@@ -85,6 +85,7 @@ function place(target, placement) {
 
 function hide() {
   if (showTimer) { clearTimeout(showTimer); showTimer = null; }
+  unbindEscape();
   if (!visible) return;
   visible = false;
   owner = null;
@@ -114,8 +115,37 @@ function watchOwner() {
   requestAnimationFrame(watchOwner);
 }
 
+/**
+ * Escape, from wherever focus happens to be.
+ *
+ * A tooltip is usually opened by HOVER, so its element almost never holds
+ * focus, and a keydown bound to that element sees nothing: the key goes to
+ * whatever is focused, which is normally `<body>`. One capture-phase listener
+ * on the document is the only placement that actually works, and it lives only
+ * while a bubble is on screen or a show timer is pending.
+ *
+ * @param {KeyboardEvent} ev
+ */
+function onDocEscape(ev) {
+  if (ev.key === 'Escape') hide();
+}
+
+/** Bind and unbind the document Escape listener with the bubble's lifetime. */
+let escapeBound = false;
+function bindEscape() {
+  if (escapeBound) return;
+  document.addEventListener('keydown', onDocEscape, true);
+  escapeBound = true;
+}
+function unbindEscape() {
+  if (!escapeBound) return;
+  document.removeEventListener('keydown', onDocEscape, true);
+  escapeBound = false;
+}
+
 function show(target, text, placement) {
   if (!target.isConnected) return;
+  bindEscape();
   const el = tipEl();
   el.textContent = text;
   // The words are already on the control (as its own text or its aria-label),
@@ -160,18 +190,19 @@ export function attachTooltip(el, text, opts = {}) {
   const openNow = () => {
     if (showTimer) { clearTimeout(showTimer); showTimer = null; }
     if (visible && owner === el) return;
+    // Bound here as well as in show(), so Escape also cancels a tooltip that is
+    // still counting down rather than only one already on screen.
+    bindEscape();
     if (visible || warm) show(el, text, placement);
     else showTimer = setTimeout(() => { showTimer = null; show(el, text, placement); }, delay);
   };
   const closeNow = () => { if (owner === el || showTimer) hide(); };
-  const onKey = (ev) => { if (ev.key === 'Escape') closeNow(); };
 
   el.addEventListener('pointerenter', openNow);
   el.addEventListener('pointerleave', closeNow);
   el.addEventListener('pointerdown', closeNow);
   el.addEventListener('focus', openNow);
   el.addEventListener('blur', closeNow);
-  el.addEventListener('keydown', onKey);
   // Scroll does not bubble, so this captures; a tooltip anchored to a rect
   // that just moved is worse than no tooltip.
   window.addEventListener('scroll', closeNow, { capture: true, passive: true });
@@ -183,7 +214,6 @@ export function attachTooltip(el, text, opts = {}) {
     el.removeEventListener('pointerdown', closeNow);
     el.removeEventListener('focus', openNow);
     el.removeEventListener('blur', closeNow);
-    el.removeEventListener('keydown', onKey);
     window.removeEventListener('scroll', closeNow, { capture: true });
     el.removeAttribute('data-tooltip-decorative');
     // Take back only a label this attachment put there. Removing one the
