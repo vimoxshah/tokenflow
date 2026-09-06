@@ -89,6 +89,15 @@ content, and nothing here is hosted by us.
   replaces the "⌘K" chip and opens the same command palette. The header now
   shows the active view's name. This replaces the two-row tab wrap from 1.2.0,
   which broke down as soon as a real dataset showed every tab.
+- **One filter bar instead of a wall of controls.** Every view used to open with eighteen controls
+  above the data: eight range chips, two date fields, two hour fields, seven dropdowns and two
+  scope toggles, all visible whether or not you used them. At rest the bar is now a date button
+  that reads the range it applied, a `+ Filter` button, and nothing else. Picking a dimension
+  opens its values with a search box and each value's total; what you pick becomes a chip you can
+  edit or remove, and the chips are the whole truth, so the "All data" line is gone. Scope sits
+  quietly at the right end, and "Clear all" appears only when there is something to clear. A
+  weekday or single day picked by clicking a chart now shows up as a chip too, which means a
+  filter can no longer be applied with nothing on screen able to see or clear it.
 - **A component layer, so controls stop looking like browser defaults.** The design tokens were
   always there; what was missing was anything built on them, so every control fell through to the
   browser's own styling. There is now a popover, a listbox with search and full keyboard
