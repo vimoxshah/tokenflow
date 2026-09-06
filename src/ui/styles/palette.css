@@ -25,13 +25,25 @@ dialog.palette-dialog {
   max-width: 640px;
   padding: 0;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface-1);
   color: var(--text-primary);
   box-shadow: var(--shadow);
+}
+
+/* The column layout is qualified to `[open]` on purpose, and it must stay that
+   way. A <dialog> is hidden by the user agent's own `dialog:not([open]) {
+   display: none }`, which any unqualified `display` in an author stylesheet
+   overrides. When that happened here the CLOSED palette stayed in the page
+   flow: painted, hit-testable, and typeable. On a tall page it landed below
+   the footer, so it read as a stray box at the bottom of the dashboard; on a
+   short page it sat over the content with no backdrop. Worse, clicking a row
+   in that closed panel still ran the command. Nothing threw, so neither the
+   tests nor the release screenshots saw it. */
+dialog.palette-dialog[open] {
+  display: flex;
+  flex-direction: column;
 }
 
 .palette-input {

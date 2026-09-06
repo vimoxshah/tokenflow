@@ -1221,8 +1221,11 @@ function viewOverview() {
   root.appendChild(kpiRow());
 
   const gran = el('div', { class: 'chips' });
-  for (const g of /** @type {('day'|'week'|'month')[]} */ (['day', 'week', 'month'])) {
-    const c = el('button', { class: 'chip', text: g[0].toUpperCase() + g.slice(1) + 'ly', 'aria-pressed': String(S.granularity === g) });
+  // Spelled out rather than derived. Appending "ly" to the capitalised key is
+  // right for week and month and gives "Dayly" for day, which shipped.
+  const GRAIN_LABELS = /** @type {[('day'|'week'|'month'), string][]} */ ([['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly']]);
+  for (const [g, label] of GRAIN_LABELS) {
+    const c = el('button', { class: 'chip', text: label, 'aria-pressed': String(S.granularity === g) });
     c.addEventListener('click', () => { S.granularity = g; recompute(); render(); });
     gran.appendChild(c);
   }
