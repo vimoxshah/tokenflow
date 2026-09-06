@@ -1,0 +1,59 @@
+# TokenFlow team server reverse proxy, Caddy variant.
+# See docs/team-server.md for the full guide. Two variants are documented
+# below; only ONE site block may be active at a time (Caddy rejects two
+# blocks that answer the same address), so variant (b) is commented out.
+# Copy the one you want, replace team.example.com with your real name, and
+# delete or leave the other commented.
+#
+# {$TOKENFLOW_UPSTREAM:127.0.0.1:7790} defaults to bare-metal/systemd, where
+# Caddy and the team server share the host's loopback. deploy/docker-compose.yml
+# sets TOKENFLOW_UPSTREAM=tokenflow-team:7790 on the caddy service, since
+# inside that container 127.0.0.1 is caddy's own loopback, not the team
+# server's; without the override every proxied request would 502.
+#
+# Caddy requests a public certificate automatically for a name that
+# resolves on the public internet and answers inbound 80/443 from it. A
+# name that only resolves on your LAN cannot get one that way: add
+# "tls internal" inside the site block to use Caddy's own local CA instead
+# (every laptop then needs to trust that CA once), or configure a DNS-01
+# challenge module if this host has no public inbound path at all.
+
+# ---- Variant (a): LAN only, everything behind the proxy (ACTIVE) ----------
+# Every path goes through the proxy; nothing here is meant to be public.
+
+team.example.com {
+	reverse_proxy {$TOKENFLOW_UPSTREAM:127.0.0.1:7790}
+	# tls internal
+}
+
+# ---- Variant (b): only the GitHub webhook is public (commented out) ------
+# Everything except /github/webhook stays on the private network; that one
+# path is the single thing GitHub needs to reach, and it carries no bearer
+# token of its own (its auth is the webhook secret, an HMAC over the raw
+# body; see docs/github-app.md). The match below is by URL path, not by
+# where the request came from, so also keep this host's inbound ports
+# firewalled to your LAN/VPN except for what the proxy needs to expose.
+# Delete variant (a) above before enabling this one; both cannot answer the
+# same address.
+#
+# team.example.com {
+# 	@webhook path /github/webhook
+# 	handle @webhook {
+# 		reverse_proxy {$TOKENFLOW_UPSTREAM:127.0.0.1:7790}
+# 	}
+# 	handle {
+# 		# private_ranges matches RFC1918 / loopback / link-local addresses;
+# 		# behind another load balancer in front of Caddy, add
+# 		# "trusted_proxies <cidr>" so the real client address is used here
+# 		# instead of the proxy's own. Inside Docker with published ports, the
+# 		# address Caddy sees is often the bridge gateway (itself a private
+# 		# range), which would match every real internet client too; check
+# 		# Caddy's access log for the address it actually sees there before
+# 		# relying on this matcher in a container. On bare metal this is fine.
+# 		@private remote_ip private_ranges
+# 		handle @private {
+# 			reverse_proxy {$TOKENFLOW_UPSTREAM:127.0.0.1:7790}
+# 		}
+# 		respond 404
+# 	}
+# }

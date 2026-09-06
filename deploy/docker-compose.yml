@@ -1,0 +1,74 @@
+# TokenFlow team server, one service, LAN-only by default.
+# See docs/team-server.md for the full guide and deploy/README.md for a
+# ten-line "which file do I use" pointer.
+#
+#   cp deploy/team.env.example deploy/team.env    # then edit deploy/team.env
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# Add the optional TLS-terminating proxy ONLY if you plan to expose the
+# GitHub App webhook to the public internet (docs/team-server.md, "Network
+# and TLS"); it is a separate profile so a LAN-only install never starts it:
+#
+#   docker compose -f deploy/docker-compose.yml --profile tls up -d
+
+services:
+  tokenflow-team:
+    build:
+      # Repo root: Dockerfile.team COPYs package.json, bin/ and src/ from
+      # there, and there is no published image to pull instead.
+      context: ..
+      dockerfile: Dockerfile.team
+    env_file:
+      - team.env
+    environment:
+      # This container's data directory is always /data, matching the
+      # volume below and Dockerfile.team's own ENV. team.env may also set
+      # TOKENFLOW_HOME for the systemd deployment path (deploy/team.env.example);
+      # this line makes sure that value never leaks into the container and
+      # points the app somewhere the volume is not mounted.
+      TOKENFLOW_HOME: /data
+    volumes:
+      - tokenflow-team-data:/data
+      # Mount a GitHub App private key read-only if you enable the webhook
+      # receiver, and point TOKENFLOW_GH_PRIVATE_KEY_FILE at the same path
+      # in team.env (see docs/team-server.md and docs/github-app.md):
+      # - /path/on/host/tokenflow-gh-app.pem:/run/secrets/tokenflow-gh-app.pem:ro
+    ports:
+      # 127.0.0.1 only: this server is never meant to answer the public
+      # internet directly. Put the "tls" proxy in front of it for anything
+      # beyond a single LAN, and see docs/team-server.md before changing this.
+      - "127.0.0.1:7790:7790"
+    healthcheck:
+      # No curl in node:22-alpine; Node's own fetch needs nothing extra.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    depends_on:
+      - tokenflow-team
+    environment:
+      # Inside this container 127.0.0.1 is caddy's own loopback, not the team
+      # server's; Docker's internal DNS resolves the service name on the
+      # shared compose network instead. Caddyfile's default (127.0.0.1:7790)
+      # is for the bare-metal/systemd deployment, where the two do share a
+      # loopback.
+      TOKENFLOW_UPSTREAM: tokenflow-team:7790
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  tokenflow-team-data:
+  caddy-data:
+  caddy-config:
