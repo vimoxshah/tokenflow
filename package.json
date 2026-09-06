@@ -30,8 +30,7 @@
     "SECURITY.md",
     "CONTRIBUTING.md",
     "Refresh & Open Dashboard.command",
-    "Dockerfile.team",
-    "deploy"
+    "Dockerfile.team"
   ],
   "scripts": {
     "setup": "node bin/tokenflow.js setup",
