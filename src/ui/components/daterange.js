@@ -168,7 +168,7 @@ function todayISO() {
 /**
  * @typedef {object} DateRangeApi
  * @property {HTMLButtonElement} el the trigger, ready to append
- * @property {(next:{from?:string|null, to?:string|null, hourFrom?:number|null, hourTo?:number|null})=>void} setRange
+ * @property {(next:{from?:string|null, to?:string|null, hourFrom?:number|null, hourTo?:number|null, presetId?:string|null})=>void} setRange
  * @property {()=>void} destroy
  */
 
@@ -193,6 +193,19 @@ export function createDateRange({
 }) {
   const state = { from, to, hourFrom, hourTo };
   const now = () => today || todayISO();
+
+  /**
+   * The preset the CALLER says is applied, when it knows better than the dates.
+   *
+   * `matchPreset` infers the current preset by comparing the two dates against
+   * what each preset would produce, which cannot recognise "all data": that is
+   * the absence of a bound, and by the time a caller has resolved it against a
+   * dataset it looks like an ordinary custom range. Without this the default
+   * range is the one row in the list that never marks itself.
+   *
+   * @type {string|null}
+   */
+  let declaredPresetId = null;
 
   const el = document.createElement('button');
   el.type = 'button';
@@ -248,7 +261,7 @@ export function createDateRange({
     // ---- left: presets, one click each
     const left = document.createElement('div');
     left.className = 'tf-daterange-presets';
-    const currentId = matchPreset(state, presets, now());
+    const currentId = declaredPresetId || matchPreset(state, presets, now());
     for (const p of presets) {
       const r = presetRange(p.id, now());
       if (!r) continue;
@@ -260,6 +273,10 @@ export function createDateRange({
       row.addEventListener('click', () => {
         state.from = r.from;
         state.to = r.to;
+        // The row the user just clicked is the current one, whatever the dates
+        // resolve to. The caller may re-declare it on the way back through
+        // setRange; until then this keeps the panel honest on the next open.
+        declaredPresetId = p.id;
         syncTrigger();
         api.close('select');
         emit(p.id);
@@ -314,9 +331,13 @@ export function createDateRange({
       state.to = nextFrom && nextTo && nextFrom > nextTo ? nextFrom : nextTo;
       state.hourFrom = readHour(hourFromInput);
       state.hourTo = readHour(hourToInput);
+      // Typed dates are a custom range unless they happen to land exactly on a
+      // preset, so stop claiming whatever the caller last declared.
+      const matched = matchPreset(state, presets, now());
+      declaredPresetId = matched;
       syncTrigger();
       api.close('select');
-      emit(matchPreset(state, presets, now()));
+      emit(matched);
     });
     foot.append(cancel, apply);
 
@@ -346,6 +367,7 @@ export function createDateRange({
       if ('to' in next) state.to = next.to ?? null;
       if ('hourFrom' in next) state.hourFrom = next.hourFrom ?? null;
       if ('hourTo' in next) state.hourTo = next.hourTo ?? null;
+      if ('presetId' in next) declaredPresetId = next.presetId == null ? null : String(next.presetId);
       syncTrigger();
     },
     destroy() {

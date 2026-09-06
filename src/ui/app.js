@@ -1064,6 +1064,7 @@ function syncFilterBar() {
     getFacets: () => S.view.facets,
     getDrillDate: () => S.drillDate,
     getToday: () => datasetToday(),
+    getRangeId: () => S.rangeId,
     // `custom` has no computable dates, so the picker has nothing to offer for
     // it; the custom fields on the right of the same panel are that row.
     presets: QUICK_RANGES.filter((r) => r.id !== 'custom'),

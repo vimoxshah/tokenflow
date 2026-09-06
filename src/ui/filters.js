@@ -233,6 +233,7 @@ const SCOPE_ROWS = [
  *          getFacets:()=>Record<string,any>,
  *          getDrillDate:()=>string|null,
  *          getToday:()=>string,
+ *          getRangeId?:()=>string|null,
  *          presets:{id:string,label:string}[],
  *          onRange:(v:{from:string|null,to:string|null,hourFrom:number|null,hourTo:number|null,presetId:string|null})=>void,
  *          setDimension:(key:string, values:string[]|null)=>void,
@@ -248,6 +249,7 @@ export function mountFilterBar({
   getFacets,
   getDrillDate,
   getToday,
+  getRangeId,
   presets,
   onRange,
   setDimension,
@@ -616,6 +618,11 @@ export function mountFilterBar({
     } else if (dateApi) {
       dateApi.setRange({
         from: filters.from, to: filters.to, hourFrom: filters.hourFrom, hourTo: filters.hourTo,
+        // The app resolves "all data" into concrete coverage dates before the
+        // bar ever sees it, so the picker cannot infer that preset from the
+        // pair and the default range was the one row that never marked itself.
+        // We know the id, so we say it.
+        presetId: getRangeId ? getRangeId() : null,
       });
     }
 
