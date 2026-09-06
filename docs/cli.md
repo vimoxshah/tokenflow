@@ -142,6 +142,143 @@ tokenflow digest --out week.md        # write instead of print
 
 ---
 
+### `receipt`
+What a branch or pull request cost. Spend is attributed per turn to the branch checked out when
+the turn ran, so a long session that moves across branches is split across them. Repositories are
+identified by walking up from each recorded working directory to `.git` and following a worktree's
+`gitdir:` pointer back to the main checkout — every `.worktrees/<x>` counts as the repo it belongs
+to. With `--gh`, merged pull requests are fetched through the GitHub CLI and joined by head branch;
+each matched receipt then carries `+/−` lines and cost per 100 changed lines.
+
+Each receipt also splits the estimate into **context** dollars (cache reads + writes: the cost of
+re-sending the conversation so far) and **work** dollars (fresh input + output). Context is the
+cheap path per token — a high share is not waste, it is where the lever is.
+
+```bash
+tokenflow receipt                              # every repo, top branches by spend
+tokenflow receipt --repo ~/code/api --gh       # one repo, joined to its merged PRs
+tokenflow receipt --repo api --branch feat/x   # one branch as a PR-comment receipt
+tokenflow receipt --repo ~/code/api --gh --pr 478 --md
+tokenflow receipt --prs prs.json               # PR list you exported yourself:
+   # gh pr list --state merged --json number,headRefName,additions,deletions,title,mergedAt
+tokenflow receipt --sessions                   # where the money goes across sessions
+tokenflow receipt --sessions --cap 25,100,500  # dollars above each candidate per-session cap
+tokenflow receipt --from 2026-06-01 --top 30 --automated '^release/'   # flag automated PRs
+tokenflow receipt --json                       # everything, machine-readable
+tokenflow receipt --csv > receipts.csv          # one row per branch, every repository
+tokenflow receipt --branch feat/x --svg r.svg --png r.png   # a shareable receipt card
+```
+
+A merged PR owns the turns on its branch **up to the merge**, including work done before the PR
+was opened (that work is how the PR came to exist). Turns *after* the merge are follow-up on a
+checkout that kept the old branch name; they appear beside the receipt as "After the merge, same
+branch" and are never counted inside it. A branch with several merged PRs attributes each turn to
+the PR it shipped in. Long-lived branches (`main`, `staging`, …) are flagged: a receipt there is
+for a period of work, not one change. A branch name that is deleted and reused inherits the
+earlier branch's pre-merge turns under this rule; give reused names a suffix if that matters.
+
+Sessions on a detached `HEAD` or with no branch recorded are reported as *unattributed*, never
+guessed. Unpriced turns are counted and excluded from the total, never shown as `$0`.
+`--sessions` labels its cap table as an upper bound: the dollars above a cap are what a guard could
+have held back at most, not a saving.
+
+`--csv` writes one row per branch (`repo, branch, costUsd, contextShare, sessions, turns,
+subagentTurns, first, last, longLived, prNumber, mergedAt, changedLines, costPer100Lines`) across
+every repository the plain-text table would show; combine with `--repo` to scope it to one. `--svg`
+writes a shareable card built from a single branch or PR receipt (`--branch` or `--pr`); add `--png`
+to also render a PNG through a local Chromium/Chrome (the SVG is still written if none is found).
+Every colour on the card comes from `design/tokens.yaml`, so it matches the configured skin and
+mode. See [exports-and-budgets.md](exports-and-budgets.md).
+
+### `week`
+"Your AI week": spend this calendar week (Monday through today) against last week, context share,
+turns, sessions, the three costliest branches, and the single most expensive session, computed
+from the same store as everything else.
+
+```bash
+tokenflow week                          # text summary
+tokenflow week --svg week.svg           # a shareable card
+tokenflow week --svg week.svg --png week.png   # card + a local screenshot
+tokenflow week --json                   # everything, machine-readable
+```
+
+See [exports-and-budgets.md](exports-and-budgets.md).
+
+### `budget`
+Monthly spend cap with projected-overrun alerts, deduplicated so a state only alerts once.
+
+```bash
+tokenflow budget --set 200     # $200/month, warn at 80% projected
+tokenflow budget               # current state: safe / approaching / over
+```
+
+A `budgets:` list in `config.yaml` adds caps scoped to one repository or to the whole team,
+alongside the single monthly cap above; `tokenflow budget` prints both when any are configured. See
+[configuration.md](configuration.md) for the `budgets:` shape and
+[exports-and-budgets.md](exports-and-budgets.md) for how each scope's spend is computed.
+
+---
+
+### `guard`
+A circuit breaker for the session you are in, run as a Claude Code hook. It reads the live
+transcript with the same adapter and price table as everything else, then reports the running
+spend, the size of the prompt now being re-sent, and the median cost of the last ten turns — and
+warns or blocks against thresholds **you** declared. With none declared it is informational and
+never blocks.
+
+```bash
+tokenflow guard --install                        # print the settings.json hooks block (not written)
+tokenflow guard --set warnCostUsd=25,maxCostUsd=200,warnContextTokens=200000
+tokenflow guard --set maxCostUsd=                # clear one threshold
+tokenflow guard --session ~/.claude/projects/<slug>/<id>.jsonl   # judge one transcript
+```
+
+Hook contract: stdin carries `{session_id, transcript_path, hook_event_name, …}`. A warning is
+returned as JSON — `hookSpecificOutput.additionalContext` reaches the model,
+`systemMessage` reaches you. A declared cap that is reached exits `2`, which blocks a
+`PreToolUse` tool call or rejects a `UserPromptSubmit` prompt with the reason on stderr; `Stop`
+and `SessionStart` are never blocked. The read is incremental: each session's byte offset and open
+streaming groups are kept under `~/.tokenflow/guard/`, so a large transcript is read once.
+
+Keys: `warnCostUsd`, `maxCostUsd`, `warnContextTokens`, `maxContextTokens`, `warnMarginalUsd`.
+
+A repository can declare its own caps in `.tokenflow/policy.yaml`, committed with the code; a
+declared key there wins over the personal config, key by key.
+
+```bash
+tokenflow guard --policy                  # effective policy for the current directory
+tokenflow guard --policy --cwd <dir>      # for some other directory / repository
+```
+
+Codex CLI has no blocking hook, so its integration only warns, through an OS notification:
+
+```bash
+tokenflow guard --install --codex            # print the notify = [...] line for config.toml
+tokenflow guard --install --codex --apply    # append it, only if safe to do so
+```
+
+See [guard-codex.md](guard-codex.md) for the policy file shape and the Codex `notify` contract.
+
+---
+
+### `hooks`
+Installs a `pre-push` git hook that attaches a receipt to the pushed commit as a git note under
+`refs/notes/tokenflow`, so the receipt travels with the code instead of living only on this
+machine. The [GitHub Action](../action/README.md) reads that note on a pull request and posts or
+updates one comment.
+
+```bash
+tokenflow hooks install      # write .git/hooks/pre-push
+tokenflow hooks uninstall    # remove it, restoring anything it replaced
+tokenflow hooks status       # installed? chained? where?
+```
+
+The hook never blocks a push: every failure is reported on stderr with exit `0`. A hook it
+replaces is kept as `pre-push.tokenflow-chained` and always runs first, keeping its own exit
+code, so a pre-existing gate still gates. See [receipt-schema.md](receipt-schema.md).
+
+---
+
 ### `providers`
 What is detected, connected, or disabled, with the reason for each. `--json`.
 
@@ -165,6 +302,50 @@ tokenflow export --html ~/Desktop/tokenflow.html
 ```
 
 Missing values are written as empty cells, never as `0`.
+
+---
+
+## Team & sync
+
+### `sync`
+Optional, off by default: exchange daily rollups (and, unless disabled, a branch/PR receipt
+ledger) between machines through a folder you already sync, or by pushing to a server you run.
+
+```bash
+tokenflow sync                          # push this machine's files, then show the merged view
+tokenflow sync --pull                   # merged view only, no push
+tokenflow sync --off                    # disable sync entirely
+tokenflow sync --to <url> --token <t>   # push both files to a team server instead of a folder
+```
+
+`--to` (or `sync.to` in `config.yaml`) sends the exact same two files to
+`tokenflow team serve` (or any server that speaks its `/api/rollup` contract) instead of writing
+them into `sync.dir`; there is no merged view to pull from a server, so this only pushes. The
+token can come from `--token`, `sync.token`, or the `TOKENFLOW_SYNC_TOKEN` environment variable.
+`sync.receipts: false` skips the ledger file. See [ledger.md](ledger.md) and
+[team-server.md](team-server.md).
+
+### `team`
+Per-developer usage, joined from every machine's synced rollups, plus the branch/PR cost ledger
+once any machine has pushed one.
+
+```bash
+tokenflow team                    # aggregated view from the shared sync folder
+tokenflow team --json             # machine-readable
+tokenflow team serve              # self-hosted server: same aggregate, over HTTP
+```
+
+`team serve` runs one process on a machine the team owns (LAN or Docker) so every machine can push
+with `sync --to` instead of writing into a shared folder.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--host` | `127.0.0.1` | bind address; non-loopback requires a token |
+| `--port` | `7790` | bind port |
+| `--dir` | `<TOKENFLOW_HOME>/team` | where uploaded rollups are stored |
+| `--token` | — (falls back to `TOKENFLOW_TEAM_TOKEN`) | shared bearer token |
+
+See [team-server.md](team-server.md) for the auth model and routes.
 
 ---
 
@@ -261,6 +442,22 @@ fetched, and whether the source is official or third-party — plus the service-
 that get applied per request, and the one premium tier that is deliberately *not* applied
 (long-context).
 
+### `pricing diff`
+Compares a candidate price table to the current effective one (the overrides file layered on the
+built-in table, same as every other command resolves it) and prints what would change: models
+added, rates changed with the percent change per field, and current overrides the candidate says
+nothing about.
+
+```bash
+tokenflow pricing diff table.json              # print the diff only
+tokenflow pricing diff table.json --apply      # print, then confirm interactively (y/N)
+tokenflow pricing diff table.json --apply --yes   # print and apply, no prompt (scripts, CI)
+```
+
+`--apply` merges the candidate's models into the overrides file; it never replaces it, and a
+model the candidate does not mention keeps its existing override untouched. Refused when the
+candidate has an invalid entry, or (without `--yes`) when stdin is not an interactive terminal.
+
 ### `import <file>`
 Generic import for CSV / TSV / JSON / JSONL / SQLite. With no `--field` flags it prints the
 columns it found, infers a mapping, and previews five normalized rows.
@@ -327,6 +524,13 @@ tokenflow config import backup.json      # restore on another machine
 ### `doctor`
 Runtime, `node:sqlite` availability, timezone, every path, store size, cube rows, sessions,
 pending compaction, and every adapter's detection status. Start here when something is off.
+
+After the Store section, an **Audit** block runs seven data-quality checks over the last three
+months of records: git worktrees fragmenting a repository's spend, a recorded cwd outside any
+repository, Codex records with no git branch, unpriced models, a stale built-in price table,
+session-level sources present in per-turn views, and records explicitly marked
+`metadata.repoResolved === false`. Each line names the check, its severity (`ok` / `info` / `warn`
+/ `fail`), and a one-line fix when it is not clean.
 
 ### `validate`
 Re-validates every stored record against the schema and reports the failure modes by frequency.

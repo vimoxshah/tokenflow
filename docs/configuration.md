@@ -11,8 +11,10 @@ edit it. This page is the complete reference for when you do. `tokenflow config 
 *effective* config (defaults merged with your file), and `tokenflow config path` prints the data
 home.
 
-Nothing here is ever transmitted anywhere. There are no keys, tokens, or accounts to configure —
-if a field looks like it wants a credential, you are reading the wrong project.
+Nothing here is transmitted anywhere unless you explicitly point it somewhere you own. The two
+exceptions are opt-in: `sync.token` (a bearer token for your own team server, never a vendor
+credential) and `delivery:` (your own webhook/Telegram/email). If a field looks like it wants a
+vendor API key or account, you are reading the wrong project.
 
 ---
 
@@ -69,6 +71,10 @@ sources:
     scanRoots: ["~/code", "~/work"]   # directories to scan for repositories
     repos: []                          # or list them explicitly
     autoFromUsage: true                # also use working dirs seen in usage records
+  otel:
+    # OpenTelemetry GenAI file exports. Defaults look for ~/.gemini/telemetry.log
+    # and ~/.tokenflow/otel/*.{jsonl,ndjson,json,log}; add paths of your own.
+    paths: ["~/code/my-project/.gemini/telemetry.log"]
 
 store:
   keepRaw: true                 # keep request-level records (Data Explorer + full export)
@@ -101,6 +107,23 @@ ui:
   port: 7799                    # the dashboard binds 127.0.0.1 on this port
   defaultRange: all             # all | 7d | 30d | 90d | mtd
   defaultFrom: null             # e.g. "2026-03-14" — a floor for the default view only
+
+# Optional, off by default. See the `sync` and `budgets` sections below.
+sync:
+  enabled: false
+  dir: ~/Sync/TokenFlow          # a shared folder both machines can see
+  machineName: MacBook Pro
+  developerName: null            # opt-in only; omit to stay anonymous in team views
+  receipts: true                 # set false to skip the branch/PR ledger file
+  to: null                       # POST to a server instead of writing into `dir`
+  token: null                    # bearer token for `to` (or env TOKENFLOW_SYNC_TOKEN)
+
+budgets:
+  - id: api-monthly
+    scope: repo                  # total | repo | team
+    repo: api                    # required when scope is repo
+    monthlyUsd: 150
+    warnAt: 0.8                  # optional, default 0.8
 ```
 
 ---
@@ -176,6 +199,96 @@ the exact reset instant in your timezone. Invalid definitions are reported via
 `tokenflow capacity --json` (`invalid`) and by the dashboard — never silently
 ignored. See [live-mode.md](live-mode.md) for semantics.
 
+### `guard` — thresholds for the in-session circuit breaker
+
+Read by `tokenflow guard` when it runs as a Claude Code hook. Absent or all-null means the hook
+reports and never blocks. Values are declared, never inferred.
+
+```yaml
+guard:
+  warnCostUsd: 25            # session spend at which the hook warns (context + systemMessage)
+  maxCostUsd: 200            # session spend at which PreToolUse / UserPromptSubmit are blocked
+  warnContextTokens: 200000  # prompt size (fresh + cache read + cache write) at which to warn
+  maxContextTokens: null     # prompt size at which to block
+  warnMarginalUsd: null      # median cost of the last ten turns at which to warn
+```
+
+`tokenflow guard --set warnCostUsd=25,maxCostUsd=200` writes these; an empty value clears one.
+
+A repository can declare its own caps in `.tokenflow/policy.yaml`, committed with the code, so
+the cap travels with everyone who clones it:
+
+```yaml
+# <repo root>/.tokenflow/policy.yaml
+guard:
+  warnCostUsd: 10
+  maxCostUsd: 50
+note: "This repo's sessions run long — reasoning-heavy refactors, not chat."
+```
+
+A key declared there wins over `~/.tokenflow/config.yaml`, key by key; a key declared nowhere is
+`null` (informational only). `tokenflow guard --policy [--cwd <dir>]` shows the effective value
+for each key and which file it came from. `note` is optional and shown beside a triggered
+warning/block and beside `guard --policy`'s output. See [guard-codex.md](guard-codex.md).
+
+### `sources.otel.paths` — OpenTelemetry (GenAI) file exports
+
+```yaml
+sources:
+  otel:
+    paths: ["~/code/my-project/.gemini/telemetry.log", "~/.tokenflow/otel"]
+```
+
+Reads a standards-based OTLP JSON export from any tool's file/collector exporter, and Gemini
+CLI's own file telemetry. With no `paths` configured, the adapter still looks in its defaults:
+`~/.gemini/telemetry.log` and `~/.tokenflow/otel/*.{jsonl,ndjson,json,log}`. See
+[providers-otel.md](providers-otel.md).
+
+### `sync` — optional multi-machine aggregation
+
+Off by default. Exchanges daily rollups (and, unless disabled, a branch/PR receipt ledger)
+between machines through a folder you already sync, or by pushing to a server you run:
+
+```yaml
+sync:
+  enabled: true
+  dir: ~/Sync/TokenFlow        # a shared folder both machines can see
+  machineName: MacBook Pro     # label shown in aggregated views
+  developerName: null          # OPTIONAL, opt-in only — per-developer team views
+  receipts: true               # set false to skip the branch/PR ledger file
+  to: null                     # POST to a server instead of writing into `dir`
+  token: null                  # bearer token for `to` (or env TOKENFLOW_SYNC_TOKEN)
+```
+
+`to` and `dir` are alternatives, not both required: set `to` (a `tokenflow team serve` URL, or
+any server speaking its contract) to push there instead of `dir`. What is shared is always the
+same coarse shape — date, tokens, requests, estimated cost, plus the branch/PR ledger unless
+`receipts: false` — never prompts, code, file paths, or credentials. See
+[ledger.md](ledger.md) and [team-server.md](team-server.md).
+
+### `budgets` — caps scoped to a repository or a team
+
+Alongside the single monthly `budget` above, declare as many scoped budgets as you like:
+
+```yaml
+budgets:
+  - id: api-monthly
+    scope: repo            # total | repo | team
+    repo: api                # required when scope is repo; matched the same way
+                              # `tokenflow receipt` resolves a repository (worktrees
+                              # folded into their main checkout)
+    monthlyUsd: 150
+    warnAt: 0.8             # optional, default 0.8 (a fraction, like limits[].warnAt)
+  - id: team-monthly
+    scope: team
+    monthlyUsd: 1000
+```
+
+`total` sums every priced turn in the store this month; `repo` sums turns attributed to that
+repository; `team` reads this machine's shared sync folder, if enabled, and says so plainly
+(`no team data`) rather than reporting a number nobody synced. `tokenflow budget` prints every
+scoped row alongside the monthly cap. See [exports-and-budgets.md](exports-and-budgets.md).
+
 ### `watch` — the background refresher
 
 ```yaml
@@ -230,6 +343,8 @@ never a plausible-looking `$0`.
 | `TOKENFLOW_HOME` | move the whole data home (config, pricing, data, cache) |
 | `TOKENFLOW_DEMO=1` | enable the synthetic demo adapter |
 | `AI_USAGE_HOME` | legacy alias for `TOKENFLOW_HOME`, still honoured |
+| `TOKENFLOW_SYNC_TOKEN` | bearer token for `sync.to`, instead of `sync.token` |
+| `TOKENFLOW_TEAM_TOKEN` | shared bearer token for `tokenflow team serve` |
 
 Running several isolated datasets is just several homes:
 

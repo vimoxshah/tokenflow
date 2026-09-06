@@ -1,6 +1,6 @@
 {
   "name": "@vimoxshah/tokenflow",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Local-first, provider-agnostic analytics for the AI tokens you actually spend. Zero dependencies, nothing leaves your machine.",
   "type": "module",
   "license": "MIT",
@@ -18,16 +18,19 @@
   "files": [
     "bin",
     "src",
+    "design",
     "docs",
     "skills",
     "examples",
     "scripts",
+    "schemas",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
     "SECURITY.md",
     "CONTRIBUTING.md",
-    "Refresh & Open Dashboard.command"
+    "Refresh & Open Dashboard.command",
+    "Dockerfile.team"
   ],
   "scripts": {
     "setup": "node bin/tokenflow.js setup",
@@ -39,6 +42,8 @@
     "typecheck": "tsc --noEmit -p jsconfig.json",
     "typecheck:deps": "npm i --no-save --no-package-lock typescript@5 @types/node@22",
     "lint": "node scripts/lint.js",
+    "design": "node scripts/design-build.js",
+    "design:check": "node scripts/design-build.js --check",
     "validate": "node scripts/validate-install.js",
     "start": "node bin/tokenflow.js up",
     "up": "node bin/tokenflow.js up"

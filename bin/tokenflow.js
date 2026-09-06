@@ -80,12 +80,16 @@ async function main() {
     case 'forecast': return cmdForecast();
     case 'menubar': return cmdMenubar();
     case 'digest': return cmdDigest();
+    case 'week': return cmdWeek();
     case 'schedule': return cmdSchedule();
     case 'budget': return cmdBudget();
     case 'sync': return cmdSync();
     case 'models-compare': return cmdModelsCompare();
     case 'diagnostics': return cmdDiagnostics();
     case 'team': return cmdTeam();
+    case 'receipt': case 'receipts': return cmdReceipt();
+    case 'hooks': return cmdHooks();
+    case 'guard': return cmdGuard();
     default:
       console.error(`${C.red}Unknown command "${cmd}".${C.r}\n`);
       return help(1);
@@ -264,7 +268,7 @@ async function cmdStatus() {
     const line = barLine(st, String(flags.mode || 'auto'), String(flags.prefix || 'TF'));
     return console.log(flags.json ? JSON.stringify(line, null, 2) : line.text);
   }
-  const b = buildBundle();
+  const b = buildBundle({ receipts: false });
   if (flags.json) return console.log(JSON.stringify({ meta: b.meta, health: b.health }, null, 2));
   const h = b.health;
   if (!h.records) {
@@ -446,6 +450,16 @@ async function cmdExport() {
 // ================================================================== pricing ==
 
 async function cmdPricing() {
+  if (argv[1] === 'diff') {
+    const { run } = await import('../src/commands/pricing-diff.js');
+    const file = argv[2];
+    if (!file) throw new Error('usage: tokenflow pricing diff <file.json|-> [--apply] [--yes]');
+    const res = await run({ file, apply: !!flags.apply, yes: !!flags.yes });
+    if (res.stdout) console.log(res.stdout);
+    if (res.stderr) console.error(res.stderr);
+    if (res.exitCode) process.exitCode = res.exitCode;
+    return;
+  }
   const p = paths();
   const cur = readJson(p.pricing, { models: {} });
   if (flags.set) {
@@ -488,7 +502,7 @@ async function cmdPricing() {
     return;
   }
 
-  const b = buildBundle();
+  const b = buildBundle({ receipts: false });
   const v = computeView(b, {});
   const book = buildPriceBook(readJson(p.pricing, {}));
   console.log(`\n  ${C.b}Pricing${C.r}  ${C.dim}built-in table ${PRICING_TABLE_VERSION} · overrides in ${p.pricing}${C.r}\n`);
@@ -747,6 +761,9 @@ async function cmdDoctor() {
   console.log(`   cube          ${int(store.cube().rows.length)} rows`);
   console.log(`   sessions      ${int(Object.keys(store.sessions().rows).length)}`);
   console.log(`   stale gens    ${(store.state.stale || []).length}${(store.state.stale || []).length ? `  ${C.y}run 'tokenflow compact'${C.r}` : ''}`);
+  const { auditChecks, renderChecks } = await import('../src/commands/doctor-checks.js');
+  console.log(`\n  ${C.b}Audit${C.r}  ${C.dim}data-quality checks over the last 3 months${C.r}`);
+  renderChecks(auditChecks({ store, config: cfg, now: new Date() }));
   console.log(`\n  ${C.b}Providers${C.r}`);
   await cmdProviders();
   console.log(`  ${C.dim}Troubleshooting guide: docs/troubleshooting.md${C.r}\n`);
@@ -1166,6 +1183,49 @@ async function cmdDigest() {
   }
 }
 
+/** `tokenflow week` — "Your AI week": this week's spend vs last week, as text, JSON, or a card. */
+async function cmdWeek() {
+  const { run } = await import('../src/commands/week.js');
+  const out = run(flags);
+  if (flags.json) return console.log(JSON.stringify(out.json, null, 2));
+  console.log(out.text);
+}
+
+/** `tokenflow receipt` — AI spend attributed to a branch / pull request. */
+async function cmdReceipt() {
+  const { run } = await import('../src/commands/receipt.js');
+  const out = run(flags);
+  if (flags.json) return console.log(JSON.stringify(out.json, null, 2));
+  if (typeof flags.out === 'string') {
+    fs.writeFileSync(flags.out, out.text + '\n');
+    return console.log(`${C.g}✓${C.r} wrote ${flags.out}`);
+  }
+  console.log(out.text);
+}
+
+/** `tokenflow hooks` — install/uninstall the pre-push git hook that attaches a receipt note. */
+async function cmdHooks() {
+  const { run } = await import('../src/commands/hooks.js');
+  const action = argv[1];
+  const out = run({ ...flags, action, args: argv.slice(2) });
+  if (out.stdout) process.stdout.write(out.stdout + '\n');
+  if (out.stderr) process.stderr.write(out.stderr + '\n');
+  process.exitCode = out.exitCode;
+}
+
+/** `tokenflow guard` — the in-session circuit breaker, run as a Claude Code hook. */
+async function cmdGuard() {
+  const { run } = await import('../src/commands/guard.js');
+  // Hooks run in a shell whose PATH may not include this node (nvm, asdf), so
+  // the printed command pins the interpreter and the CLI that are running now.
+  // `run()` is synchronous except for the `--codex-notify` branch, which
+  // returns a Promise — awaiting unconditionally handles both.
+  const out = await run({ ...flags, bin: `${process.execPath} ${path.join(root(), 'bin', 'tokenflow.js')}` });
+  if (out.stdout) process.stdout.write(out.stdout + '\n');
+  if (out.stderr) process.stderr.write(out.stderr + '\n');
+  process.exitCode = out.exitCode;
+}
+
 /** `tokenflow schedule` — install/remove the weekly digest LaunchAgent. */
 async function cmdSchedule() {
   const sched = await import('../src/core/schedule.js');
@@ -1191,9 +1251,19 @@ async function cmdBudget() {
     saveConfig(merge(cfg, { budget }));
     console.log(`${C.g}✓${C.r} monthly budget set to $${v.toLocaleString('en-US')}`);
   }
+  // Scoped budgets (repo | team) are independent of the single monthly cap
+  // below, so they are evaluated once and printed either way — a user who
+  // only declared `budgets:` and never set a monthly cap must still see them.
+  const { evaluateScopedBudgets, renderScopedBudgets } = await import('../src/commands/budget-scopes.js');
+  const scopedRows = evaluateScopedBudgets({ config: cfg });
+
   if (!budget.monthly) {
     console.log('No monthly budget configured. Set one:');
     console.log(`  ${C.b}tokenflow budget --set 200${C.r}   # $200/month, warn at 80% projected`);
+    if (scopedRows.length) {
+      console.log(`\n${C.b}Scoped budgets${C.r}`);
+      console.log(renderScopedBudgets(scopedRows));
+    }
     return;
   }
 
@@ -1204,7 +1274,14 @@ async function cmdBudget() {
   const today = new Date().toISOString().slice(0, 10);
 
   const st = computeBudgetState(status, { monthly: budget.monthly, warnAtPct: budget.warnAtPct }, today);
-  if (!st) { console.log('No usage data yet.'); return; }
+  if (!st) {
+    console.log('No usage data yet.');
+    if (scopedRows.length) {
+      console.log(`\n${C.b}Scoped budgets${C.r}`);
+      console.log(renderScopedBudgets(scopedRows));
+    }
+    return;
+  }
 
   const { fire } = shouldAlert(st, { force: !!flags.force });
 
@@ -1228,6 +1305,11 @@ async function cmdBudget() {
   } else if (st.state !== 'safe' && st.state !== 'unknown') {
     console.log(C.dim + '  (already alerted for this state this month — no spam)');
   }
+
+  if (scopedRows.length) {
+    console.log(`\n${C.b}Scoped budgets${C.r}`);
+    console.log(renderScopedBudgets(scopedRows));
+  }
 }
 
 /** `tokenflow sync` — optional multi-machine aggregation via a shared folder. */
@@ -1238,6 +1320,25 @@ async function cmdSync() {
   if (flags.off) {
     saveConfig(merge(cfg, { sync: { ...cfg.sync, enabled: false } }));
     console.log(`${C.g}✓${C.r} sync disabled — nothing leaves this machine`);
+    return;
+  }
+
+  // A team server is a separate destination from the folder-sync `isEnabled`
+  // gate below: `push()`'s remote branch needs only `sync.enabled`, never
+  // `sync.dir`, so `--to` must not be blocked by "no folder configured". This
+  // path only ever pushes — there is no merged view to pull from a server.
+  const id = machineId();
+  const to = typeof flags.to === 'string' ? flags.to : (cfg.sync?.to || null);
+  const token = typeof flags.token === 'string' ? flags.token : undefined;
+  if (to) {
+    try {
+      const r = await push({ config: cfg, to, token });
+      if ('pushedTo' in r) console.log(`${C.g}✓${C.r} pushed → ${r.pushedTo}`);
+      else console.log(r.days ? `${C.g}✓${C.r} pushed ${r.days} days` : `${C.dim}nothing to push yet${C.r}`);
+      console.log(C.dim + `  this machine's id: ${id}${C.r}`);
+    } catch (e) {
+      throw Object.assign(new Error(e.message), { exitCode: 1 });
+    }
     return;
   }
 
@@ -1253,22 +1354,21 @@ async function cmdSync() {
          dir: ~/Sync/TokenFlow        # that shared folder
          machineName: MacBook Pro     # label shown in aggregated views
 
-  3. Run ${C.b}tokenflow sync --push${C.r} on each machine.
+  3. Run ${C.b}tokenflow sync${C.r} on each machine.
+
+  A shared folder is not the only option: ${C.b}tokenflow sync --to <url> --token <t>${C.r}
+  pushes to a self-hosted team server instead — see docs/team-server.md.
 
 What is shared: daily totals only (date, tokens, requests, est. cost).
 What is never shared: prompts, code, file paths, credentials.`);
     return;
   }
 
-  const id = machineId();
-  if (flags.push || flags.pull === undefined) {
-    // default action with no sub-flag = push + pull
-  }
   try {
     if (!flags.pull) {
-      const r = push({ config: cfg });
+      const r = await push({ config: cfg });
       console.log(r.days
-        ? `${C.g}✓${C.r} pushed ${r.days} days → ${path.basename(r.file)}`
+        ? `${C.g}✓${C.r} pushed ${r.days} days → ${path.basename(r.file || '')}`
         : `${C.dim}nothing to push yet${C.r}`);
     }
     const merged = pull({ config: cfg });
@@ -1312,6 +1412,13 @@ async function cmdDiagnostics() {
 
 /** `tokenflow team` — per-developer usage from the shared sync folder (P4-B). */
 async function cmdTeam() {
+  // `team serve` runs a self-hosted server for machines that push with
+  // `--to` instead of writing into a shared folder — it needs no `sync.dir`
+  // of its own, so this must not fall through to the folder-sync gate below.
+  if (argv[1] === 'serve') {
+    const { run } = await import('../src/commands/team-serve.js');
+    return run(flags);
+  }
   const cfg = loadConfig();
   if (!cfg.sync?.enabled || !cfg.sync?.dir) {
     console.error(`${C.red}Team view reads the shared sync folder.${C.r}
@@ -1460,28 +1567,56 @@ function help(code = 0) {
   ${C.b}Intelligence${C.r}
     tokenflow models-compare        cost/request, tokens/request, cache-hit% per model
                                    (--from/--to <date> to pick the window)
+    tokenflow week                  this week's spend vs last week (--svg/--png card, --json)
     tokenflow budget --set 200      monthly cap → projected-overrun alerts (dedup'd)
     tokenflow budget                current state: safe / approaching / over
-    tokenflow digest --deliver      build "Your AI Week" and send via configured channels
+                                   (also evaluates any scoped budgets: repo | team)
+    tokenflow digest --deliver      build the weekly digest and send via configured channels
     tokenflow schedule --install --at "Monday 09:00"   weekly digest via launchd
     tokenflow schedule --status     is the digest schedule installed?
     tokenflow team                  per-developer usage from the shared sync folder
+    tokenflow team serve            self-hosted team server for the folder-sync rollups (--host --port --token --dir; non-loopback host needs a token)
     tokenflow diagnostics           version, providers, store freshness, feature states
+
+  ${C.b}Receipts & guard${C.r}
+    tokenflow receipt               spend per branch, per repository (sees through worktrees)
+    tokenflow receipt --repo <path> --gh
+                                   join branches to merged pull requests via gh
+    tokenflow receipt --repo <path> --gh --pr 478 --md
+                                   one PR-comment receipt (cost, context share, $/100 lines)
+    tokenflow receipt --csv         one row per branch, every repository, as CSV
+    tokenflow receipt --branch <b> --svg r.svg [--png r.png]
+                                   a shareable receipt card (SVG, or SVG + PNG)
+    tokenflow receipt --sessions    where the money goes: concentration, context vs work,
+                                   marginal cost per turn, dollars above a per-session cap
+    tokenflow hooks install|uninstall|status
+                                   pre-push git hook that attaches a receipt note (never blocks)
+    tokenflow guard --install       print the Claude Code hooks block for the circuit breaker
+    tokenflow guard --set warnCostUsd=25,maxCostUsd=200
+                                   declare thresholds (none declared = informational only)
+    tokenflow guard --session <f>   judge one transcript file
+    tokenflow guard --policy [--cwd <dir>]
+                                   effective guard policy for a directory, and each value's source
+    tokenflow guard --install --codex [--apply]
+                                   wire up Codex CLI's notify hook (warns only, never blocks)
 
   ${C.b}Sync (optional, off by default)${C.r}
     tokenflow sync                  push this machine's daily rollups + show merged view
     tokenflow sync --off            disable sync entirely
+    tokenflow sync --to <url> --token <t>   push both sync files to a team server
 
   ${C.b}Configure${C.r}
     tokenflow pricing               show which models have a price, and from where
     tokenflow pricing --sources     provenance of every built-in rate + tier multipliers
     tokenflow pricing --set "m=3,15,0.3,3.75"
+    tokenflow pricing diff <table.json> [--apply] [--yes]
+                                   compare a candidate price table to the current one
     tokenflow import <file>         CSV / JSON / JSONL / SQLite with field mapping
     tokenflow restore <file.csv>    rebuild the store from a full export, re-priced
     tokenflow config show|path|export|import
 
   ${C.b}Maintain${C.r}
-    tokenflow doctor                environment, paths, store, adapters
+    tokenflow doctor                environment, paths, store, adapters, data-quality audit
     tokenflow validate              re-validate every stored record
     tokenflow compact               drop superseded records after a rewrite
     tokenflow reset --yes           delete ingested data (keeps config)

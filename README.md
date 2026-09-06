@@ -39,12 +39,12 @@ per-source and per-model usage, capacity meters and forecast, in light and dark.
 
 | Layer | What's inside |
 |---|---|
-| **Ingestion** | 10 adapters (Anthropic, OpenAI/Codex, OpenCode, Hermes, Cline, Cursor, Headroom gateway, git, generic CSV/JSONL/SQLite import, demo). Incremental byte-offset resumes, re-read windows for upserted rows, budgeted refresh that stops cleanly mid-corpus |
+| **Ingestion** | 11 adapters (Anthropic, OpenAI/Codex, OpenCode, Hermes, Cline, Cursor, Headroom gateway, git, OpenTelemetry/GenAI (otel), generic CSV/JSONL/SQLite import, demo). Incremental byte-offset resumes, re-read windows for upserted rows, budgeted refresh that stops cleanly mid-corpus |
 | **Correctness** | Cache read/write/input kept as mutually exclusive buckets; vendor convention differences handled; streaming re-reports collapsed to max-of-run; `null` never coerced to 0; measured gateway cost kept separate from estimates |
 | **Costing** | Versioned price table with per-entry source URLs and fetch dates; service-tier multipliers; long-TTL cache-write tier priced separately; unpriced models surface as `null` with a configure action — never silent `$0` |
-| **Analytics** | 12 views: overview KPIs, composition, provider/model intelligence, interfaces, hour×weekday heatmap + calendar, peaks, efficiency ratios, cost with coverage, git correlations (labelled), period compare, searchable data explorer, per-field data health |
-| **Live mode** | Watcher daemon, native Swift menu bar app (provider/source/model breakdowns, capacity meters with reset countdowns & ETAs, forecast with stated confidence, MAD-based anomaly alerts, appearance toggle), SwiftBar/xbar plugin |
-| **Engineering** | Zero runtime dependencies · 145 tests · lint invariants (e.g. "no `\|\| 0` on a token field") · tsc-clean JSDoc types · CI on macOS/Linux/Windows × Node 22/24 |
+| **Analytics** | 20 views: overview KPIs with a story strip, receipts per branch and pull request, session anatomy, live, composition, provider/model intelligence, interfaces, hour×weekday heatmap + calendar, peaks, efficiency ratios, cache health, cost with coverage, model what-if, git correlations (labelled), rhythm and focus, period compare, compare branches, searchable data explorer, annotations, per-field data health |
+| **Live mode** | Watcher daemon, native Swift menu bar app (live sessions, today's receipts, guard state, provider/source/model breakdowns, capacity meters with reset countdowns & ETAs, forecast with stated confidence, MAD-based anomaly alerts, per-source sparklines, appearance toggle), SwiftBar/xbar plugin |
+| **Engineering** | Zero runtime dependencies · 520 tests · lint invariants (e.g. "no `\|\| 0` on a token field") · tsc-clean JSDoc types · CI on macOS/Linux/Windows × Node 22/24 |
 
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
@@ -121,7 +121,8 @@ dashboard.
 
 | Question | Where |
 |---|---|
-| How much AI did I use, and how has that changed? | Overview — KPIs, daily series, trend |
+| What did this branch or pull request cost? | Receipts — spend per repository and branch, context share, copy as a PR comment |
+| How much AI did I use, and how has that changed? | Overview — the three insights that matter, then KPIs, daily series, trend |
 | Input vs output vs cache? | Token composition — four buckets that sum to the total |
 | Which provider and model do I rely on? | Provider & model share, growth, per-model efficiency |
 | When do I use AI most? | Time patterns — hour/weekday profiles, heatmap, calendar |
@@ -133,9 +134,14 @@ dashboard.
 <details>
 <summary>All pages</summary>
 
-Overview · Token composition · Providers & models · Interfaces · Time patterns · Peaks ·
-Efficiency · Cost · Productivity · Compare · Data explorer (searchable/sortable/exportable) ·
-Data health
+Overview · Receipts · Session anatomy · Live · Token composition · Providers & models · Interfaces ·
+Time patterns · Peaks · Efficiency · Cache health · Cost · What-if · Productivity · Rhythm · Compare ·
+Compare branches · Data explorer (searchable/sortable/exportable) · Annotations · Data health.
+Deep-link any of them: `#tab=receipts&skin=terminal&mode=light`.
+
+Press ⌘K (or Ctrl+K) anywhere in the dashboard for the command palette: jump to a tab, change the
+range, skin or mode, export, refresh or clear filters without touching the mouse. The first time
+the live dashboard opens it explains what was found on this machine and what was not, and why.
 
 </details>
 
@@ -196,12 +202,23 @@ node bin/tokenflow.js dashboard      # live UI at http://127.0.0.1:7799 (loopbac
 node bin/tokenflow.js watch          # auto-refresh every N seconds (default 120)
 node bin/tokenflow.js import f.csv   # CSV/JSONL/SQLite via saved field mapping
 node bin/tokenflow.js export --csv   # --all for everything; --html for offline snapshot
-node bin/tokenflow.js digest         # shareable markdown summary (--format text, --from/--to, --out f.md)
+node bin/tokenflow.js digest         # shareable weekly digest (--format text, --from/--to, --out f.md)
+node bin/tokenflow.js week           # this week's spend vs last week (--svg/--png card, --json)
 node bin/tokenflow.js models-compare # cost/usage efficiency per model — your data
 node bin/tokenflow.js budget --set 200   # monthly cap + forecast alerts (fires once per state/month)
 node bin/tokenflow.js schedule --install --at "Monday 09:00"  # weekly digest via launchd
 node bin/tokenflow.js diagnostics    # local observability — nothing transmitted
 node bin/tokenflow.js team           # per-developer team view (needs sync + opt-in names)
+node bin/tokenflow.js team serve     # self-hosted team server (LAN/Docker), no shared folder needed
+node bin/tokenflow.js sync --to <url> --token <t>   # push this machine's rollups to a team server
+node bin/tokenflow.js receipt --repo . --gh   # what each branch / merged PR cost (sees through worktrees)
+node bin/tokenflow.js receipt --sessions      # where the money goes: concentration, context vs work, marginal cost/turn
+node bin/tokenflow.js receipt --csv           # one row per branch, every repository
+node bin/tokenflow.js hooks install           # pre-push git hook: attach a receipt note, never blocks
+node bin/tokenflow.js guard --install         # Claude Code hook: warn/block a session against caps you declare
+node bin/tokenflow.js guard --install --codex # same circuit breaker for Codex CLI (warns only)
+node bin/tokenflow.js pricing diff table.json --apply   # merge a candidate price table in
+node bin/tokenflow.js doctor         # environment, store, adapters, and a data-quality audit
 node bin/tokenflow.js up             # refresh → rebuild offline HTML → serve + open
 
 npm link                             # optional: global `tokenflow` command
@@ -247,7 +264,7 @@ from `file://` with no server. A full CSV export doubles as a portable dataset:
 ## Contributing
 
 ```bash
-npm test               # 102 tests: normalization, adapters, analytics, store, formatting
+npm test               # 520 tests: normalization, adapters, analytics, store, receipts, guard
 npm run lint           # project invariants (incl. "no || 0 on a token field")
 npm run typecheck      # tsc over JSDoc types — must be zero errors
 npm run validate       # self-check: runtime, adapters, store↔cube agreement
@@ -276,8 +293,10 @@ Easiest contribution: an adapter (`src/providers/<id>/index.js`) plus a fixture 
 
 Local data → local normalization → local analytics → local dashboard. The server binds to
 `127.0.0.1`. No prompt text, code, or file content is ever stored — adapters read token counts and
-discard the rest. No telemetry. Two features can touch the network, both strictly opt-in:
+discard the rest. No telemetry. Three features can touch the network, all strictly opt-in:
 
+- **Team server push** (`sync.to` in config, or `tokenflow sync --to <url>`) sends the same two
+  sync files to a server you run with `tokenflow team serve`, behind a bearer token. Nothing else.
 - **Digest delivery** (`delivery:` in config) — sends the digest you generate to your own
   Telegram chat, email, or webhook. Credentials live only in `~/.tokenflow/config.yaml`.
 - **Multi-machine sync** (`sync:` in config) — exchanges daily totals (date, tokens, requests,
