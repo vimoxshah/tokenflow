@@ -105,7 +105,11 @@ test('install: writes a fresh hook when none existed', (t) => {
   const r = install({ repo });
   assert.match(fs.readFileSync(r.path, 'utf8'), /tokenflow:pre-push/);
   assert.equal(r.chained, false);
-  assert.equal(fs.statSync(r.path).mode & 0o111, 0o111, 'hook must be executable');
+  // NTFS has no execute bit, so the mode reads 0 there; Git for Windows runs
+  // hooks through sh regardless of mode.
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(r.path).mode & 0o111, 0o111, 'hook must be executable');
+  }
 });
 
 test('install: chains a pre-existing foreign hook instead of clobbering it', (t) => {
