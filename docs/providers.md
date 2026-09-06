@@ -57,7 +57,7 @@ sources:
 |---|---|
 | Reads | `~/.codex/sessions/**/*.jsonl` and `~/.codex/archived_sessions/**` (`$CODEX_HOME` respected) |
 | Measurement | `primary` |
-| Reports | fresh `input`, `cache_read`, `cache_write`, `output`, `reasoning`, session, thread, turn id, project (from `cwd`), interface (from `source` / `originator`), gateway, reasoning effort, service tier, context window, time-to-first-token, subagent role |
+| Reports | fresh `input`, `cache_read`, `cache_write`, `output`, `reasoning`, session, thread, turn id, project (from `cwd`), git branch and repository (from `session_meta.git`, CLI 0.149+), interface (from `source` / `originator`), gateway, reasoning effort, service tier, context window, time-to-first-token, subagent role |
 | Cannot know | cost; `cache_write` on older CLI builds that never emitted the field (recorded as `null`, not `0`) |
 
 ### Token semantics
@@ -94,6 +94,15 @@ reconstruction is auditable rather than a hidden fudge.
 
 `model_provider: "headroom"` (or any non-vendor value) is recorded as `gateway`, not as the
 vendor. The vendor comes from the model name.
+
+### Repository identity from `session_meta.git`
+
+Recent CLIs (cli_version 0.149+ observed) include a `git` block on `session_meta`:
+`{ commit_hash, branch, repository_url }`. `branch` becomes `git_branch`; `repository_url` is
+reduced to its basename with any `.git` suffix stripped and becomes `repository`, falling back to
+the cwd basename (same as `project`) when the block is absent — the pre-existing behaviour. Only
+the derived name is kept: the commit hash and the URL itself are never stored, and no message
+content is read.
 
 ---
 
@@ -221,6 +230,50 @@ The proxy sees the same requests the Codex adapter already recorded. Adding both
 count every routed token — hence `overlay`. What only the gateway knows is what the request
 actually **cost**, which gives the Cost page an independent cross-check against the price-table
 estimate instead of a single unverifiable number.
+
+---
+
+## `otel` — OpenTelemetry (GenAI)
+
+| | |
+|---|---|
+| Reads | `~/.gemini/telemetry.log` (best-effort default) and `~/.tokenflow/otel/*.{jsonl,ndjson,json,log}` |
+| Measurement | `primary` |
+| Reports | `input`, `output`, `cache_read`, `cache_write` (standards-based path only), `reasoning`, session/conversation id, request id (span id), duration, model, provider |
+| Cannot know | interface/surface (no OTel GenAI attribute carries it) |
+
+Standards-based: point any tool's OTLP file/collector exporter at the drop folder
+(`~/.tokenflow/otel/`) and it becomes a source with no code change here. Gemini-CLI specific:
+enable `telemetry.enabled` / `target: "local"` / `outfile` in `.gemini/settings.json`; this
+adapter recognizes and de-duplicates Gemini's paired usage events (`gemini_cli.api_response` and
+its standards-based twin) so a call is counted once.
+
+```yaml
+sources:
+  otel:
+    paths: ["~/code/my-project/.gemini/telemetry.log", "~/.tokenflow/otel"]
+```
+
+See [providers-otel.md](providers-otel.md) for the field mapping, the two on-disk shapes this
+adapter reads, and the privacy allow-list.
+
+### Tools with no known on-disk usage log (needs a sample)
+
+These were not verified for this adapter, either because they have no documented local usage
+export or because checking would have needed an account this project does not have. A fixture
+line from a **synthetic** run turns any of these from a guess into a supported source:
+
+| Tool | Status |
+|---|---|
+| Aider | No documented on-disk per-request usage log found; prints session totals to the terminal. |
+| Ollama | No documented usage-log file; token counts are only in the API response body. |
+| LM Studio | No documented on-disk usage log found. |
+| Zed | Connects to Gemini CLI via ACP (surface tag `zed`); Zed's own OTel/usage export not checked. |
+| Windsurf / Codeium | No documented on-disk usage log found. |
+| JetBrains AI Assistant | Gemini CLI's ACP integration reports a `jetbrains` surface tag; the plugin's own export not checked. |
+| Continue | No documented on-disk usage log found. |
+| Copilot CLI | No documented on-disk usage log found. |
+| Antigravity | No public documentation found; needs a sample or a pointer to its docs. |
 
 ---
 

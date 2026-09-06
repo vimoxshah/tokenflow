@@ -13,6 +13,7 @@
  */
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { Store, encodeRecord, decodeRecord, fileId, compactShards } from './store.js';
 import { createRecord, dateParts, hashId, MEASUREMENT, INTERFACE } from './schema.js';
 import { classifyModel, BUILTIN_MODEL_RULES } from './model-map.js';
@@ -21,6 +22,7 @@ import { buildPriceBook, estimateCost } from './pricing.js';
 import { validateUsage } from './validate.js';
 import { loadConfig, paths } from './config.js';
 import { readJson, writeJson, truncateFile } from './store.js';
+import { repoRootOf } from './repo.js';
 
 /**
  * @param {object} opt
@@ -359,6 +361,37 @@ export function enrich(partial, { ctx, provider, seq = 0, fileRef = null }) {
     machine: partial.machine ?? ctx.machine,
     metadata: partial.metadata || {},
   };
+
+  // Repository identity from the recorded cwd: a session in
+  // `<repo>/.worktrees/<x>` (or any dir whose `.git` points back into a main
+  // checkout's `.git/worktrees/`) is otherwise filed under `x`, splitting one
+  // repository's spend across every worktree it ever had. `repoRootOf` walks
+  // up to the main checkout; `project` always moves to its basename.
+  // `repository` follows only when the adapter derived it the same way the
+  // broken `project` was derived — null, or equal to the adapter's own
+  // (pre-correction) `project` value, which is how anthropic and git-less
+  // Codex sessions set it (basename of cwd). A `repository` that DIFFERS from
+  // that — e.g. openai's `session_meta.git`-derived name — came from real
+  // evidence (a git remote), not a guess from the directory name, and is left
+  // alone even though the checkout dir the session ran in has another name.
+  // When no repository root is found (cwd outside any git checkout, or
+  // missing), the adapter's own values are kept as-is, and `repoResolved`
+  // records which case this was so the doctor can find sessions that were
+  // never matched to a repo.
+  const cwd = base.metadata && base.metadata.cwd;
+  if (cwd) {
+    ctx.repoCache = ctx.repoCache || new Map();
+    const root = repoRootOf(cwd, ctx.repoCache);
+    if (root) {
+      const name = path.basename(root);
+      const derivedFromDir = base.repository === null || base.repository === undefined || base.repository === base.project;
+      base.project = name;
+      if (derivedFromDir) base.repository = name;
+      base.metadata = { ...base.metadata, repoResolved: true };
+    } else {
+      base.metadata = { ...base.metadata, repoResolved: false };
+    }
+  }
 
   // Cost: a measured cost from the source always wins; otherwise estimate,
   // and leave null when the model has no configured price.
