@@ -296,11 +296,34 @@ test('tools/call tokenflow_receipt: with no repo it uses the directory the serve
   await c.handshake();
   const r = await c.call('tokenflow_receipt');
   // This checkout has no synthetic sessions, so the honest answer is "none",
-  // but it must have resolved THIS repository and read its checked-out branch.
+  // but it must have resolved THIS repository from the directory alone.
   assert.equal(r.found, false);
   assert.equal(r.repo, 'tokenflow');
-  assert.equal(typeof r.branch, 'string');
+  // The branch is deliberately NOT asserted to be a string here. CI checks a
+  // pull request out at a detached HEAD, which names no branch, and null is
+  // the documented answer for that. The branch read is pinned against a repo
+  // whose HEAD we control in the next test instead.
+  assert.ok(r.branch === null || typeof r.branch === 'string');
   assert.equal(await c.close(), 0);
+});
+
+test('tools/call tokenflow_receipt: the branch comes from .git/HEAD, and a detached HEAD names none', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-mcp-head-'));
+  fs.mkdirSync(path.join(repo, '.git'));
+  fs.writeFileSync(path.join(repo, '.git', 'HEAD'), 'ref: refs/heads/feat/some-work\n');
+  const onBranch = connect({ cwd: repo });
+  await onBranch.handshake();
+  const named = await onBranch.call('tokenflow_receipt');
+  assert.equal(named.branch, 'feat/some-work');
+  assert.equal(await onBranch.close(), 0);
+
+  // A detached HEAD holds a bare sha, which names no branch.
+  fs.writeFileSync(path.join(repo, '.git', 'HEAD'), '040d9cc98c84ec6da72f7744d2d7356766cec081\n');
+  const detached = connect({ cwd: repo });
+  await detached.handshake();
+  const none = await detached.call('tokenflow_receipt');
+  assert.equal(none.branch, null, 'a detached HEAD names no branch');
+  assert.equal(await detached.close(), 0);
 });
 
 test('tools/call tokenflow_policy: every cap, and the layer each one came from', async () => {
