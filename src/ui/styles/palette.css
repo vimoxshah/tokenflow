@@ -1,7 +1,10 @@
 /* Command palette (src/ui/palette.js). Keyboard-initiated UI: opened dozens
    of times a day, so it never animates open or closed, and nothing in the
    list transitions — the active row must jump under the arrow keys, not ease
-   into place. Token variables only, same as every other stylesheet here. */
+   into place. Token variables only, same as every other stylesheet here.
+   Nothing below declares a `transition` or `animation` at all, so there is
+   nothing for `prefers-reduced-motion` to gate: this component has no motion
+   to turn off. */
 
 /* The base `dialog {}` / `dialog::backdrop {}` rules in styles.css carry a
    220ms open/close transition meant for the mouse-driven export/pricing
@@ -12,11 +15,23 @@ dialog.palette-dialog::backdrop {
   transition: none;
 }
 
+/* Border, radius, background, colour and shadow are set explicitly here
+   rather than left to inherit from the base `dialog {}` rule in styles.css:
+   that file is owned by another stream right now, and the palette's look
+   should not shift out from under it if that rule changes shape. */
 dialog.palette-dialog {
   margin-top: 12vh;
+  width: min(640px, calc(100vw - 32px));
   max-width: 640px;
   padding: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  box-shadow: var(--shadow);
 }
 
 .palette-input {
@@ -33,18 +48,40 @@ dialog.palette-dialog {
 .palette-input:focus-visible {
   outline: none;
 }
+.palette-input::placeholder {
+  color: var(--text-muted);
+}
 
 .palette-list {
   max-height: 50vh;
   overflow: auto;
+  /* Explicit, not inherited: `scrollIntoView` under the arrow keys must jump,
+     not ease — a page-level `scroll-behavior: smooth` must never reach here. */
+  scroll-behavior: auto;
   padding: 6px;
+}
+
+.palette-group + .palette-group {
+  margin-top: 4px;
+}
+
+/* Small, muted, uppercase — shadcn's CommandGroup heading. Conveys "these
+   eight rows are all views" once, instead of repeating "Views" on every row
+   (the defect this replaces: every row used to carry its own group label,
+   right-aligned, so a list of tabs read as "GO TO TAB" over and over). */
+.palette-heading {
+  padding: 10px 10px 4px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .palette-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -52,19 +89,47 @@ dialog.palette-dialog {
 .palette-row.active {
   background: var(--surface-2);
 }
+
+.palette-row-icon {
+  display: flex;
+  flex: none;
+  color: var(--text-secondary);
+}
+.palette-row.active .palette-row-icon {
+  color: var(--text-primary);
+}
+
 .palette-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--text-primary);
   font-size: var(--fs-body);
+  letter-spacing: var(--tr-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.palette-row-group {
+
+/* Matched-character highlight. A bare `<mark>` defaults to a yellow
+   background and black text in every browser — wrong in Aurora dark, and a
+   raw colour besides — so both are overridden from tokens. */
+.palette-row-label mark.palette-match {
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* shadcn's CommandShortcut: `margin-left: auto`, small, on the trailing edge.
+   No command here carries a real bound keyboard shortcut (Cmd+1..9 is
+   reserved by the browser for its own tab switching and cannot be), so the
+   one truthful hint is the active row's own: press Enter to run it. */
+.palette-row-hint {
+  margin-left: auto;
   flex: none;
-  color: var(--text-muted);
-  font-size: var(--fs-micro);
-  letter-spacing: var(--tr-micro);
-  text-transform: uppercase;
+  opacity: 0;
+}
+.palette-row.active .palette-row-hint {
+  opacity: 1;
 }
 
 .palette-empty {
@@ -72,6 +137,47 @@ dialog.palette-dialog {
   color: var(--text-muted);
   font-size: var(--fs-caption);
   text-align: center;
+}
+
+/* A small key-chip, reused by the active row's Enter hint and every hint in
+   the footer strip below. */
+.palette-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
+  line-height: 1;
+}
+
+/* The footer strip: always visible, so the three keys that drive the palette
+   (navigate, select, close) never depend on which row happens to be active. */
+.palette-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+  flex: none;
+}
+.palette-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.palette-hint-label {
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--tr-micro);
 }
 
 /* The "⌘K" chip at the end of the tab bar. Placement (flex, and pushing to

@@ -1,18 +1,25 @@
 /**
  * Command palette: Cmd+K / Ctrl+K, or the "⌘K" chip at the end of the tab bar.
  *
- * Split in two on purpose. `rankCommands` is pure — no DOM, no `window`, no
- * `localStorage` — so test/palette.test.js can cover the matching rules with
- * plain node:test. `mountPalette` is the browser half: it builds a native
- * `<dialog>` (free modality, top-layer stacking, and — per the HTML living
- * standard — focus returns to whatever had it when the dialog opened, the
- * moment `close()` runs) and wires up typing, the arrow keys, Enter and Esc.
+ * Split in two on purpose. `rankCommands`, `matchRanges`, `groupByCategory`
+ * and `paletteSections` are pure — no DOM, no `window`, no `localStorage` —
+ * so test/palette.test.js can cover the matching, highlighting and grouping
+ * rules with plain node:test. `mountPalette` is the browser half: it builds a
+ * native `<dialog>` (free modality, top-layer stacking, and — per the HTML
+ * living standard — focus returns to whatever had it when the dialog opened,
+ * the moment `close()` runs) and wires up typing, the arrow keys, Enter and
+ * Esc.
  *
  * Everything the palette needs to act — the tab list, the quick ranges, the
  * skins, exporting, refreshing — arrives through the `ctx` app.js builds in
  * `mountPalette(ctx)`. palette.js never imports app.js or charts.js, so it
- * stays importable from a plain node:test run with no DOM at all.
+ * stays importable from a plain node:test run with no DOM at all. It does
+ * import the icon set (icons.js is DOM-only at the point `icon()` is called,
+ * never at module load), which is why the pure exports above stay reachable
+ * from node:test: nothing at this module's top level touches `document`.
  */
+
+import { icon, ICON_NAMES } from './components/icons.js';
 
 const RECENT_KEY = 'tokenflow-palette-recent';
 const RECENT_MAX = 8;
@@ -20,14 +27,20 @@ const RECENT_MAX = 8;
 /**
  * Rank `commands` against `query`, dropping anything that does not match.
  *
- * Four match tiers, best first:
+ * Four match tiers against the label, best first:
  *   0. the label equals the query exactly
  *   1. the label starts with the query
  *   2. a word inside the label starts with the query ("word-prefix")
  *   3. the query is a subsequence of the label (each character of the query
  *      appears in the label, in order, not necessarily adjacent)
- * A command's optional `keywords` string is searched the same way, but a
- * keyword hit never outranks any label hit. Ties (same tier, same position)
+ * A command's optional `keywords` string is an alias, not label prose: it
+ * matches only when the query appears as a plain, contiguous SUBSTRING
+ * somewhere in it — never a subsequence. Subsequence matching a keyword blob
+ * lets the query's characters land in different keywords entirely (`"rec"`
+ * finding r in "appearance", e at its end, c starting "colour"), which reads
+ * as a broken search: nothing on screen explains the hit, because there is
+ * nothing to highlight in a keyword the label never shows. A keyword hit
+ * never outranks any label hit, of any tier. Ties (same tier, same position)
  * keep the order `commands` arrived in, so the caller controls what counts as
  * "first" among equals.
  *
@@ -66,37 +79,53 @@ export function rankCommands(commands, query, recent = []) {
 
 /** Lowest (best) tier score for one command against a lowercased query, or null for no match. */
 function matchScore(command, q) {
-  const texts = [String(command.label || '').toLowerCase(), String(command.keywords || '').toLowerCase()];
+  const label = String(command.label || '').toLowerCase();
+  const keywords = String(command.keywords || '').toLowerCase();
   let best = null;
-  texts.forEach((text, hi) => {
-    if (!text) return;
-    const tierBase = hi * 4000; // any label match outranks every keyword-only match
+
+  if (label) {
     let tier = null;
-    if (text === q) tier = 0;
-    else if (text.startsWith(q)) tier = 1000;
+    if (label === q) tier = 0;
+    else if (label.startsWith(q)) tier = 1000;
     else {
-      const wp = wordPrefixIndex(text, q);
+      const wp = wordPrefixIndex(label, q);
       if (wp !== -1) tier = 2000 + wp;
       else {
-        const sub = subsequenceIndex(text, q);
+        const sub = subsequenceIndex(label, q);
         if (sub !== -1) tier = 3000 + sub;
       }
     }
-    if (tier !== null) {
-      const total = tierBase + tier;
-      if (best === null || total < best) best = total;
-    }
-  });
+    if (tier !== null) best = tier;
+  }
+
+  // A keyword is an alias, not prose: a plain substring is enough to count as
+  // a hit, and — unlike the label — there is no position worth ranking by,
+  // since nothing about a keyword is ever shown or highlighted on screen.
+  // Fixed at 4000 regardless of where the substring falls, so it always
+  // outranks the worst label tier (3000 + up to label.length) and never
+  // outranks the best.
+  if (keywords && keywords.indexOf(q) !== -1) {
+    const total = 4000;
+    if (best === null || total < best) best = total;
+  }
+
   return best;
 }
 
-/** Index (in `text`) of the first word that starts with `q`, or -1. */
+/**
+ * Index (in `text`) of the first word that starts with `q`, or -1.
+ *
+ * A scan, not a split: `text.split(/[^a-z0-9]+/i)` collapses a multi-char
+ * separator ("Skin: Aurora" splits on ": ") into a single delimiter, so
+ * accumulating `w.length + 1` per word undercounts the offset by however many
+ * separator characters ran together and points at the separator instead of
+ * the word. Walking `text` and testing "is this the start of a word" at each
+ * index sidesteps that: it never has to guess a separator's width.
+ */
 function wordPrefixIndex(text, q) {
-  const words = text.split(/[^a-z0-9]+/i);
-  let at = 0;
-  for (const w of words) {
-    if (w && w.startsWith(q)) return at;
-    at += w.length + 1;
+  for (let i = 0; i < text.length; i++) {
+    const atWordStart = i === 0 || /[^a-z0-9]/i.test(text[i - 1]);
+    if (atWordStart && text.startsWith(q, i)) return i;
   }
   return -1;
 }
@@ -112,6 +141,92 @@ function subsequenceIndex(text, q) {
     from = at + 1;
   }
   return first;
+}
+
+/**
+ * The `[start, end)` ranges within `label` responsible for it matching
+ * `query`, for highlighting matched characters as the user types.
+ *
+ * Mirrors matchScore's own tiers, checked in the same order, but only ever
+ * looks at the label: a command that matched on `keywords` alone has nothing
+ * in its visible text to underline, so that case returns an empty array
+ * rather than a guess.
+ *
+ * @param {string} label
+ * @param {string} [query]
+ * @returns {[number, number][]}
+ */
+export function matchRanges(label, query) {
+  const q = String(query ?? '').trim().toLowerCase();
+  const text = String(label || '');
+  const lower = text.toLowerCase();
+  if (!q || !lower) return [];
+  if (lower === q) return [[0, text.length]];
+  if (lower.startsWith(q)) return [[0, q.length]];
+  const wp = wordPrefixIndex(lower, q);
+  if (wp !== -1) return [[wp, wp + q.length]];
+  /** @type {[number, number][]} */
+  const ranges = [];
+  let from = 0;
+  for (let i = 0; i < q.length; i++) {
+    const at = lower.indexOf(q[i], from);
+    if (at === -1) return []; // no subsequence in the label itself — a keyword-only match
+    ranges.push([at, at + 1]);
+    from = at + 1;
+  }
+  return ranges;
+}
+
+/**
+ * Group already-ordered `items` under their `group` label, one section per
+ * distinct label, in the order each label first appears. An item with no
+ * `group` lands under "Other" rather than being dropped.
+ *
+ * @param {(Record<string, any> & {group?: string})[]} items any command-shaped object; only `group` is read
+ * @returns {{heading:string, items:object[]}[]}
+ */
+export function groupByCategory(items) {
+  const order = [];
+  const byHeading = new Map();
+  items.forEach((c) => {
+    const heading = c.group || 'Other';
+    if (!byHeading.has(heading)) { byHeading.set(heading, []); order.push(heading); }
+    byHeading.get(heading).push(c);
+  });
+  return order.map((heading) => ({ heading, items: byHeading.get(heading) }));
+}
+
+/**
+ * `commands` ranked against `query`, then split into headed sections for
+ * display.
+ *
+ * An empty query gets a leading "Recent" section — the caller's own MRU list,
+ * already in recency order because rankCommands put recent commands first —
+ * followed by every other command grouped under its own category, in the
+ * order each category first appears among what's left. A non-empty query
+ * never gets a "Recent" section (relevance, not recency, decided the order)
+ * and groups the full ranked list the same way, so a category can reorder
+ * relative to the others when a better hit lands in it.
+ *
+ * Pure — same guarantees as rankCommands: no DOM, no storage.
+ *
+ * @param {{id:string,label:string,group?:string,keywords?:string}[]} commands
+ * @param {string} [query]
+ * @param {string[]} [recent]
+ * @returns {{heading:string, items:object[]}[]}
+ */
+export function paletteSections(commands, query, recent = []) {
+  const items = rankCommands(commands, query, recent);
+  const q = String(query ?? '').trim();
+  if (q) return groupByCategory(items);
+
+  const recentIds = new Set(Array.isArray(recent) ? recent : []);
+  const recentItems = items.filter((c) => recentIds.has(c.id));
+  const restItems = items.filter((c) => !recentIds.has(c.id));
+  const sections = [];
+  if (recentItems.length) sections.push({ heading: 'Recent', items: recentItems });
+  sections.push(...groupByCategory(restItems));
+  return sections;
 }
 
 /** The persisted "recently run" command ids, most recent first. Never throws. */
@@ -138,6 +253,40 @@ function isEditable(target) {
   if (!target || typeof target.tagName !== 'string') return false;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || !!target.isContentEditable;
+}
+
+/** Every icon name `icon()` knows about, for the "does this command have a real icon" guard below. */
+const ICON_SET = new Set(ICON_NAMES);
+
+/**
+ * `icon(name)`, or a neutral fallback glyph if `name` names no known icon.
+ *
+ * Tab commands ask for `icon(t.id)` directly — every built-in tab id doubles
+ * as an icon name, but a *future* registered view is under no such
+ * obligation, and a typo'd or simply new id must not throw `icon()`'s own
+ * "unknown icon name" error and take the whole palette down with it.
+ */
+function safeIcon(name, opts) {
+  return icon(ICON_SET.has(name) ? name : 'chevron-right', opts);
+}
+
+/**
+ * `text` split into plain-text and `<mark>` pieces at `ranges` (ascending,
+ * non-overlapping `[start, end)` pairs from `matchRanges`), for rendering
+ * matched-character highlighting. Returns plain `[text]` when there is
+ * nothing to highlight.
+ */
+function labelNodes(el, text, ranges) {
+  if (!ranges.length) return [text];
+  const nodes = [];
+  let cursor = 0;
+  for (const [start, end] of ranges) {
+    if (start > cursor) nodes.push(text.slice(cursor, start));
+    nodes.push(el('mark', { class: 'palette-match' }, [text.slice(start, end)]));
+    cursor = end;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
 }
 
 /**
@@ -185,57 +334,108 @@ export function mountPalette(ctx) {
   }));
   const list = el('div', { class: 'palette-list', id: 'palette-list', role: 'listbox' });
   const empty = el('div', { class: 'palette-empty', text: 'No matching commands' });
+  const footer = el('div', { class: 'palette-footer' }, [
+    el('span', { class: 'palette-hint' }, [
+      kbdIcon('arrow-up'), kbdIcon('arrow-down'),
+      el('span', { class: 'palette-hint-label', text: 'Navigate' }),
+    ]),
+    el('span', { class: 'palette-hint' }, [
+      kbdIcon('corner-down-left'),
+      el('span', { class: 'palette-hint-label', text: 'Select' }),
+    ]),
+    el('span', { class: 'palette-hint' }, [
+      kbdText('Esc'),
+      el('span', { class: 'palette-hint-label', text: 'Close' }),
+    ]),
+  ]);
+
+  function kbdIcon(name) {
+    return el('kbd', { class: 'palette-kbd' }, [icon(name, { size: 12 })]);
+  }
+  function kbdText(text) {
+    return el('kbd', { class: 'palette-kbd', text });
+  }
 
   dialog.appendChild(input);
   dialog.appendChild(list);
   dialog.appendChild(empty);
+  dialog.appendChild(footer);
   document.body.appendChild(dialog);
 
+  /**
+   * Every command the palette can run right now, one row anatomy for all of
+   * them: an icon, a label, and (only while active) an Enter hint. `group`
+   * decides which heading a command sits under on an empty query and when
+   * several commands share a rank tier.
+   */
   function buildCommands() {
     const cmds = [];
     for (const t of ctx.getTabs()) {
-      cmds.push({ id: `tab:${t.id}`, label: t.label, group: 'Go to tab', keywords: 'tab view', run: () => ctx.goToTab(t.id) });
+      cmds.push({ id: `tab:${t.id}`, label: t.label, group: 'Views', icon: t.id, keywords: 'tab view', run: () => ctx.goToTab(t.id) });
     }
     for (const r of ctx.ranges) {
-      cmds.push({ id: `range:${r.id}`, label: r.label, group: 'Quick range', keywords: 'range date filter', run: () => ctx.applyRange(r.id) });
+      cmds.push({ id: `range:${r.id}`, label: r.label, group: 'Quick range', icon: 'calendar', keywords: 'range date filter', run: () => ctx.applyRange(r.id) });
     }
     for (const s of ctx.skins) {
-      cmds.push({ id: `skin:${s.id}`, label: `Skin: ${s.name}`, group: 'Appearance', keywords: 'theme skin appearance colour color', run: () => ctx.setSkin(s.id) });
+      cmds.push({ id: `skin:${s.id}`, label: `Skin: ${s.name}`, group: 'Appearance', icon: 'panel-left', keywords: 'theme skin appearance colour color', run: () => ctx.setSkin(s.id) });
     }
     for (const m of ctx.modes) {
-      cmds.push({ id: `mode:${m.id}`, label: `Mode: ${m.label}`, group: 'Appearance', keywords: 'theme mode appearance', run: () => ctx.setMode(m.id) });
+      cmds.push({ id: `mode:${m.id}`, label: `Mode: ${m.label}`, group: 'Appearance', icon: m.id === 'dark' ? 'moon' : 'sun', keywords: 'theme mode appearance', run: () => ctx.setMode(m.id) });
     }
-    cmds.push({ id: 'export-csv', label: 'Export CSV', group: 'Export', keywords: 'csv download export', run: () => ctx.exportCsv() });
-    cmds.push({ id: 'export-html', label: 'Export HTML snapshot', group: 'Export', keywords: 'html snapshot offline export', run: () => ctx.exportHtmlInfo() });
+    cmds.push({ id: 'export-csv', label: 'Export CSV', group: 'Export', icon: 'download', keywords: 'csv download export', run: () => ctx.exportCsv() });
+    cmds.push({ id: 'export-html', label: 'Export HTML snapshot', group: 'Export', icon: 'external-link', keywords: 'html snapshot offline export', run: () => ctx.exportHtmlInfo() });
     if (ctx.canRefresh()) {
-      cmds.push({ id: 'refresh', label: 'Refresh data', group: 'Actions', keywords: 'refresh reload rescan', run: () => ctx.refresh() });
+      cmds.push({ id: 'refresh', label: 'Refresh data', group: 'Actions', icon: 'refresh', keywords: 'refresh reload rescan', run: () => ctx.refresh() });
     }
-    cmds.push({ id: 'clear-filters', label: 'Clear filters', group: 'Actions', keywords: 'reset clear filters', run: () => ctx.clearFilters() });
-    cmds.push({ id: 'copy-link', label: 'Copy deep link', group: 'Actions', keywords: 'link share url copy', run: () => ctx.copyDeepLink() });
+    cmds.push({ id: 'clear-filters', label: 'Clear filters', group: 'Actions', icon: 'filter', keywords: 'reset clear filters', run: () => ctx.clearFilters() });
+    cmds.push({ id: 'copy-link', label: 'Copy deep link', group: 'Actions', icon: 'external-link', keywords: 'link share url copy', run: () => ctx.copyDeepLink() });
     return cmds;
   }
 
-  /** DOM rows in the same order as `items`, so setActive() never has to rebuild the list to move the highlight. */
+  /** DOM rows in the same flat order as `items`, so setActive() never has to rebuild the list to move the highlight. */
   let rowEls = [];
 
-  /** Rebuild the list from the current query. Only this touches `list.textContent`, so the arrow keys and a hover never reset scroll position. */
+  /**
+   * Rebuild the list from the current query. Only this touches
+   * `list.textContent`, so the arrow keys and a hover never reset scroll
+   * position. Renders `paletteSections()`'s groups as a heading followed by
+   * its rows; `items` stays the flat, sectioned order so index arithmetic
+   * elsewhere (activeIndex, runIndex) never has to know about sections.
+   */
   function rebuild() {
-    items = rankCommands(allCommands, input.value, recent);
+    const query = input.value;
+    const sections = paletteSections(allCommands, query, recent);
+    items = sections.flatMap((s) => s.items);
     list.textContent = '';
     rowEls = [];
-    empty.style.display = items.length ? 'none' : '';
-    activeIndex = items.length ? Math.min(activeIndex, items.length - 1) : 0;
-    items.forEach((c, i) => {
-      const row = el('div', {
-        class: 'palette-row', role: 'option', id: `palette-opt-${i}`, 'aria-selected': 'false',
-      }, [
-        el('span', { class: 'palette-row-label', text: c.label }),
-        c.group ? el('span', { class: 'palette-row-group', text: c.group }) : null,
-      ]);
-      row.addEventListener('mousemove', () => setActive(i));
-      row.addEventListener('mousedown', (ev) => { ev.preventDefault(); runIndex(i); });
-      list.appendChild(row);
-      rowEls.push(row);
+    const hasItems = items.length > 0;
+    empty.style.display = hasItems ? 'none' : '';
+    if (!hasItems) {
+      const q = query.trim();
+      empty.textContent = q ? `No matches for "${q}"` : 'No commands available';
+    }
+    activeIndex = hasItems ? Math.min(activeIndex, items.length - 1) : 0;
+
+    let rowIndex = 0;
+    sections.forEach((section, si) => {
+      const headingId = `palette-grp-${si}`;
+      const group = el('div', { class: 'palette-group', role: 'group', 'aria-labelledby': headingId });
+      group.appendChild(el('div', { class: 'palette-heading', id: headingId, text: section.heading }));
+      section.items.forEach((c) => {
+        const i = rowIndex++;
+        const row = el('div', {
+          class: 'palette-row', role: 'option', id: `palette-opt-${i}`, 'aria-selected': 'false',
+        }, [
+          el('span', { class: 'palette-row-icon', 'aria-hidden': 'true' }, [safeIcon(c.icon)]),
+          el('span', { class: 'palette-row-label' }, labelNodes(el, c.label, matchRanges(c.label, query))),
+          el('kbd', { class: 'palette-kbd palette-row-hint', 'aria-hidden': 'true' }, [icon('corner-down-left', { size: 12 })]),
+        ]);
+        row.addEventListener('mousemove', () => setActive(i));
+        row.addEventListener('mousedown', (ev) => { ev.preventDefault(); runIndex(i); });
+        group.appendChild(row);
+        rowEls.push(row);
+      });
+      list.appendChild(group);
     });
     setActive(activeIndex);
   }
