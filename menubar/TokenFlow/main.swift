@@ -5,13 +5,18 @@
 //    · SF Pro Rounded numerals for hero figures; monospaced digits for tables
 //    · semantic palette: indigo brand accent, green/orange/red state colors,
 //      a fixed per-provider hue set; dark/light via system semantics only
-//    · first-party Swift Charts for the sparkline — no hand-drawn chart code
+//    · first-party Swift Charts for the day-wise trend; the per-source 24-hour
+//      sparklines are drawn as SwiftUI Paths, because a Chart per row costs
+//      more than the six polylines it would draw
 //
 //  Everything is local. Nothing leaves the machine.
 
 import AppKit
 @preconcurrency import SwiftUI
 import Charts
+// Carbon is the only supported way to claim a system-wide hotkey that fires
+// while another app is frontmost. Cocoa has no equivalent.
+import Carbon.HIToolbox
 
 // ============================================================ data model ===
 
@@ -99,6 +104,95 @@ struct TFStatus: Decodable {
         var ratio: Double?
     }
 
+    // ---- the glanceable sections (docs/roadmap.md §3) ----------------------
+    //
+    // Every one of these is OPTIONAL, top to bottom. A status.json written
+    // before they existed must still decode, and one written by a slightly
+    // different CLI must not blank the whole menu bar over a field it spells
+    // another way: a throwing decode here costs the user every other section
+    // too, which is a far worse failure than a missing branch name.
+
+    /// The guard's opinion of one session.
+    struct GuardVerdict: Decodable {
+        var level: String?          // "ok" | "warn" | "block"
+        var reasons: [String]?
+        var declared: Bool?
+    }
+
+    struct LiveSession: Decodable {
+        var sessionId: String?
+        var source: String?
+        var provider: String?
+        var model: String?
+        var project: String?
+        var repository: String?
+        var branch: String?
+        var startedAt: String?
+        var lastActivityAt: String?
+        var turns: Int?
+        var subagentTurns: Int?
+        var costUsd: Double?
+        var coverage: Double?
+        var contextTokens: Double?
+        var contextShare: Double?
+        /// `guard` is a Swift keyword, so the wire name is mapped explicitly.
+        var guardState: GuardVerdict?
+
+        enum CodingKeys: String, CodingKey {
+            case sessionId, source, provider, model, project, repository, branch
+            case startedAt, lastActivityAt, turns, subagentTurns, costUsd
+            case coverage, contextTokens, contextShare
+            case guardState = "guard"
+        }
+    }
+
+    struct LiveSessions: Decodable {
+        var asOf: String?
+        var windowMinutes: Int?
+        var sessions: [LiveSession]?
+    }
+
+    struct ReceiptItem: Decodable {
+        var repo: String?
+        var branch: String?
+        var costUsd: Double?
+        var turns: Int?
+        var sessions: Int?
+    }
+
+    struct ReceiptsToday: Decodable {
+        var asOf: String?
+        var totalCostUsd: Double?
+        var items: [ReceiptItem]?
+    }
+
+    struct GuardPolicy: Decodable {
+        var warnCostUsd: Double?
+        var maxCostUsd: Double?
+        var warnContextTokens: Double?
+        var maxContextTokens: Double?
+        var warnMarginalUsd: Double?
+    }
+
+    struct GuardBlock: Decodable {
+        struct Verdict: Decodable {
+            var level: String?
+            var sessionId: String?
+            var at: String?
+            var reasons: [String]?
+            var source: String?
+        }
+        var policy: GuardPolicy?
+        var declared: Bool?
+        var lastVerdict: Verdict?
+    }
+
+    struct Sparklines: Decodable {
+        var hours: [String]?
+        var bySource: [String: [Double]]?
+        var costBySource: [String: [Double]]?
+    }
+
     var generatedAt: String?
     var demo: Bool?
     var usage: [String: UsageSlice]?
@@ -118,6 +212,10 @@ struct TFStatus: Decodable {
     var velocity: VelocityInfo?
     var recentDays: [RecentDay]?
     var milestones: [Milestone]?
+    var liveSessions: LiveSessions?
+    var receiptsToday: ReceiptsToday?
+    var `guard`: GuardBlock?
+    var sparklines: Sparklines?
 
     var lastRefreshDate: Date? { parseISO(freshness?.lastRefresh) }
 }
@@ -347,21 +445,78 @@ private func relativeAge(_ msAgo: Double?) -> String {
     return "\(hr / 24)d ago"
 }
 
+/// Milliseconds since an ISO stamp, for `relativeAge`.
+private func msSince(_ iso: String?) -> Double? {
+    guard let d = parseISO(iso) else { return nil }
+    return Date().timeIntervalSince(d) * 1000
+}
+
+/// Money for the glance rows, blank when there is no price.
+///
+/// `money(nil)` returns an em dash, and the copy rules forbid em and en dashes
+/// in anything a user reads. An empty cell already says "not priced".
+private func moneyOrBlank(_ n: Double?) -> String {
+    guard let n, n.isFinite else { return "" }
+    return money(n)
+}
+
+/// A plain decimal the CLI reads back with `Number()`.
+///
+/// The guard spec is comma-separated, so the value can never carry a comma,
+/// and it must not be written in exponent form either.
+private func plainNumber(_ v: Double) -> String {
+    if v == v.rounded() && abs(v) < 1e15 { return String(Int(v)) }
+    var s = String(format: "%.4f", v)
+    while s.hasSuffix("0") { s.removeLast() }
+    if s.hasSuffix(".") { s.removeLast() }
+    return s
+}
+
+// -------------------------------------------------------------- guard level --
+
+/// Severity of a guard level, so an escalation can be told from a recovery.
+private func guardRank(_ level: String?) -> Int {
+    switch level {
+    case "block": return 2
+    case "warn": return 1
+    default: return 0
+    }
+}
+
+/// The status colour for a guard level. Status colours mean status and
+/// nothing else, so this is the only place a guard level picks up a hue.
+private func guardColor(_ level: String?) -> Color {
+    switch level {
+    case "block": return TF.bad
+    case "warn": return TF.warn
+    default: return TF.good
+    }
+}
+
+/// What the coloured dot means, spelled out for the tooltip.
+private func guardHelp(_ level: String?) -> String {
+    switch level {
+    case "block": return "Guard would stop this session."
+    case "warn": return "Guard is warning about this session."
+    default: return "Within your caps."
+    }
+}
+
 // ========================================================== design tokens ===
 
 enum TF {
     static let width: CGFloat = 356
     static let pad: CGFloat = 14
-    // Matches the web dashboard's Aurora accent (#8f9dff dark / #3d4dd6 light)
-    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x8f / 255.0, green: 0x9d / 255.0, blue: 0xff / 255.0, alpha: 1)
-            : NSColor(srgbRed: 0x3d / 255.0, green: 0x4d / 255.0, blue: 0xd6 / 255.0, alpha: 1)
-    })
-    static let good = Color.green
-    static let warn = Color.orange
-    static let bad = Color.red
-    static let palette: [Color] = [.indigo, .teal, .purple, .orange, .pink]
+    // Every colour comes from design/tokens.yaml via DesignTokens.swift, so the
+    // menu bar and the dashboard cannot disagree about what the accent is.
+    static let accent = DesignTokens.accent.color
+    static let accentSolid = DesignTokens.accentSolid.color
+    static let accentInk = DesignTokens.accentInk.color
+    static let good = DesignTokens.good
+    static let warn = DesignTokens.warning
+    static let bad = DesignTokens.critical
+    /// Categorical steps in fixed order, assigned by entity — never by rank.
+    static let palette: [Color] = (0..<8).map { DesignTokens.series($0) }
 
     static func cardBG(_ scheme: ColorScheme) -> Color {
         scheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.045)
@@ -380,6 +535,72 @@ enum TF {
     static let microFont = Font.system(size: 9.5)
 }
 
+// ============================================================== density =====
+
+/// How tightly the popover is drawn.
+///
+/// `comfortable` reproduces the layout that shipped before this preference
+/// existed, value for value, so turning it on changes nothing. `compact` takes
+/// one step down the generated type scale and one step down the space scale,
+/// for a laptop screen where the popover would otherwise scroll.
+enum TFDensity: String, CaseIterable {
+    case compact, comfortable
+
+    static let defaultsKey = "density"
+    static var stored: TFDensity {
+        TFDensity(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .comfortable
+    }
+    var title: String { self == .compact ? "Compact" : "Comfortable" }
+    private var tight: Bool { self == .compact }
+
+    // space — every value is a step of DesignTokens.space
+    var pad: CGFloat { tight ? DesignTokens.space[4] : TF.pad }           // 10 : 14
+    var sectionGap: CGFloat { tight ? DesignTokens.space[3] : 11 }        // 8 : 11
+    var rowGap: CGFloat { tight ? DesignTokens.space[1] : DesignTokens.space[2] } // 4 : 6
+    var cardPadH: CGFloat { tight ? DesignTokens.space[2] : DesignTokens.space[4] } // 6 : 10
+    var cardPadV: CGFloat { tight ? DesignTokens.space[1] : 7 }           // 4 : 7
+    var rowHeight: CGFloat { tight ? 17 : 20 }
+    var meterHeight: CGFloat { tight ? 4 : 5 }
+    var sparkHeight: CGFloat { tight ? 16 : 22 }
+
+    // type — one rung of the generated scale apart, never below the smallest
+    var microSize: CGFloat { DesignTokens.fsMicro }                       // 10.5
+    var labelSize: CGFloat { tight ? DesignTokens.fsMicro : DesignTokens.fsLabel }   // 10.5 : 11.5
+    var bodySize: CGFloat { tight ? DesignTokens.fsLabel : DesignTokens.fsCaption }  // 11.5 : 12.5
+    var titleSize: CGFloat { tight ? DesignTokens.fsCaption : DesignTokens.fsBody }  // 12.5 : 13.5
+
+    func micro(_ w: Font.Weight = .regular) -> Font { .system(size: microSize, weight: w) }
+    func label(_ w: Font.Weight = .regular) -> Font { .system(size: labelSize, weight: w) }
+    func body(_ w: Font.Weight = .regular) -> Font { .system(size: bodySize, weight: w) }
+    func figure(_ w: Font.Weight = .semibold) -> Font {
+        .system(size: bodySize, weight: w).monospacedDigit()
+    }
+    func microFigure(_ w: Font.Weight = .semibold) -> Font {
+        .system(size: microSize, weight: w).monospacedDigit()
+    }
+}
+
+// ========================================================= global hotkey ====
+
+/// The shortcut that toggles the popover from anywhere.
+///
+/// A system-wide hotkey is a scarce resource shared with every other app, so
+/// TokenFlow claims one and offers a single alternative rather than a full
+/// recorder that could shadow something important.
+enum TFHotkey: String, CaseIterable {
+    case controlOptionT, controlCommandT
+
+    static let defaultsKey = "hotkey"
+    static var stored: TFHotkey {
+        TFHotkey(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .controlOptionT
+    }
+    var title: String { self == .controlOptionT ? "⌃⌥T" : "⌃⌘T" }
+    var keyCode: UInt32 { UInt32(kVK_ANSI_T) }
+    var modifiers: UInt32 {
+        self == .controlOptionT ? UInt32(controlKey | optionKey) : UInt32(controlKey | cmdKey)
+    }
+}
+
 // ============================================================ state/model ===
 
 final class StatusModel: ObservableObject {
@@ -389,9 +610,48 @@ final class StatusModel: ObservableObject {
     /// Read once per load, not per render — liveness costs a file read.
     @Published var watcherLive = false
     @Published var dashboardStarting = false
+
+    /// Called when a live session's guard level RISES to warn or block.
+    /// The app delegate hangs the transient alert card off this.
+    var onEscalation: ((TFStatus.LiveSession) -> Void)?
+    /// Guard level per session id as of the previous successful load.
+    /// `nil` means "no load has succeeded yet", which is not the same as
+    /// "every session was fine" and must not raise an alert.
+    private var seenGuardLevels: [String: Int]?
+
     func load() {
-        status = loadStatus()
+        let next = loadStatus()
+        let escalated = next.flatMap { escalation(in: $0) }
+        status = next
         watcherLive = watcherLockIsLive()
+        if let escalated { onEscalation?(escalated) }
+    }
+
+    /// The most severe session whose guard level rose since the last load.
+    ///
+    /// Rises only. Going from block back to warn is a recovery, and a card
+    /// that slides out to announce good news would train people to ignore it.
+    /// A session appearing already at warn counts as a rise, because the
+    /// crossing happened while we were watching; a session already at warn on
+    /// the FIRST load does not, or every launch would fire a card.
+    private func escalation(in next: TFStatus) -> TFStatus.LiveSession? {
+        let sessions = next.liveSessions?.sessions ?? []
+        var levels: [String: Int] = [:]
+        for s in sessions {
+            guard let id = s.sessionId else { continue }
+            levels[id] = guardRank(s.guardState?.level)
+        }
+        defer { seenGuardLevels = levels }
+        guard let before = seenGuardLevels else { return nil }
+
+        var best: (session: TFStatus.LiveSession, rank: Int)?
+        for s in sessions {
+            guard let id = s.sessionId else { continue }
+            let now = guardRank(s.guardState?.level)
+            guard now > 0, now > (before[id] ?? 0) else { continue }
+            if best == nil || now > best!.rank { best = (s, now) }
+        }
+        return best?.session
     }
 }
 
@@ -402,6 +662,12 @@ struct AppActions {
     var runSetup: () -> Void = {}
     var cycleTheme: () -> Void = {}
     var quit: () -> Void = {}
+    /// Ask for a dollar figure and hand it to `tokenflow guard --set`.
+    var raiseCostCap: () -> Void = {}
+    /// Clear all five guard thresholds at once.
+    var clearCaps: () -> Void = {}
+    /// Persist the shortcut and re-register it with Carbon.
+    var setHotkey: (TFHotkey) -> Void = { _ in }
 }
 
 // ============================================================ app delegate ==
@@ -413,11 +679,17 @@ struct AppActions {
     private var outsideMonitor: Any?
     private var insideMonitor: Any?
     private var keyMonitor: Any?
+    /// The transient guard card. One at a time, never modal.
+    private let alerts = TFAlertPanel()
+    private var hotKeyRef: EventHotKeyRef?
+    private var hotKeyHandler: EventHandlerRef?
 
     func applicationWillTerminate(_ note: Notification) {
         if let m = outsideMonitor { NSEvent.removeMonitor(m) }
         if let m = insideMonitor { NSEvent.removeMonitor(m) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        if let ref = hotKeyRef { UnregisterEventHotKey(ref) }
+        if let h = hotKeyHandler { RemoveEventHandler(h) }
     }
 
     lazy var actions: AppActions = AppActions(
@@ -426,7 +698,10 @@ struct AppActions {
         toggleWatcher: { [weak self] in self?.toggleWatcherAction() },
         runSetup: { [weak self] in self?.runCLI(["setup"]) },
         cycleTheme: { [weak self] in self?.cycleThemeAction() },
-        quit: { NSApp.terminate(nil) })
+        quit: { NSApp.terminate(nil) },
+        raiseCostCap: { [weak self] in self?.raiseCostCapAction() },
+        clearCaps: { [weak self] in self?.clearCapsAction() },
+        setHotkey: { [weak self] hk in self?.setHotkeyAction(hk) })
 
     // Appearance override, persisted in defaults. system → light → dark → …
     // Applied by setting NSApp.appearance; nil = follow the system.
@@ -505,6 +780,10 @@ struct AppActions {
                   let hitWindow = ev.window,
                   let contentWindow = self.popover.contentViewController?.view.window,
                   hitWindow !== contentWindow,
+                  // The transient alert card is ours too. Without this, a click
+                  // on the card closes the popover and the card's own tap
+                  // handler reopens it a frame later.
+                  !self.alerts.owns(hitWindow),
                   !String(describing: type(of: hitWindow)).contains("StatusBar")
             else { return ev }
             self.popover.performClose(nil)
@@ -519,7 +798,12 @@ struct AppActions {
             self.popover.performClose(nil)
             return nil // consumed
         }
+        // Set BEFORE the first load: the model suppresses alerts on the load
+        // that has nothing to compare against, so this cannot fire a card for
+        // a session that was already warning when the app launched.
+        model.onEscalation = { [weak self] session in self?.showGuardAlert(session) }
         model.load()
+        installHotkey(TFHotkey.stored)
         checkDependencies()
         renderTitle()
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -531,11 +815,132 @@ struct AppActions {
     }
 
     @objc private func togglePopover(_ sender: Any?) {
+        // The click path animates; the keyboard path does not, so the flag is
+        // set on entry to each rather than saved and restored.
+        popover.animates = true
         if popover.isShown { popover.performClose(nil); return }
         model.load()
         renderTitle()
         guard let button = item.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    // ---- global hotkey ------------------------------------------------------
+
+    /// Claim the shortcut, replacing whatever was claimed before.
+    ///
+    /// Carbon, because there is no Cocoa API for a hotkey that fires while
+    /// another application is frontmost. The event handler is installed once;
+    /// only the registration is swapped when the preference changes.
+    private func installHotkey(_ hk: TFHotkey) {
+        if let ref = hotKeyRef {
+            UnregisterEventHotKey(ref)
+            hotKeyRef = nil
+        }
+        if hotKeyHandler == nil {
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                     eventKind: UInt32(kEventHotKeyPressed))
+            // A @convention(c) callback captures nothing, so the delegate
+            // travels as userData and is recovered unretained.
+            InstallEventHandler(GetApplicationEventTarget(), { _, _, userData in
+                guard let userData else { return noErr }
+                let me = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+                DispatchQueue.main.async { me.hotkeyFired() }
+                return noErr
+            }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &hotKeyHandler)
+        }
+        let id = EventHotKeyID(signature: OSType(0x5446_4C57 /* 'TFLW' */), id: 1)
+        RegisterEventHotKey(hk.keyCode, hk.modifiers, id,
+                            GetApplicationEventTarget(), 0, &hotKeyRef)
+    }
+
+    /// Toggle with no open or close animation. A keyboard action should land
+    /// the moment the keys go down.
+    fileprivate func hotkeyFired() {
+        popover.animates = false
+        if popover.isShown { popover.performClose(nil); return }
+        model.load()
+        renderTitle()
+        guard let button = item.button else { return }
+        // An accessory app is never frontmost, so without this the popover
+        // opens unfocused and the Escape monitor never sees a key.
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    private func setHotkeyAction(_ hk: TFHotkey) {
+        UserDefaults.standard.set(hk.rawValue, forKey: TFHotkey.defaultsKey)
+        installHotkey(hk)
+    }
+
+    // ---- transient guard alert ---------------------------------------------
+
+    /// A live session's guard level just rose. Show the card under the status
+    /// item; clicking it opens the popover on the section that explains why.
+    private func showGuardAlert(_ session: TFStatus.LiveSession) {
+        guard let button = item.button, let win = button.window else { return }
+        let anchor = win.convertToScreen(button.convert(button.bounds, to: nil))
+        alerts.show(session: session, density: TFDensity.stored, anchor: anchor) { [weak self] in
+            guard let self, !self.popover.isShown else { return }
+            self.togglePopover(nil)
+        }
+    }
+
+    // ---- guard caps ---------------------------------------------------------
+
+    /// Ask for a dollar figure, then write it through the CLI.
+    ///
+    /// The app never edits config.yaml itself: `tokenflow guard --set` is the
+    /// one writer, so the menu bar and the hook can never disagree about what
+    /// the caps are.
+    private func raiseCostCapAction() {
+        let alert = NSAlert()
+        alert.messageText = "Raise the cost cap"
+        alert.informativeText = "The guard stops a session once it passes this figure. Enter dollars."
+        alert.addButton(withTitle: "Set cap")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.placeholderString = "for example 50"
+        if let current = model.status?.guard?.policy?.maxCostUsd, current.isFinite {
+            field.stringValue = plainNumber(current)
+        }
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        // An accessory app has no key window, so the sheet would come up with
+        // the text field unfocused and look frozen.
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let raw = field.stringValue
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: ",", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        guard let value = Double(raw), value.isFinite, value > 0 else {
+            model.actionError = "Enter a dollar amount above zero."
+            return
+        }
+        setGuard("maxCostUsd=\(plainNumber(value))")
+    }
+
+    /// Clear all five thresholds. An empty value removes a key, which is the
+    /// documented contract of `applySet` in src/commands/guard.js.
+    private func clearCapsAction() {
+        let spec = ["warnCostUsd", "maxCostUsd", "warnContextTokens",
+                    "maxContextTokens", "warnMarginalUsd"]
+            .map { "\($0)=" }
+            .joined(separator: ",")
+        setGuard(spec)
+    }
+
+    /// Write a guard spec, then run one refresh cycle.
+    ///
+    /// `--set` writes config.yaml; status.json only learns the new policy on
+    /// the next cycle, so without the second run the popover would keep
+    /// showing the caps the user just changed.
+    private func setGuard(_ spec: String) {
+        runCLI(["guard", "--set", spec]) { [weak self] in
+            self?.runCLI(["watch", "--once"])
+        }
     }
 
     private var watcherRunning: Bool { model.watcherLive }
@@ -579,9 +984,9 @@ struct AppActions {
         }
         let tint: NSColor; let prefix: String
         switch head.kind {
-        case "exceeded": tint = .systemRed; prefix = "✗ "
-        case "warn": tint = .systemOrange; prefix = "▲ "
-        case "ok": tint = .systemGreen; prefix = "● "
+        case "exceeded": tint = NSColor(dkHex: DesignTokens.StatusHex.critical); prefix = "✗ "
+        case "warn": tint = NSColor(dkHex: DesignTokens.StatusHex.warning); prefix = "▲ "
+        case "ok": tint = NSColor(dkHex: DesignTokens.StatusHex.good); prefix = "● "
         default: tint = .labelColor; prefix = ""
         }
         let out = NSMutableAttributedString(
@@ -637,7 +1042,9 @@ struct AppActions {
         return proc
     }
 
-    private func runCLI(_ args: [String]) {
+    /// Run one CLI command. `then` runs after a SUCCESSFUL exit, once the
+    /// status file has been re-read, so one action can chain into a refresh.
+    private func runCLI(_ args: [String], then next: (() -> Void)? = nil) {
         guard !model.refreshing, let proc = makeProcess(args, detached: false) else { return }
         model.refreshing = true
         renderTitle()
@@ -645,11 +1052,13 @@ struct AppActions {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.model.refreshing = false
-                if p.terminationReason == .uncaughtSignal || p.terminationStatus != 0 {
+                let failed = p.terminationReason == .uncaughtSignal || p.terminationStatus != 0
+                if failed {
                     self.model.actionError = "\(args.first ?? "command") exited (\(p.terminationStatus))"
                 }
                 self.model.load()
                 self.renderTitle()
+                if !failed { next?() }
             }
         }
         do { try proc.run() } catch {
@@ -936,11 +1345,10 @@ private struct BrandRow: View {
         HStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(LinearGradient(colors: [.indigo, .teal],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(TF.accentSolid)
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(TF.accentInk)
             }.frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -969,18 +1377,19 @@ private struct MilestoneBanner: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(m.title ?? "Milestone")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(TF.accentInk)
                 Text(m.detail ?? "")
                     .font(.system(size: 10.5))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(TF.accentInk.opacity(0.85))
                     .lineLimit(2)
             }
             Spacer()
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
+        // A solid accent surface: the system allows a gradient only behind a
+        // single hero number, never behind text or a mark.
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(LinearGradient(colors: [.indigo, .purple],
-                                 startPoint: .topLeading, endPoint: .bottomTrailing)))
+            .fill(TF.accentSolid))
     }
 }
 
@@ -1136,6 +1545,7 @@ private struct ProviderRow: View {
     let index: Int
     let row: TFStatus.ProviderRow
     let maxTokens: Double
+    var d: TFDensity = .comfortable
 
     private var costText: String {
         (row.cost ?? row.costMeasured).map(money) ?? ""
@@ -1155,7 +1565,7 @@ private struct ProviderRow: View {
                 .foregroundStyle(costText.isEmpty ? AnyShapeStyle(Color.clear) : AnyShapeStyle(Color.secondary))
                 .frame(width: 48, alignment: .trailing)
         }
-        .frame(height: 20)
+        .frame(height: d.rowHeight)
     }
 }
 
@@ -1165,6 +1575,7 @@ private struct SourceRow: View {
     let index: Int
     let row: TFStatus.ProviderRow
     let maxTokens: Double
+    var d: TFDensity = .comfortable
 
     private var costText: String {
         (row.cost ?? row.costMeasured).map(money) ?? ""
@@ -1184,13 +1595,14 @@ private struct SourceRow: View {
                 .foregroundStyle(costText.isEmpty ? AnyShapeStyle(Color.clear) : AnyShapeStyle(Color.secondary))
                 .frame(width: 48, alignment: .trailing)
         }
-        .frame(height: 20)
+        .frame(height: d.rowHeight)
     }
 }
 
 private struct ModelRow: View {
     let row: TFStatus.ProviderRow
     let maxTokens: Double
+    var d: TFDensity = .comfortable
 
     private var costText: String {
         (row.cost ?? row.costMeasured).map(money) ?? ""
@@ -1208,7 +1620,7 @@ private struct ModelRow: View {
                 .foregroundStyle(costText.isEmpty ? AnyShapeStyle(Color.clear) : AnyShapeStyle(Color.secondary))
                 .frame(width: 48, alignment: .trailing)
         }
-        .frame(height: 20)
+        .frame(height: d.rowHeight)
     }
 }
 
@@ -1279,6 +1691,7 @@ private struct NoteText: View {
 
 private struct ForecastLine: View {
     let icon: String; let label: String; let tokens: Double?; let cost: Double?
+    var d: TFDensity = .comfortable
     var body: some View {
         // Fixed-width columns so every row's figures align vertically:
         // [icon+label] grows | tokens right-aligned (72) | cost right-aligned (56)
@@ -1294,11 +1707,12 @@ private struct ForecastLine: View {
                 .font(TF.figure(11)).foregroundStyle(.secondary)
                 .frame(width: 56, alignment: .trailing)
                 .monospacedDigit()
-        }.frame(height: 20)
+        }.frame(height: d.rowHeight)
     }
 }
 private struct ForecastBlock: View {
     let f: TFStatus.Forecast
+    var d: TFDensity = .comfortable
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "chart.line.uptrend.xyaxis")
@@ -1309,10 +1723,10 @@ private struct ForecastBlock: View {
                 // month-end estimate rides on the Tomorrow row's cost column
                 // so both rows share one aligned grid — no floating column
                 ForecastLine(icon: "sun.max", label: "Tomorrow", tokens: f.tomorrow,
-                             cost: f.monthEndCost)
+                             cost: f.monthEndCost, d: d)
                 if let wk = f.next7days {
                     ForecastLine(icon: "calendar", label: "Next week",
-                                 tokens: wk, cost: f.next7daysCost)
+                                 tokens: wk, cost: f.next7daysCost, d: d)
                 }
                 HStack {
                     Text("Confidence: \(f.confidence ?? "?")\(f.n.map { " (\($0)-day trend)" } ?? "")")
@@ -1445,6 +1859,7 @@ private struct FooterRow: View {
 private struct ProviderWindowRow: View {
     let index: Int
     let w: TFStatus.ProviderWindow
+    var d: TFDensity = .comfortable
     @Environment(\.colorScheme) private var cs
 
     private func cell(_ slice: TFStatus.WindowStat?) -> some View {
@@ -1464,17 +1879,18 @@ private struct ProviderWindowRow: View {
             Spacer(minLength: 6)
             cell(w.h5); cell(w.d1); cell(w.d7)
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
+        .padding(.horizontal, d.cardPadH).padding(.vertical, d.cardPadV)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(TF.cardBG(cs)))
     }
 }
 
 private struct SessionBlockRow: View {
     let b: TFStatus.SessionBlock
+    var d: TFDensity = .comfortable
 
     var body: some View {
         let expired = (b.resetsInMs ?? 0) <= 0
-        let tint = b.key == "anthropic" ? Color.orange : Color.teal
+        let tint = b.key == "anthropic" ? TF.palette[1] : TF.palette[2]
         return HStack(spacing: 10) {
             Image(systemName: b.key == "anthropic" ? "c.circle.fill" : "z.circle.fill")
                 .font(.system(size: 16, weight: .semibold))
@@ -1493,12 +1909,504 @@ private struct SessionBlockRow: View {
                 Text(expired ? "block elapsed" : "resets in \(countdown(b.resetsInMs))")
                     .font(TF.microFont).monospacedDigit()
                     .foregroundStyle(expired ? AnyShapeStyle(Color.secondary)
-                                             : AnyShapeStyle(Color.orange))
+                                             : AnyShapeStyle(TF.warn))
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
+        .padding(.horizontal, d.cardPadH).padding(.vertical, d.cardPadV)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(tint.opacity(0.07)))
+    }
+}
+
+// ============================================= glance sections (roadmap §3) ==
+//
+// Live ticker, today's receipts, guard state and per-source sparklines. Each
+// one is drawn only when its key is PRESENT in status.json: a file written
+// before these existed shows exactly what it showed before, not three new
+// rows apologising for data it was never asked to carry. A key that is present
+// but empty is a different fact, and gets an empty state that says so.
+
+/// How much of the context window this session is re-sending.
+private struct ContextGauge: View {
+    let tokens: Double?
+    let cap: Double
+    let d: TFDensity
+
+    var body: some View {
+        // The fill is the accent, never a status colour: this is a quantity,
+        // and status hues are reserved for the guard dot beside it.
+        VStack(alignment: .trailing, spacing: 2) {
+            TFMeter(fraction: cap > 0 ? max(0, tokens ?? 0) / cap : 0,
+                    color: TF.accent, height: d.meterHeight)
+                .frame(width: 52)
+            Text(label).font(d.micro()).foregroundStyle(.secondary).monospacedDigit()
+        }
+    }
+
+    private var label: String {
+        guard let t = tokens, t.isFinite else { return "of \(compactTokens(cap))" }
+        return "\(compactTokens(t)) of \(compactTokens(cap))"
+    }
+}
+
+private struct LiveSessionRow: View {
+    let session: TFStatus.LiveSession
+    let contextCap: Double
+    let d: TFDensity
+    @Environment(\.colorScheme) private var cs
+
+    private var level: String? { session.guardState?.level }
+    private var place: String {
+        session.project ?? session.repository ?? "unknown project"
+    }
+    private var title: String {
+        guard let b = session.branch, !b.isEmpty else { return place }
+        return "\(place) · \(b)"
+    }
+    private var subtitle: String {
+        var bits: [String] = []
+        if let m = session.model, !m.isEmpty { bits.append(m) }
+        bits.append("\(session.turns ?? 0) turns")
+        if let sub = session.subagentTurns, sub > 0 { bits.append("\(sub) subagent") }
+        return bits.joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack(spacing: DesignTokens.space[3]) {
+            Circle().fill(guardColor(level)).frame(width: 7, height: 7)
+                .help(guardHelp(level))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(d.body(.medium)).lineLimit(1).truncationMode(.middle)
+                Text(subtitle).font(d.micro()).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: DesignTokens.space[2])
+            ContextGauge(tokens: session.contextTokens, cap: contextCap, d: d)
+            Text(moneyOrBlank(session.costUsd))
+                .font(d.figure()).frame(width: 46, alignment: .trailing)
+        }
+        .padding(.horizontal, d.cardPadH).padding(.vertical, d.cardPadV)
+        .background(RoundedRectangle(cornerRadius: DesignTokens.radiusSm, style: .continuous)
+            .fill(TF.cardBG(cs)))
+    }
+}
+
+private struct ReceiptRow: View {
+    let index: Int
+    let item: TFStatus.ReceiptItem
+    let d: TFDensity
+
+    var body: some View {
+        HStack(spacing: DesignTokens.space[3]) {
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(TF.palette[index % TF.palette.count])
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.repo ?? "unknown repo").font(d.body(.medium)).lineLimit(1)
+                Text(item.branch ?? "no branch").font(d.micro())
+                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: DesignTokens.space[2])
+            Text("\(item.turns ?? 0) turns")
+                .font(d.microFigure(.regular)).foregroundStyle(.secondary)
+            Text(moneyOrBlank(item.costUsd))
+                .font(d.figure()).frame(width: 46, alignment: .trailing)
+        }
+        .padding(.vertical, d.cardPadV / 2)
+    }
+}
+
+/// A small pill button, for the two guard actions.
+private struct GlanceButton: View {
+    let title: String
+    let d: TFDensity
+    var prominent = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: d.labelSize, weight: .semibold))
+                .padding(.horizontal, DesignTokens.space[4])
+                .padding(.vertical, DesignTokens.space[1])
+                .background(Capsule().fill(prominent
+                    ? AnyShapeStyle(TF.accent)
+                    : AnyShapeStyle(Color.primary.opacity(0.07))))
+                .foregroundStyle(prominent
+                    ? AnyShapeStyle(TF.accentInk)
+                    : AnyShapeStyle(Color.primary))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// One source's last 24 hours, drawn as a polyline over a muted baseline.
+private struct SparkPath: View {
+    let points: [Double]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let peak = max(points.max() ?? 0, 1)
+            ZStack {
+                Path { p in
+                    p.move(to: CGPoint(x: 0, y: h - 0.5))
+                    p.addLine(to: CGPoint(x: w, y: h - 0.5))
+                }
+                .stroke(DesignTokens.grid.color, lineWidth: 1)
+
+                Path { p in
+                    guard points.count > 1 else { return }
+                    for (i, v) in points.enumerated() {
+                        let x = w * CGFloat(i) / CGFloat(points.count - 1)
+                        let y = h - 1 - (h - 3) * CGFloat(min(1, max(0, v) / peak))
+                        if i == 0 { p.move(to: CGPoint(x: x, y: y)) }
+                        else { p.addLine(to: CGPoint(x: x, y: y)) }
+                    }
+                }
+                .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
+        }
+    }
+}
+
+/// One source id, its polyline, its 24-hour totals.
+private struct SparkSeries: Identifiable {
+    let id: String
+    let name: String
+    /// Alphabetical position among ALL source ids. The index is what is
+    /// carried, not the resolved colour: the index is the invariant worth
+    /// holding, and a dark/light pair has to resolve at draw time anyway.
+    /// `nil` marks the summed "other" row, which is not one entity.
+    let colorIndex: Int?
+    let points: [Double]
+    let tokens: Double
+    let cost: Double?
+
+    var color: Color {
+        guard let colorIndex else { return DesignTokens.textMuted.color }
+        return DesignTokens.series(colorIndex)
+    }
+}
+
+/// Build at most five source series plus a summed "other".
+///
+/// Colour comes from the source's ALPHABETICAL position, not its rank, so a
+/// quiet hour that reorders the list never repaints a source another colour.
+/// Which five are shown is by volume; "other" takes the muted text token
+/// rather than a series step, because it is not one entity.
+private func sparkSeries(_ sp: TFStatus.Sparklines) -> [SparkSeries] {
+    let by = sp.bySource ?? [:]
+    guard !by.isEmpty else { return [] }
+
+    let alphabetical = by.keys.sorted()
+    var colorIndex: [String: Int] = [:]
+    for (i, name) in alphabetical.enumerated() { colorIndex[name] = i }
+
+    /// Exactly 24 finite points: pad the front, keep the newest tail.
+    func normalise(_ raw: [Double]?) -> [Double] {
+        var v = (raw ?? []).map { $0.isFinite ? $0 : 0 }
+        if v.count > 24 { v = Array(v.suffix(24)) }
+        if v.count < 24 { v = Array(repeating: 0, count: 24 - v.count) + v }
+        return v
+    }
+    func total(_ name: String) -> Double { normalise(by[name]).reduce(0, +) }
+    func cost(_ name: String) -> Double { (sp.costBySource?[name] ?? []).filter(\.isFinite).reduce(0, +) }
+
+    let ranked = alphabetical.sorted {
+        let a = total($0), b = total($1)
+        return a == b ? $0 < $1 : a > b
+    }
+    var out = ranked.prefix(5).map { name in
+        SparkSeries(id: name, name: name, colorIndex: colorIndex[name] ?? 0,
+                    points: normalise(by[name]), tokens: total(name),
+                    cost: cost(name) > 0 ? cost(name) : nil)
+    }
+    let rest = ranked.dropFirst(5)
+    if !rest.isEmpty {
+        var summed = [Double](repeating: 0, count: 24)
+        var summedCost = 0.0
+        for name in rest {
+            let p = normalise(by[name])
+            for i in 0..<24 { summed[i] += p[i] }
+            summedCost += cost(name)
+        }
+        out.append(SparkSeries(id: "__other", name: "other", colorIndex: nil,
+                               points: summed, tokens: summed.reduce(0, +),
+                               cost: summedCost > 0 ? summedCost : nil))
+    }
+    return out
+}
+
+private struct SparkRow: View {
+    let series: SparkSeries
+    let d: TFDensity
+
+    var body: some View {
+        HStack(spacing: DesignTokens.space[3]) {
+            Text(series.name).font(d.label()).lineLimit(1).truncationMode(.middle)
+                .frame(width: 76, alignment: .leading)
+            SparkPath(points: series.points, color: series.color)
+                .frame(height: d.sparkHeight)
+            Text(compactTokens(series.tokens))
+                .font(d.microFigure()).frame(width: 44, alignment: .trailing)
+            Text(moneyOrBlank(series.cost))
+                .font(d.microFigure(.regular)).foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .trailing)
+        }
+    }
+}
+
+/// Density and shortcut, the two preferences that change how the popover
+/// behaves rather than what it says.
+private struct PrefsRow: View {
+    @Binding var density: String
+    let hotkey: TFHotkey
+    let setHotkey: (TFHotkey) -> Void
+    let d: TFDensity
+
+    var body: some View {
+        HStack(spacing: DesignTokens.space[3]) {
+            Text("Density").font(d.micro()).foregroundStyle(.secondary)
+            Picker("", selection: $density) {
+                ForEach(TFDensity.allCases, id: \.rawValue) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 146)
+
+            Spacer(minLength: DesignTokens.space[2])
+
+            Text("Shortcut").font(d.micro()).foregroundStyle(.secondary)
+            Menu(hotkey.title) {
+                ForEach(TFHotkey.allCases, id: \.rawValue) { option in
+                    Button(option.title) { setHotkey(option) }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Toggle the popover from any app")
+        }
+    }
+}
+
+// ==================================================== transient guard alert ==
+
+/// The card that leaves the status item when a session crosses a declared cap.
+private struct GuardAlertCard: View {
+    let session: TFStatus.LiveSession
+    let d: TFDensity
+    let onOpen: () -> Void
+    let onDismiss: () -> Void
+    let onHover: (Bool) -> Void
+
+    private var level: String? { session.guardState?.level }
+    private var headline: String {
+        level == "block" ? "Guard stopped a session." : "Guard is warning about a session."
+    }
+    private var detail: String {
+        var bits = [session.project ?? session.repository ?? "a session"]
+        if let b = session.branch, !b.isEmpty { bits.append(b) }
+        if let c = session.costUsd, c.isFinite { bits.append(money(c)) }
+        return bits.joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DesignTokens.space[3]) {
+            Circle().fill(guardColor(level)).frame(width: 8, height: 8)
+                .padding(.top, DesignTokens.space[1])
+            VStack(alignment: .leading, spacing: 2) {
+                Text(headline).font(.system(size: d.bodySize, weight: .semibold)).lineLimit(1)
+                Text(detail).font(.system(size: d.microSize)).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: DesignTokens.space[3])
+            Button(action: onDismiss) {
+                Text("Dismiss")
+                    .font(.system(size: d.microSize, weight: .semibold))
+                    .padding(.horizontal, DesignTokens.space[3])
+                    .padding(.vertical, DesignTokens.space[0])
+                    .background(Capsule().fill(Color.primary.opacity(0.09)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, DesignTokens.space[5])
+        .padding(.vertical, DesignTokens.space[4])
+        .frame(width: TFAlertPanel.width, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: DesignTokens.radiusSm, style: .continuous)
+            .fill(Color(nsColor: .windowBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.radiusSm, style: .continuous)
+            .stroke(Color.primary.opacity(0.10), lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpen)
+        .onHover(perform: onHover)
+    }
+}
+
+/// A hosting view that reports hover even while the app is not active.
+///
+/// SwiftUI's `.onHover` installs a tracking area that wants a key window, and
+/// the alert panel is a non-activating panel owned by an accessory app, so it
+/// is never key and never active. Without `.activeAlways` the pause-on-hover
+/// would silently never fire. The SwiftUI handler is kept as well; `setHover`
+/// is idempotent, so both paths landing costs nothing.
+private final class HoverHostingView: NSHostingView<AnyView> {
+    var onHoverChange: ((Bool) -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil))
+    }
+    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
+}
+
+/// The window the card lives in: borderless, non-activating, never modal.
+///
+/// It arrives and leaves along one path — straight down from the status item
+/// and straight back up — so the motion always says where it came from. A
+/// second alert does not queue behind the first: the first is sent on its way
+/// and the second starts immediately, which is what "interruptible" means.
+final class TFAlertPanel {
+    static let width: CGFloat = 306
+
+    private var panel: NSPanel?
+    /// The card on its way out. Held for the length of the exit animation so
+    /// the popover's click monitor still recognises it as ours.
+    private weak var retiring: NSPanel?
+    private var timer: Timer?
+    private var hovering = false
+    private var restingFrame = NSRect.zero
+    /// Bumped on every show and every dismiss. Timers and animation
+    /// completions check it before touching anything, so a stale callback from
+    /// the card that was just replaced cannot close the card that replaced it.
+    private var generation = 0
+
+    /// Is this window the card, arriving, resting or leaving? The popover's
+    /// click monitor asks, so that a click on the card does not close the
+    /// popover a frame before the card's own handler opens it.
+    func owns(_ w: NSWindow?) -> Bool {
+        guard let w else { return false }
+        return w === panel || w === retiring
+    }
+
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+    /// How far the card travels, and the gap it rests at under the status item.
+    private var travel: CGFloat { DesignTokens.space[4] }
+
+    func show(session: TFStatus.LiveSession, density: TFDensity,
+              anchor: NSRect, onOpen: @escaping () -> Void) {
+        generation += 1
+        let gen = generation
+        timer?.invalidate(); timer = nil
+        hovering = false
+        if let old = panel { retire(old) }
+
+        let host = HoverHostingView(rootView: AnyView(
+            GuardAlertCard(
+                session: session, d: density,
+                onOpen: { [weak self] in self?.dismiss(); onOpen() },
+                onDismiss: { [weak self] in self?.dismiss() },
+                onHover: { [weak self] inside in self?.setHover(inside, gen: gen) })))
+        host.onHoverChange = { [weak self] inside in self?.setHover(inside, gen: gen) }
+        host.layoutSubtreeIfNeeded()
+        // Two text lines plus the card's vertical padding. The floor matters:
+        // fittingSize can report zero for a view that has never been in a
+        // window, and a short panel would clip the second line.
+        let floor = density.bodySize + density.microSize + 6 + 2 * DesignTokens.space[4]
+        let height = max(floor, host.fittingSize.height)
+
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: height),
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+        p.isFloatingPanel = true
+        p.level = .statusBar
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+        p.hidesOnDeactivate = false
+        p.isReleasedWhenClosed = false
+        // Without this the hover pause never fires: a borderless panel does
+        // not track the mouse unless it is asked to.
+        p.acceptsMouseMovedEvents = true
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        p.contentView = host
+        panel = p
+
+        let screen = NSScreen.screens.first { $0.frame.intersects(anchor) } ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let x = min(max(anchor.midX - Self.width / 2, visible.minX + 8),
+                    max(visible.minX + 8, visible.maxX - Self.width - 8))
+        restingFrame = NSRect(x: x, y: anchor.minY - height - travel,
+                              width: Self.width, height: height)
+        // Flush under the status item, then down. Never over the menu bar.
+        let start = NSRect(x: x, y: anchor.minY - height, width: Self.width, height: height)
+
+        p.setFrame(reduceMotion ? restingFrame : start, display: false)
+        p.alphaValue = 0
+        p.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = DesignTokens.durBase
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            if !reduceMotion { p.animator().setFrame(restingFrame, display: true) }
+            p.animator().alphaValue = 1
+        }
+        arm(gen: gen)
+    }
+
+    /// Send the card back the way it came.
+    func dismiss() {
+        generation += 1
+        timer?.invalidate(); timer = nil
+        hovering = false
+        guard let p = panel else { return }
+        panel = nil
+        retire(p)
+    }
+
+    /// Animate one panel out and drop it. Safe to call while another panel is
+    /// arriving: the closure owns the only remaining reference.
+    private func retire(_ p: NSPanel) {
+        retiring = p
+        // A card that is leaving stops taking clicks. Dismiss means dismissed,
+        // even while the last frames of the animation are still on screen.
+        p.ignoresMouseEvents = true
+        let back = NSRect(x: restingFrame.minX, y: restingFrame.minY + travel,
+                          width: p.frame.width, height: p.frame.height)
+        let reduce = reduceMotion
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = DesignTokens.durBase
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            if !reduce { p.animator().setFrame(back, display: true) }
+            p.animator().alphaValue = 0
+        }, completionHandler: { p.orderOut(nil) })
+    }
+
+    /// Auto dismiss after 8 s. Hovering stops the clock; leaving restarts it.
+    private func arm(gen: Int) {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.generation == gen, !self.hovering else { return }
+                self.dismiss()
+            }
+        }
+    }
+
+    private func setHover(_ inside: Bool, gen: Int) {
+        guard generation == gen else { return }
+        hovering = inside
+        if inside { timer?.invalidate(); timer = nil } else { arm(gen: gen) }
     }
 }
 
@@ -1507,6 +2415,17 @@ private struct SessionBlockRow: View {
 struct MenuContentView: View {
     @ObservedObject var model: StatusModel
     var actions: AppActions
+    /// Forces a density regardless of the preference. Only the off-screen
+    /// preview renderer uses it, so a screenshot run never writes defaults.
+    var densityOverride: TFDensity? = nil
+
+    @AppStorage(TFDensity.defaultsKey) private var densityPref = TFDensity.comfortable.rawValue
+    @AppStorage(TFHotkey.defaultsKey) private var hotkeyPref = TFHotkey.controlOptionT.rawValue
+
+    private var d: TFDensity {
+        densityOverride ?? TFDensity(rawValue: densityPref) ?? .comfortable
+    }
+    private var hotkey: TFHotkey { TFHotkey(rawValue: hotkeyPref) ?? .controlOptionT }
 
     private var s: TFStatus? { model.status }
     private var hasData: Bool { (s?.health?.records ?? 0) > 0 }
@@ -1517,6 +2436,12 @@ struct MenuContentView: View {
         guard let d = s?.lastRefreshDate else { return nil }
         return Date().timeIntervalSince(d) * 1000
     }
+    /// What the context gauge measures against: the declared cap when there is
+    /// one, otherwise the 200K window every current frontier model shares.
+    private var contextCap: Double {
+        if let m = s?.guard?.policy?.maxContextTokens, m.isFinite, m > 0 { return m }
+        return 200_000
+    }
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -1526,7 +2451,7 @@ struct MenuContentView: View {
     }
 
     private var contentBody: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: d.sectionGap) {
             BrandRow(
                 demo: s?.demo == true,
                 live: watcherLive && hasData,
@@ -1540,6 +2465,13 @@ struct MenuContentView: View {
 
             if hasData, let today = s?.usage?["today"] {
                 HeroCard(today: today, days: s?.recentDays ?? [], velocity: s?.velocity)
+
+                // The glanceable trio, above the historical breakdowns: what
+                // is running now, what today cost per branch, what the guard
+                // is holding you to.
+                liveSection
+                receiptsSection
+                guardSection
 
                 SectionHeader("Windows & totals")
                 HStack(spacing: 8) {
@@ -1555,7 +2487,7 @@ struct MenuContentView: View {
                     SectionHeader("Live provider windows")
                     VStack(spacing: 6) {
                         ForEach(Array(pw.enumerated()), id: \.offset) { i, w in
-                            ProviderWindowRow(index: i, w: w)
+                            ProviderWindowRow(index: i, w: w, d: d)
                         }
                     }
                     NoteText("measured rolling usage per tool · hour granularity")
@@ -1565,7 +2497,7 @@ struct MenuContentView: View {
                     SectionHeader("Sessions · 5h model")
                     VStack(spacing: 7) {
                         ForEach(blocks, id: \.key) { b in
-                            SessionBlockRow(b: b)
+                            SessionBlockRow(b: b, d: d)
                         }
                     }
                 }
@@ -1576,7 +2508,7 @@ struct MenuContentView: View {
                         let maxTokens = provs.compactMap(\.tokens).max() ?? 0
                         ForEach(Array(provs.filter { ($0.tokens ?? 0) > 0 }.prefix(5).enumerated()),
                                 id: \.offset) { i, p in
-                            ProviderRow(index: i, row: p, maxTokens: maxTokens)
+                            ProviderRow(index: i, row: p, maxTokens: maxTokens, d: d)
                         }
                     }
                 }
@@ -1592,10 +2524,12 @@ struct MenuContentView: View {
                         let maxTokens = srcs.compactMap(\.tokens).max() ?? 0
                         ForEach(Array(srcs.filter { ($0.tokens ?? 0) > 0 }.prefix(6).enumerated()),
                                 id: \.offset) { i, p in
-                            SourceRow(index: i, row: p, maxTokens: maxTokens)
+                            SourceRow(index: i, row: p, maxTokens: maxTokens, d: d)
                         }
                     }
                 }
+
+                sparklineSection
 
                 if let models = s?.modelsToday, !models.isEmpty {
                     SectionHeader("Top models today")
@@ -1603,7 +2537,7 @@ struct MenuContentView: View {
                         let maxTokens = models.compactMap(\.tokens).max() ?? 0
                         ForEach(Array(models.filter { ($0.tokens ?? 0) > 0 }.prefix(5).enumerated()),
                                 id: \.offset) { i, mrow in
-                            ModelRow(row: mrow, maxTokens: maxTokens)
+                            ModelRow(row: mrow, maxTokens: maxTokens, d: d)
                         }
                     }
                 }
@@ -1612,7 +2546,7 @@ struct MenuContentView: View {
                 capacityBlock
 
                 if let f = s?.forecast, f.tomorrow != nil {
-                    ForecastBlock(f: f)
+                    ForecastBlock(f: f, d: d)
                 }
 
                 alertRows
@@ -1627,6 +2561,8 @@ struct MenuContentView: View {
                 Divider()
                 ActionsBar(refreshing: model.refreshing, live: watcherLive,
                            dashboardStarting: model.dashboardStarting, actions: actions)
+                PrefsRow(density: $densityPref, hotkey: hotkey,
+                         setHotkey: actions.setHotkey, d: d)
             } else {
                 GettingStarted(onSetup: actions.runSetup)
                 if let err = model.actionError {
@@ -1639,12 +2575,117 @@ struct MenuContentView: View {
 
             FooterRow()
         }
-        .padding(TF.pad)
+        .padding(d.pad)
         .frame(width: TF.width)
         // Opaque, appearance-adaptive backdrop: the popover supplies one at
         // runtime, but off-screen previews composite transparency as black,
         // which made light-mode text unreadable.
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    // ---- the glanceable sections ------------------------------------------
+    //
+    // Each one draws only when its key is present. `if let` on an optional
+    // section IS the absent test: a status.json from an older CLI carries none
+    // of them and the popover looks exactly as it did before.
+
+    @ViewBuilder private var liveSection: some View {
+        if let live = s?.liveSessions {
+            let sessions = live.sessions ?? []
+            // "as of" and not "now": this is the last refresh cycle's picture,
+            // and a ticker that implies real time would be lying by a minute.
+            SectionHeader("Live, as of \(relativeAge(msSince(live.asOf)))")
+            if sessions.isEmpty {
+                NoteText("No session active in the last \(live.windowMinutes ?? 10) minutes.")
+            } else {
+                VStack(spacing: d.rowGap) {
+                    ForEach(Array(sessions.prefix(3).enumerated()), id: \.offset) { _, sess in
+                        LiveSessionRow(session: sess, contextCap: contextCap, d: d)
+                    }
+                }
+                if sessions.count > 3 {
+                    NoteText("\(sessions.count - 3) more running.")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var receiptsSection: some View {
+        if let receipts = s?.receiptsToday {
+            let items = receipts.items ?? []
+            SectionHeader("Today's receipts")
+            if items.isEmpty {
+                NoteText("No branch spend recorded today.")
+            } else {
+                VStack(spacing: d.rowGap) {
+                    ForEach(Array(items.prefix(3).enumerated()), id: \.offset) { i, item in
+                        ReceiptRow(index: i, item: item, d: d)
+                    }
+                }
+                if let total = receipts.totalCostUsd, total.isFinite {
+                    NoteText("\(money(total)) today across \(items.count) branches.")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var guardSection: some View {
+        if let g = s?.guard {
+            SectionHeader("Guard")
+            VStack(alignment: .leading, spacing: d.rowGap) {
+                Text(capsLine(g)).font(d.body()).lineLimit(2)
+                if let v = g.lastVerdict {
+                    HStack(alignment: .top, spacing: DesignTokens.space[2]) {
+                        Circle().fill(guardColor(v.level)).frame(width: 7, height: 7)
+                            .padding(.top, 3)
+                        Text(verdictLine(v)).font(d.micro())
+                            .foregroundStyle(.secondary).lineLimit(2)
+                    }
+                } else {
+                    NoteText("No verdict yet.")
+                }
+                HStack(spacing: DesignTokens.space[3]) {
+                    GlanceButton(title: "Raise cost cap", d: d, prominent: true,
+                                 action: actions.raiseCostCap)
+                    GlanceButton(title: "Clear caps", d: d, action: actions.clearCaps)
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    /// The caps you declared, in the order the CLI stores them.
+    private func capsLine(_ g: TFStatus.GuardBlock) -> String {
+        var bits: [String] = []
+        if let v = g.policy?.warnCostUsd { bits.append("warn at \(money(v))") }
+        if let v = g.policy?.maxCostUsd { bits.append("stop at \(money(v))") }
+        if let v = g.policy?.warnContextTokens { bits.append("warn at \(compactTokens(v)) context") }
+        if let v = g.policy?.maxContextTokens { bits.append("stop at \(compactTokens(v)) context") }
+        if let v = g.policy?.warnMarginalUsd { bits.append("warn at \(money(v)) a turn") }
+        return bits.isEmpty ? "No caps set" : bits.joined(separator: " · ")
+    }
+
+    private func verdictLine(_ v: TFStatus.GuardBlock.Verdict) -> String {
+        let head = "Last verdict \(v.level ?? "ok"), \(relativeAge(msSince(v.at)))"
+        let reasons = (v.reasons ?? []).joined(separator: "; ")
+        return reasons.isEmpty ? head + "." : head + ". " + reasons + "."
+    }
+
+    @ViewBuilder private var sparklineSection: some View {
+        if let sp = s?.sparklines {
+            let rows = sparkSeries(sp)
+            SectionHeader("Last 24 hours by source")
+            if rows.isEmpty {
+                NoteText("No hourly usage recorded yet.")
+            } else {
+                VStack(spacing: d.rowGap) {
+                    ForEach(rows) { row in
+                        SparkRow(series: row, d: d)
+                    }
+                }
+                NoteText("tokens per hour, last 24 h")
+            }
+        }
     }
 
     @ViewBuilder private var capacityBlock: some View {
@@ -1690,35 +2731,62 @@ enum PreviewRenderer {
         // Load the way the app does, so a preview shows the real live/paused
         // state instead of a hand-assembled one.
         model.load()
-        guard model.status != nil else {
+        guard let status = model.status else {
             FileHandle.standardError.write(Data("preview: no status at \(Paths.statusFile)\n".utf8))
             exit(1)
         }
         for (name, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
-            // ImageRenderer cannot draw ScrollView content off-screen (it renders
-            // fully transparent), so lay the view out in an off-screen hosting
-            // window and snapshot its layer instead.
-            let controller = NSHostingController(
-                rootView: MenuContentView(model: model, actions: AppActions())
-                    .environment(\.colorScheme, scheme))
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 360, height: 640),
-                styleMask: [.borderless], backing: .buffered, defer: false)
-            window.contentView = controller.view
-            controller.view.frame = NSRect(x: 0, y: 0, width: 360, height: 640)
-            controller.view.layoutSubtreeIfNeeded()
-            guard let bitmap = controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds) else {
-                FileHandle.standardError.write(Data("preview: failed to render \(name)\n".utf8))
-                continue
+            // The two existing filenames keep their meaning: comfortable is
+            // still what "<prefix>-light.png" shows.
+            snapshot(MenuContentView(model: model, actions: AppActions(),
+                                     densityOverride: .comfortable)
+                        .environment(\.colorScheme, scheme),
+                     size: NSSize(width: 360, height: 640),
+                     to: "\(prefix)-\(name).png", label: name)
+            snapshot(MenuContentView(model: model, actions: AppActions(),
+                                     densityOverride: .compact)
+                        .environment(\.colorScheme, scheme),
+                     size: NSSize(width: 360, height: 640),
+                     to: "\(prefix)-compact-\(name).png", label: "compact-\(name)")
+
+            // The transient card is its own window at runtime, so it is
+            // snapshotted on its own. It needs a live session to describe; with
+            // none in the file there is nothing honest to draw.
+            if let session = status.liveSessions?.sessions?.first {
+                snapshot(GuardAlertCard(session: session, d: .comfortable,
+                                        onOpen: {}, onDismiss: {}, onHover: { _ in })
+                            .padding(DesignTokens.space[3])
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .environment(\.colorScheme, scheme),
+                         size: NSSize(width: TFAlertPanel.width + 2 * DesignTokens.space[3], height: 76),
+                         to: "\(prefix)-alert-\(name).png", label: "alert-\(name)")
             }
-            controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
-            guard let png = bitmap.representation(using: .png, properties: [:]) else {
-                FileHandle.standardError.write(Data("preview: failed to render \(name)\n".utf8))
-                continue
-            }
-            try? png.write(to: URL(fileURLWithPath: "\(prefix)-\(name).png"))
-            print("wrote \(prefix)-\(name).png (\(bitmap.pixelsWide)x\(bitmap.pixelsHigh))")
         }
+    }
+
+    /// ImageRenderer cannot draw ScrollView content off-screen (it renders
+    /// fully transparent), so the view is laid out in an off-screen hosting
+    /// window and its layer is snapshotted instead.
+    @MainActor
+    private static func snapshot<V: View>(_ view: V, size: NSSize, to path: String, label: String) {
+        let controller = NSHostingController(rootView: AnyView(view))
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = controller.view
+        controller.view.frame = NSRect(origin: .zero, size: size)
+        controller.view.layoutSubtreeIfNeeded()
+        guard let bitmap = controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds) else {
+            FileHandle.standardError.write(Data("preview: failed to render \(label)\n".utf8))
+            return
+        }
+        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            FileHandle.standardError.write(Data("preview: failed to render \(label)\n".utf8))
+            return
+        }
+        try? png.write(to: URL(fileURLWithPath: path))
+        print("wrote \(path) (\(bitmap.pixelsWide)x\(bitmap.pixelsHigh))")
     }
 }
 
