@@ -44,6 +44,7 @@
     "lint": "node scripts/lint.js",
     "design": "node scripts/design-build.js",
     "design:check": "node scripts/design-build.js --check",
+    "media": "node scripts/shoot-media.js",
     "validate": "node scripts/validate-install.js",
     "start": "node bin/tokenflow.js up",
     "up": "node bin/tokenflow.js up"
