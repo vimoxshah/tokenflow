@@ -3,6 +3,27 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.3 — 2026-09-07
+
+No change to how TokenFlow reads or prices anything. This release exists so the GitHub Action
+can be listed in the GitHub Marketplace, which reads `action.yml` from the tag you publish.
+
+### Changed
+
+- **The action's description is now one short line.** The Marketplace form rejects a description
+  of 125 characters or more, and the old one ran to 350. What the action does not do - no network
+  call beyond the GitHub API, no prompt or code content read - is stated in `action/README.md`
+  and `docs/receipts-on-github.md`, where there is room to say it properly.
+- **The documented `uses:` line points at a tag, not at `main`.** Anyone who copies the snippet
+  from the Marketplace listing gets a pinned version, which is what an action reference should be.
+
+### Docs
+
+- Screenshots reshot on the 1.3.2 interface, rebuilt by one command (`npm run media`) that fails
+  when a shot is stale, and the filter screenshot carries its intrinsic size so the page no longer
+  reflows around it.
+- The interface description and the test count match the code again.
+
 ## 1.3.2 — 2026-09-06
 
 The three interface defects 1.3.1 listed as known and left open.

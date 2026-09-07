@@ -1,10 +1,5 @@
 name: 'TokenFlow receipt comment'
-description: >-
-  Reads the TokenFlow receipt attached to a pull request's head commit as a
-  git note (refs/notes/tokenflow), posts or updates it as one PR comment, and
-  optionally fails the job when the receipt is over a declared budget - the
-  status check that lets this action gate a merge. Makes no network call
-  beyond the GitHub API; reads no prompt or code content.
+description: 'Posts the TokenFlow cost receipt as one PR comment and fails the job when the change is over its declared budget.'
 branding:
   icon: 'file-text'
   color: 'purple'
