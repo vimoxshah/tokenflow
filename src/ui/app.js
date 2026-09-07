@@ -1172,13 +1172,13 @@ function btn(label, onClick, cls = '', id = null) {
 
 function kpi(label, value, sub, opt = {}) {
   const c = el('div', { class: 'card' + (opt.hero ? ' hero-card' : '') });
-  const k = el('div', { class: 'kpi' + (opt.onClick ? ' clickable' : '') });
+  const k = el('div', { class: 'kpi' + (opt.hero ? ' kpi-hero' : '') + (opt.onClick ? ' clickable' : '') });
   k.appendChild(el('span', { class: 'k-label' }, [
     document.createTextNode(label),
     opt.badge ? el('span', { class: 'badge ' + (opt.badgeKind || ''), text: opt.badge, title: opt.badgeTitle || '' }) : null,
   ]));
   k.appendChild(el('span', {
-    class: 'k-value' + (opt.hero ? ' hero' : '') + (opt.str ? ' str' : ''),
+    class: 'k-value' + (opt.hero ? ' hero' : '') + (opt.str ? ' str' : '') + (opt.word ? ' word' : ''),
     text: value,
   }));
   if (sub) k.appendChild(el('span', { class: 'k-sub' }, [typeof sub === 'string' ? document.createTextNode(sub) : sub]));
@@ -1240,7 +1240,7 @@ function viewOverview() {
   root.appendChild(compositionCard());
   root.appendChild(providerDailyCard());
 
-  const two = el('div', { class: 'grid', style: 'grid-template-columns:repeat(auto-fit,minmax(420px,1fr))' });
+  const two = el('div', { class: 'grid', style: 'grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr))' });
   two.appendChild(shareCard('provider', 'Provider distribution', v.dimensions.providers, S.colors.provider, 'provider'));
   two.appendChild(shareCard('model', 'Model distribution', v.dimensions.models, S.colors.model, 'model'));
   two.appendChild(interfaceCard());
@@ -2593,7 +2593,9 @@ function viewHealth() {
   root.appendChild(sectionTitle('Data health'));
 
   const cards = el('div', { class: 'cards' });
-  cards.appendChild(kpi('Data health', h.grade, `${pct(h.missingTokenFieldRate)} of token fields not reported`, { hero: true }));
+  const gradeCard = kpi('Data health', h.grade, `${pct(h.missingTokenFieldRate)} of token fields not reported`, { hero: true, word: true });
+  gradeCard.classList.add('wide');
+  cards.appendChild(gradeCard);
   cards.appendChild(kpi('Records', int(h.records), `${int(h.sourceFiles)} source files tracked`));
   cards.appendChild(kpi('Date coverage', h.coverage.from ? `${shortDate(h.coverage.from)} → ${shortDate(h.coverage.to)}` : '—', `${h.coverage.from ? daysBetween(h.coverage.from, h.coverage.to) + 1 : 0} days`));
   cards.appendChild(kpi('Providers', int(h.providers), `${int(h.models)} models · ${int(h.clients)} clients`));
