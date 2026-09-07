@@ -68,7 +68,7 @@
 }
 .live-receipt:first-child { border-top: 0; }
 .live-receipt-repo { font-weight: 600; overflow-wrap: anywhere; }
-.live-receipt-where p, .live-receipt-where .hint { margin: 0; }
+.live-receipt-where p, .live-receipt-where .hint { margin: 0; overflow-wrap: anywhere; }
 .live-receipt-cost { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .live-receipt-n { font-variant-numeric: tabular-nums; text-align: right; margin: 0; }
 .live-receipt-total { border-top: 1px solid var(--border-strong); font-weight: 600; }

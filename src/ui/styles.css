@@ -383,8 +383,23 @@ label.fld { display: flex; flex-direction: column; gap: 4px; font-size: 11px; co
   letter-spacing: var(--tracking-h); line-height: var(--lh-figure);
   font-family: var(--figure); font-variant-numeric: tabular-nums;
 }
-/* The one hero number on a view: bigger, and tighter still as type grows. */
-.kpi .k-value.hero { font-size: calc(var(--fs-hero) * var(--fig-scale)); letter-spacing: calc(var(--tracking-h) - .01em); line-height: var(--lh-hero); }
+/* The one hero number on a view: bigger, and tighter still as type grows.
+   A hero cannot wrap, and at the full size a 7-character figure ("$364.52")
+   or the word "Excellent" ran past the edge of a narrow card. So the hero is
+   sized to the card it sits in, between a readable floor and the hero size:
+   19% of the column's width fits the longest figure the formatters emit in the
+   widest of the three figure fonts, 17% fits the longest grade. The inner kpi
+   column is the container, not the card, so grid sizing is untouched. A wide
+   card reaches the hero size; a narrow one shrinks instead of clipping. */
+.kpi.kpi-hero { container-type: inline-size; }
+.kpi .k-value.hero {
+  --hero-cap: calc(var(--fs-hero) * var(--fig-scale)); --hero-k: 19cqi;
+  font-size: var(--hero-cap); letter-spacing: calc(var(--tracking-h) - .01em); line-height: var(--lh-hero);
+}
+.kpi .k-value.hero.word { --hero-k: 17cqi; }
+@supports (font-size: 1cqi) {
+  .kpi .k-value.hero, .kpi .k-value.hero.word { font-size: clamp(calc(20px * var(--fig-scale)), var(--hero-k), var(--hero-cap)); }
+}
 /* A long identifier is not a hero figure: keep it readable and let it wrap. */
 .kpi .k-value.str { font-size: 17px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .card.wide { grid-column: span 2; }
@@ -669,8 +684,13 @@ dialog h2 { margin: 0; font-size: 15px; }
 
 @media (max-width: 860px) {
   .kpi .k-value { font-size: 21px; }
-  .kpi .k-value.hero { font-size: 34px; }
+  .kpi .k-value.hero { --hero-cap: 34px; }
   .bar-row { grid-template-columns: 96px 1fr 62px; }
+}
+/* Below this the card grid has one column, and a card spanning two would open
+   an implicit column off the right edge of the page. */
+@media (max-width: 480px) {
+  .card.wide { grid-column: auto; }
 }
 
 @media print {
