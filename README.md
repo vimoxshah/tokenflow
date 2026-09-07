@@ -336,7 +336,16 @@ npm test               # 836 tests: normalization, adapters, analytics, store, r
 npm run lint           # project invariants (incl. "no || 0 on a token field")
 npm run typecheck      # tsc over JSDoc types — must be zero errors
 npm run validate       # self-check: runtime, adapters, store↔cube agreement
+npm run design         # recompile design tokens into every surface
+npm run media          # reshoot the README and landing-page screenshots
 ```
+
+`npm run media` drives a real headless browser against a throwaway synthetic store and rewrites
+`docs/media`. Run it whenever the interface changes: for a whole release these images showed a
+filter wall and a tab bar that no longer existed, because nothing rebuilt them and nothing
+checked. `test/media.test.js` now fails if an image is referenced but missing, shipped but unused,
+or linked with no way to regenerate it. It cannot tell whether a screenshot is current, so look at
+what comes out.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first — it states the five invariants that keep this honest
 (missing is not zero; measured and estimated never mix; a streamed usage block is a snapshot;
