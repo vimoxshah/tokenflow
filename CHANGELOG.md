@@ -3,6 +3,27 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.4 — 2026-09-07
+
+Interface fixes only; nothing about how TokenFlow reads or prices usage changes. Every one of
+the 21 views was rendered in the three themes at 1440, 1000, 700 and 380 pixels wide and probed
+for text that leaves its card or a page that scrolls sideways. None remains.
+
+### Fixed
+
+- **The Data health grade fits its card.** "Excellent" was set at the hero figure size, which is
+  tuned for numbers, and at that size the word is wider than one card of the grid, so it read
+  "Excelle" with the rest cut off. A hero value is now sized to the card it sits in, between a
+  readable floor and the hero size, and the grade card takes a double-width slot so the word
+  shows at full size on anything wider than a phone.
+- **The Cost and Peaks heroes no longer clip on narrower windows.** The same rule catches
+  "$364.52" and "53.3M", which ran 5 to 57 pixels past the card edge: in the Editorial theme
+  even at 1440 pixels, and in every theme below 1000.
+- **The Overview no longer scrolls sideways on a phone.** Its two-up chart grid asked for columns
+  at least 420 pixels wide, so on a 380-pixel screen the page was 64 pixels wider than the
+  viewport. The minimum now yields to the width available.
+- **Branch names in the Live receipts list wrap** instead of spilling out of their column.
+
 ## 1.3.3 — 2026-09-07
 
 No change to how TokenFlow reads or prices anything. This release exists so the GitHub Action
