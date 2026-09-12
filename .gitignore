@@ -47,6 +47,17 @@ TODO.local.md
 *.local.json
 *.local.yaml
 
+# Launch and marketing working folders. Kept local on purpose: the launch
+# memos name employer branches (see launch/audit-2026-09-05/PIVOT.md), and this
+# repo is public. The video projects are 15 MB renders regenerated from source.
+/launch/
+/videos/
+
+# Agent tooling state, written per-session. A .genea/config.yaml, if this repo
+# ever gets one, is a real marker file and stays tracked.
+/.genea/*
+!/.genea/config.yaml
+
 # Secrets — this project needs none, so anything matching is an accident.
 .env
 .env.*
