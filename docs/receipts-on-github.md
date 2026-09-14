@@ -44,7 +44,7 @@ network call.
          - uses: actions/checkout@v4
            with:
              fetch-depth: 0   # notes live outside the default shallow fetch
-         - uses: vimoxshah/tokenflow@v1.3.4
+         - uses: vimoxshah/tokenflow@v1.3.5
            with:
              max-usd: '50'
              max-usd-per-100-lines: '5'

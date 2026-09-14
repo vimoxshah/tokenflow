@@ -3,6 +3,29 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.5 — 2026-09-14
+
+No change to how TokenFlow reads or prices anything. One test-suite defect and two
+documentation corrections.
+
+### Fixed
+
+- **`npm test` no longer fails on a Mac without Xcode.** The app-bundle suite skipped when
+  `swiftc` was absent, which is not the condition that matters: the Command Line Tools ship
+  `swiftc` but not SwiftUI's macro plugins, so `@State` never expands and every view in
+  `main.swift` collapses into errors about assigning to an immutable `self`. Three tests
+  failed, and the failure read as a defect in the menu bar app rather than a missing toolchain.
+  The probe now compiles the smallest view that needs the plugin, and the skip message names
+  Xcode. The shipped app is unaffected: CI builds it on a runner with the full toolchain.
+
+### Docs
+
+- **The test count reads 841**, which is what the suite has. The README said 836.
+- **The README's link row no longer prints half the Homebrew command.** `brew install --cask
+  tokenflow` on its own fails, because the cask lives in this repo's own tap and the tap
+  command has to come first. The row now points at the Install section, which carries both
+  lines.
+
 ## 1.3.4 — 2026-09-07
 
 Interface fixes only; nothing about how TokenFlow reads or prices usage changes. Every one of
