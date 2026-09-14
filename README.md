@@ -49,7 +49,7 @@ per-source and per-model usage, capacity meters and forecast, in light and dark.
   &nbsp;·&nbsp;
   📦 <a href="https://www.npmjs.com/package/@vimoxshah/tokenflow"><code>@vimoxshah/tokenflow</code> on npm</a>
   &nbsp;·&nbsp;
-  🍺 <code>brew install --cask tokenflow</code> (via <a href="https://github.com/vimoxshah/tokenflow">this tap</a>)
+  🍺 <a href="#install"><strong>Homebrew</strong></a> <em>(tap, then cask)</em>
 </p>
 
 **How deep it goes**
@@ -62,7 +62,7 @@ per-source and per-model usage, capacity meters and forecast, in light and dark.
 | **Analytics** | 21 views: overview KPIs with a story strip, receipts per branch and pull request, cost per ticket, session anatomy, live, composition, provider/model intelligence, interfaces, hour×weekday heatmap + calendar, peaks, efficiency ratios, cache health, cost with coverage, model what-if, git correlations (labelled), rhythm and focus, period compare, compare branches, searchable data explorer, annotations, per-field data health |
 | **Integrations** | A GitHub Action and a **self-hosted GitHub App** (your App, your server, our code) that put a receipt comment and a budget check run on every pull request; receipts as git notes that travel with the code; an **MCP server** so the agent can read its own bill; a **FOCUS-shaped export** for a FinOps tool; **org policy** pulled from a team server you run |
 | **Live mode** | Watcher daemon, native Swift menu bar app (live sessions, today's receipts, guard state, provider/source/model breakdowns, capacity meters with reset countdowns & ETAs, forecast with stated confidence, MAD-based anomaly alerts, per-source sparklines, appearance toggle), SwiftBar/xbar plugin |
-| **Engineering** | Zero runtime dependencies · 836 tests · lint invariants (e.g. "no `\|\| 0` on a token field") · tsc-clean JSDoc types · CI on macOS/Linux/Windows × Node 22/24 |
+| **Engineering** | Zero runtime dependencies · 841 tests · lint invariants (e.g. "no `\|\| 0` on a token field") · tsc-clean JSDoc types · CI on macOS/Linux/Windows × Node 22/24 |
 
 Zero runtime dependencies. Nothing leaves your machine. No API keys, no accounts, no telemetry.
 
@@ -332,7 +332,7 @@ from `file://` with no server. A full CSV export doubles as a portable dataset:
 ## Contributing
 
 ```bash
-npm test               # 836 tests: normalization, adapters, analytics, store, receipts, guard
+npm test               # 841 tests: normalization, adapters, analytics, store, receipts, guard
 npm run lint           # project invariants (incl. "no || 0 on a token field")
 npm run typecheck      # tsc over JSDoc types — must be zero errors
 npm run validate       # self-check: runtime, adapters, store↔cube agreement

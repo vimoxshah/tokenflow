@@ -14,22 +14,32 @@ import { execFileSync } from 'node:child_process';
  * had a menu bar app with nothing to drive. Both are build-script properties,
  * invisible to every other test, and only a real build can prove them.
  *
- * Building takes swiftc, so this suite skips anywhere it cannot run: off
- * macOS, or on a macOS box without the Command Line Tools.
+ * Building takes a toolchain that can compile SwiftUI, so this suite skips
+ * anywhere it cannot run. `swiftc --version` is not that test: the Command Line
+ * Tools ship swiftc but not SwiftUI's macro plugins, so on a Mac with no Xcode
+ * `@State` fails to expand and every view in main.swift collapses into errors
+ * about assigning to an immutable self. That reads as a product defect and is
+ * not one, so the probe below compiles the smallest thing that needs the
+ * plugin and skips when it cannot.
  */
 const REPO = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..');
 
 function canBuild() {
   if (process.platform !== 'darwin') return false;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-swift-probe-'));
+  const file = path.join(dir, 'probe.swift');
   try {
-    execFileSync('swiftc', ['--version'], { stdio: 'ignore', timeout: 20000 });
+    fs.writeFileSync(file, 'import SwiftUI\nstruct P: View { @State private var x = 0\n  var body: some View { Color.clear.onHover { _ in x = 1 } } }\n');
+    execFileSync('swiftc', ['-typecheck', file], { stdio: 'ignore', timeout: 120000 });
     return true;
   } catch {
     return false;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
-const skip = canBuild() ? false : 'needs macOS with swiftc';
+const skip = canBuild() ? false : 'needs macOS with a toolchain that can compile SwiftUI (Xcode, not the Command Line Tools alone)';
 
 function build(outDir, { portable }) {
   execFileSync('bash', [path.join(REPO, 'scripts', 'build-menubar-app.sh'), outDir], {
