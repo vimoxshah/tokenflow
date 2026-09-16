@@ -68,6 +68,15 @@ test('app bundle: a portable build embeds no path from the machine that built it
     // The exact 1.1.1 regression: these named the CI runner's filesystem.
     assert.equal(plistKey(app, 'TokenFlowCLIPath'), null, 'a distributable build must not name a CLI path');
     assert.equal(plistKey(app, 'TokenFlowNodePath'), null, 'a distributable build must not name a node path');
+
+    // Launch-at-login is the one thing a DMG user cannot fix for themselves:
+    // an accessory app leaves no trace after a reboot, so if SMAppService ever
+    // stops being linked the app silently stops coming back. Reading it off the
+    // built binary proves the import survived into the artifact.
+    const libs = execFileSync('otool', ['-L', path.join(app, 'Contents', 'MacOS', 'TokenFlow')], {
+      encoding: 'utf8', timeout: 60000,
+    });
+    assert.match(libs, /ServiceManagement\.framework/, 'the app must link ServiceManagement to register a login item');
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
   }

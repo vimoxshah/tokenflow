@@ -17,6 +17,9 @@ import Charts
 // Carbon is the only supported way to claim a system-wide hotkey that fires
 // while another app is frontmost. Cocoa has no equivalent.
 import Carbon.HIToolbox
+// SMAppService registers the app to start at login. macOS 13+, which
+// LSMinimumSystemVersion already requires.
+import ServiceManagement
 
 // ============================================================ data model ===
 
@@ -811,6 +814,78 @@ struct AppActions {
                 self?.model.load()
                 self?.renderTitle()
             }
+        }
+        registerLoginItemIfNeeded()
+        showFirstLaunchPopover()
+    }
+
+    // ---- first launch -------------------------------------------------------
+
+    /// Set once the app has tried to register itself, so someone who turns the
+    /// login item off in System Settings is never asked twice.
+    private static let loginItemTriedKey = "loginItemRegistrationAttempted"
+
+    /// Start at login, decided once, the first time the app runs from a real
+    /// Applications folder.
+    ///
+    /// Without this a DMG install has no way back: an accessory app shows no
+    /// Dock icon and no window, so after a reboot there is no sign TokenFlow
+    /// was ever installed. The watcher keeps collecting — its LaunchAgent sets
+    /// RunAtLoad — and only the menu bar disappears, which is the confusing
+    /// half.
+    ///
+    /// Three guards, each for a failure this would otherwise cause:
+    ///
+    ///   · the bundle must sit in an Applications folder. A first launch
+    ///     straight from the mounted DMG runs App-Translocated from a random
+    ///     read-only path, and a login item aimed there breaks the moment the
+    ///     disk image is ejected — worse than never registering. The attempt
+    ///     flag is written inside this guard, so "open from the DMG, then drag
+    ///     it across" still registers on the next launch.
+    ///   · `.notRegistered` only. `.requiresApproval` means the user has
+    ///     already turned it off, and re-registering would fight them at every
+    ///     launch.
+    ///   · failure is silent. Starting at login is a convenience, and an error
+    ///     about it should not be the first thing a new user reads.
+    private func registerLoginItemIfNeeded() {
+        guard #available(macOS 13.0, *) else { return }
+        let path = Bundle.main.bundlePath
+        let applications = ["/Applications/", NSHomeDirectory() + "/Applications/"]
+        guard applications.contains(where: { path.hasPrefix($0) }) else { return }
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.loginItemTriedKey) else { return }
+        defaults.set(true, forKey: Self.loginItemTriedKey)
+        guard SMAppService.mainApp.status == .notRegistered else { return }
+        try? SMAppService.mainApp.register()
+    }
+
+    /// Set once the popover has opened by itself, so this happens once per
+    /// machine rather than once per version.
+    private static let firstLaunchShownKey = "firstLaunchPopoverShown"
+
+    /// Open the popover unprompted on the very first launch.
+    ///
+    /// `LSUIElement` means no Dock icon and no window, so launching looks like
+    /// nothing happened: the only sign is two characters at the right end of
+    /// the menu bar, which nobody has a reason to look for. Showing the popover
+    /// once points at itself.
+    private func showFirstLaunchPopover() {
+        guard !UserDefaults.standard.bool(forKey: Self.firstLaunchShownKey) else { return }
+        // The status item needs a frame to anchor to, and a button the menu bar
+        // actually had room for — past the notch the system hides it and there
+        // is nothing to point at.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, let button = self.item.button,
+                  button.window != nil, !self.popover.isShown else { return }
+            // Recorded here rather than on entry, so the flag means "shown"
+            // rather than "attempted": someone whose menu bar had no room for
+            // the item, or who clicked it first, gets the panel next launch
+            // instead of never.
+            UserDefaults.standard.set(true, forKey: Self.firstLaunchShownKey)
+            // An accessory app is never frontmost; without this the popover
+            // opens unfocused and Escape never reaches the key monitor.
+            NSApp.activate(ignoringOtherApps: true)
+            self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
 
