@@ -4,6 +4,9 @@
 
 - **Node 22.5 or newer.** 22.5 is where `node:sqlite` and the built-in test runner landed; both
   are used. Check with `node -v`.
+- **For the macOS app only: macOS 13 Ventura or newer**, Apple Silicon or Intel. The DMG carries
+  a universal binary. The CLI and dashboard have no such floor and run anywhere Node does,
+  including Linux and Windows.
 - Nothing else. This project has **zero runtime dependencies** — `npm install` does nothing and
   is not required.
 

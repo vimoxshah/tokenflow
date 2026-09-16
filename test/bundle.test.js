@@ -73,10 +73,25 @@ test('app bundle: a portable build embeds no path from the machine that built it
     // an accessory app leaves no trace after a reboot, so if SMAppService ever
     // stops being linked the app silently stops coming back. Reading it off the
     // built binary proves the import survived into the artifact.
-    const libs = execFileSync('otool', ['-L', path.join(app, 'Contents', 'MacOS', 'TokenFlow')], {
-      encoding: 'utf8', timeout: 60000,
-    });
+    const binary = path.join(app, 'Contents', 'MacOS', 'TokenFlow');
+    const libs = execFileSync('otool', ['-L', binary], { encoding: 'utf8', timeout: 60000 });
     assert.match(libs, /ServiceManagement\.framework/, 'the app must link ServiceManagement to register a login item');
+
+    // 1.3.x and 1.4.0 shipped binaries built with no -target, so their minimum
+    // was whatever macOS the CI runner happened to run — minos 26.0 against an
+    // Info.plist advertising 13.0, and arm64 only. Homebrew installed them on
+    // Ventura and on Intel, where they could not launch at all. Nothing in the
+    // plist can catch that, because the plist is the half that was lying.
+    const load = execFileSync('otool', ['-l', binary], { encoding: 'utf8', timeout: 60000 });
+    const minos = load.match(/LC_BUILD_VERSION[\s\S]*?minos\s+([0-9.]+)/)?.[1];
+    assert.ok(minos, 'the binary must carry an LC_BUILD_VERSION');
+    assert.equal(minos, plistKey(app, 'LSMinimumSystemVersion'),
+      'the compiled floor must equal the floor the Info.plist advertises');
+
+    const archs = execFileSync('lipo', ['-archs', binary], { encoding: 'utf8', timeout: 60000 }).split(/\s+/);
+    for (const arch of ['arm64', 'x86_64']) {
+      assert.ok(archs.includes(arch), `the app must be universal — ${arch} missing from ${archs.join(', ')}`);
+    }
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
   }
