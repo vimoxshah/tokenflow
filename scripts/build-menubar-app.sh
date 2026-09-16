@@ -22,6 +22,11 @@
 #                        distribution must use this: a release built on CI
 #                        otherwise ships /Users/runner/... in its Info.plist,
 #                        which exists on no user's machine.
+#
+# The binary is universal (arm64 + x86_64) and targets TOKENFLOW_MACOS_FLOOR,
+# default 13.0. Raise the floor only when a compiler diagnostic forces it, and
+# move Casks/tokenflow.rb's `depends_on macos:` in the same commit — the cask is
+# the one place that repeats the number instead of reading it.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,6 +36,12 @@ APP="$OUT_DIR/TokenFlow.app"
 # App version: first argument, else package.json version. Embedded into the
 # bundle's Info.plist so release CI can verify tag ↔ bundle consistency.
 VERSION="${2:-$(node -p "require('$REPO/package.json').version")}"
+# The oldest macOS the binary will run on. swiftc defaults this to the version
+# of the machine doing the build, which is how 1.3.x and 1.4.0 shipped binaries
+# refusing to launch below macOS 26 while their own Info.plist advertised 13.0.
+# Declared once here and written into LSMinimumSystemVersion below, so the
+# advertised floor and the compiled floor cannot drift apart again.
+MACOS_FLOOR="${TOKENFLOW_MACOS_FLOOR:-13.0}"
 
 command -v swiftc >/dev/null 2>&1 || {
   echo "error: swiftc not found — install Xcode Command Line Tools:" >&2
@@ -88,7 +99,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>          <string>APPL</string>
     <key>CFBundleExecutable</key>           <string>TokenFlow</string>
     <key>CFBundleIconFile</key>             <string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key>       <string>13.0</string>
+    <key>LSMinimumSystemVersion</key>       <string>$MACOS_FLOOR</string>
     <key>LSUIElement</key>                  <true/>
     <key>NSHighResolutionCapable</key>      <true/>
     <key>NSHumanReadableCopyright</key>     <string>MIT — local-first, nothing leaves your machine.</string>
@@ -106,11 +117,45 @@ if [ "$PORTABLE" != "1" ]; then
 fi
 
 echo "compiling with $(swiftc --version | head -1)"
+echo "targeting macOS $MACOS_FLOOR, arm64 + x86_64"
 # DesignTokens.swift is generated from design/tokens.yaml (`npm run design`);
 # the app is compiled from both files so it cannot drift from the dashboard.
-swiftc -O -swift-version 5 \
-  -o "$APP/Contents/MacOS/TokenFlow" \
-  "$SRC" "$REPO/menubar/TokenFlow/DesignTokens.swift" 2>&1 | head -40
+#
+# Once per architecture, then lipo'd together. An Apple Silicon runner builds an
+# arm64-only binary by default, which will not launch on any Intel Mac — and
+# Ventura, the floor this app advertises, runs on plenty of them.
+#
+# No `| head -40` on these: a pipe discards swiftc's exit status, so a failed
+# compile used to leave an empty Contents/MacOS and let the script report
+# success. The whole point of the checks below is that a broken build stops here
+# rather than in someone's Applications folder.
+SLICES=()
+for ARCH in arm64 x86_64; do
+  echo "  · $ARCH"
+  swiftc -O -swift-version 5 -target "$ARCH-apple-macos$MACOS_FLOOR" \
+    -o "$TMP/TokenFlow-$ARCH" \
+    "$SRC" "$REPO/menubar/TokenFlow/DesignTokens.swift"
+  SLICES+=("$TMP/TokenFlow-$ARCH")
+done
+lipo -create -output "$APP/Contents/MacOS/TokenFlow" "${SLICES[@]}"
+
+# Prove the binary is what the Info.plist claims, on the machine that built it.
+# Everything above is a compiler flag, and a flag that silently stops working
+# is exactly how the macOS 26 floor shipped three times without anyone noticing.
+BUILT_MINOS="$(otool -l "$APP/Contents/MacOS/TokenFlow" \
+  | awk '/LC_BUILD_VERSION/{f=1} f&&/^ *minos/{print $2; exit}')"
+if [ "$BUILT_MINOS" != "$MACOS_FLOOR" ]; then
+  echo "error: binary minos is $BUILT_MINOS, Info.plist advertises $MACOS_FLOOR" >&2
+  exit 1
+fi
+BUILT_ARCHS="$(lipo -archs "$APP/Contents/MacOS/TokenFlow")"
+for ARCH in arm64 x86_64; do
+  case " $BUILT_ARCHS " in
+    *" $ARCH "*) ;;
+    *) echo "error: $ARCH missing from the binary ($BUILT_ARCHS)" >&2; exit 1 ;;
+  esac
+done
+echo "binary: $BUILT_ARCHS · minos $BUILT_MINOS"
 
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 

@@ -3,6 +3,35 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.1 — 2026-09-16
+
+The macOS app would not launch for most people who installed it. Nothing else changed.
+
+### Fixed
+
+- **The app is now universal and runs on macOS 13 Ventura again.** `build-menubar-app.sh` passed
+  no `-target`, so `swiftc` set the deployment target to whatever the build machine ran. Once the
+  CI runners moved to macOS 26, every DMG since 1.3.x carried `minos 26.0` and an arm64-only
+  binary, while its own `Info.plist` advertised `13.0` and the Homebrew cask declared
+  `depends_on macos: :ventura`. Homebrew installed it happily on Ventura and on Intel Macs, where
+  it could not start at all. The binary is now compiled once per architecture and `lipo`'d into a
+  universal one, targeting a floor declared in a single variable (`TOKENFLOW_MACOS_FLOOR`,
+  default `13.0`) that also writes `LSMinimumSystemVersion`, so the advertised floor and the
+  compiled floor cannot drift apart again.
+
+- **A failed compile no longer reports success.** The `swiftc` line ended in `| head -40`, and a
+  pipe discards the exit status, so a build that produced no binary left an empty
+  `Contents/MacOS` and carried on to package a DMG around it. That is how the above shipped three
+  times without failing a release. The build now stops, and afterwards reads `minos` and the
+  architecture list back off the binary it just produced and refuses to continue if either
+  disagrees with what the bundle claims.
+
+### Internal
+
+- The app-bundle suite asserts the same two facts on a real build: `LC_BUILD_VERSION`'s `minos`
+  equals the plist's `LSMinimumSystemVersion`, and `lipo -archs` lists both `arm64` and `x86_64`.
+  A plist claim is now a checked fact rather than a promise.
+
 ## 1.4.0 — 2026-09-16
 
 A DMG install now survives a restart, and says where it is on the first launch. Nothing changed
