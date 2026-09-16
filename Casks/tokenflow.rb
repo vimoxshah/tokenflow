@@ -1,6 +1,6 @@
 cask "tokenflow" do
-  version "1.4.0"
-  sha256 "db09d041611fd93db02eeb18e4b919e8438d73e98fd6950281efc167820e5522"
+  version "1.4.1"
+  sha256 "37eecf4f4dc924157c67b69d26addc651592f1e4d08f74cbbfa99a0ec70eb7ee"
 
   url "https://github.com/vimoxshah/tokenflow/releases/download/v#{version}/TokenFlow-#{version}.dmg"
   name "TokenFlow"
@@ -12,6 +12,11 @@ cask "tokenflow" do
     strategy :github_latest
   end
 
+  # Must equal TOKENFLOW_MACOS_FLOOR in scripts/build-menubar-app.sh (13.0 =
+  # :ventura). This is the only place the floor is repeated rather than read, so
+  # it is the one that can go stale — and from 1.3.x to 1.4.0 it did, declaring
+  # Ventura while the binary demanded macOS 26. The app is universal, so Intel
+  # Macs on Ventura are in scope and nothing here should exclude them.
   depends_on macos: :ventura
 
   app "TokenFlow.app"
