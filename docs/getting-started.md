@@ -11,9 +11,13 @@
 
 **macOS, from a DMG:** download `TokenFlow-<version>.dmg` from the
 [latest release](https://github.com/vimoxshah/tokenflow/releases/latest), open it, drag
-**TokenFlow.app** to Applications, launch from Launchpad. The app builds and launches everything
-it needs — refresh, watcher, dashboard. It is unsigned and not notarized, so macOS shows a
-security warning on first launch:
+**TokenFlow.app** to Applications, launch from Launchpad. TokenFlow lives in the menu bar and has
+no Dock icon and no window, so the first launch opens its panel by itself and shows you where it
+is: look for **TF** at the right end of the menu bar. From there one click runs setup, one starts
+the watcher, and one opens the dashboard — the app drives the CLI inside its own bundle, so there
+is nothing else to install. It also adds itself to Login Items on that first launch, so it comes
+back after a restart; turn that off in **System Settings → General → Login Items** whenever you
+like. It is unsigned and not notarized, so macOS shows a security warning on first launch:
 
 1. If launch is blocked with *"Apple cannot check it for malicious software"*:
    open **System Settings → Privacy & Security**, scroll to **Security**, click

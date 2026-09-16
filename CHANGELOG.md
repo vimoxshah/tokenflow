@@ -3,6 +3,41 @@
 All notable changes to TokenFlow are recorded here. Versions follow
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.0 — 2026-09-16
+
+A DMG install now survives a restart, and says where it is on the first launch. Nothing changed
+in how TokenFlow reads, prices or stores anything.
+
+### Added
+
+- **The app adds itself to Login Items the first time it runs from an Applications folder.**
+  A menu bar app has no Dock icon and no window, so after a restart there was no sign TokenFlow
+  had ever been installed — the watcher kept collecting, because its LaunchAgent sets
+  `RunAtLoad`, and only the menu bar went missing, which is the confusing half. Registration is
+  attempted once, never repeated, and skipped when the bundle is still running from the mounted
+  disk image: a first launch straight off the DMG is App-Translocated to a temporary read-only
+  path, and a login item aimed there breaks the moment the image is ejected. Drag the app across
+  and the next launch registers it. Turn it off in **System Settings → General → Login Items**
+  and TokenFlow leaves it off.
+
+- **The first launch opens the panel by itself.** Double-clicking an `LSUIElement` app looks like
+  nothing happened: the only sign is two characters at the right end of the menu bar, which
+  nobody has a reason to look for. The panel now opens once per machine and points at itself.
+  If the menu bar had no room for the status item, or you clicked it first, the panel waits for
+  the next launch rather than anchoring to nothing and counting itself shown.
+
+### Fixed
+
+- **`docs/getting-started.md` claimed the app "builds and launches everything it needs".** It
+  reads as automatic and never was — refresh, watcher and dashboard are each a click. Both it
+  and the README now say what actually happens on first launch.
+
+### Internal
+
+- The app-bundle suite reads `otool -L` off the built binary and fails if
+  `ServiceManagement.framework` is not linked. Launch-at-login is the one behaviour a user
+  cannot restore for themselves, and it would otherwise fail silently.
+
 ## 1.3.5 — 2026-09-14
 
 No change to how TokenFlow reads or prices anything. One test-suite defect and two

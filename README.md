@@ -116,7 +116,10 @@ Open the DMG, drag **TokenFlow.app** to Applications, launch from Launchpad.
 >
 > Alternatively right-click the app → **Open** → **Open**.
 
-Then click the menu bar item → **Run setup**, which detects your installed tools and writes
+TokenFlow has no Dock icon and no window — it lives in the menu bar as **TF**. The first launch
+opens its panel by itself so you can see where it is, and adds TokenFlow to Login Items so it
+comes back after a restart (turn that off any time in **System Settings → General → Login
+Items**). Click **Run setup**, which detects your installed tools and writes
 `~/.tokenflow/config.yaml`. The watcher refreshes every two minutes after that.
 
 **From source** (macOS, Linux, Windows — needs Node 22.5+, nothing else):
