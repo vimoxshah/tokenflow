@@ -1,6 +1,6 @@
 cask "tokenflow" do
-  version "1.3.5"
-  sha256 "0b624ecc1cf323ca505a23eb1ed7441b26dadc6a873bf71951d51b2c6452906b"
+  version "1.4.0"
+  sha256 "db09d041611fd93db02eeb18e4b919e8438d73e98fd6950281efc167820e5522"
 
   url "https://github.com/vimoxshah/tokenflow/releases/download/v#{version}/TokenFlow-#{version}.dmg"
   name "TokenFlow"
@@ -29,9 +29,23 @@ cask "tokenflow" do
 
     The CLI ships inside the app. For the `tokenflow` command in your shell:
       npm install -g @vimoxshah/tokenflow
+
+    TokenFlow has no Dock icon — look for TF in the menu bar. The first launch
+    opens its panel so you can find it, and adds TokenFlow to Login Items.
+    Turn that off in System Settings > General > Login Items.
   EOS
 
-  # The menu-bar app is auto-relaunched by a LaunchAgent if installed; make
-  # uninstall clean by stopping it first. zap removes preferences + data.
-  zap trash: "~/.tokenflow"
+  # Two LaunchAgents may exist once the app has run: app.tokenflow.watch (the
+  # watcher, RunAtLoad) and app.tokenflow.digest (scheduled digests). Neither
+  # launches the app itself — since 1.4.0 the app registers its own login item
+  # through SMAppService, which lives in the system's background-task database
+  # and is removed by macOS with the bundle, not by anything listed here. What
+  # zap does remove is the data, the two agents, and the defaults holding the
+  # once-only first-launch flags.
+  zap trash: [
+    "~/.tokenflow",
+    "~/Library/LaunchAgents/app.tokenflow.watch.plist",
+    "~/Library/LaunchAgents/app.tokenflow.digest.plist",
+    "~/Library/Preferences/app.tokenflow.bar.plist",
+  ]
 end
